@@ -1,0 +1,139 @@
+using LMKit.Model;
+using LMKit.TextAnalysis;
+using System.Diagnostics;
+using System.Text;
+
+namespace custom_classification
+{
+    internal class Program
+    {
+        static readonly string[] CLASSIFICATION_CATEGORIES = [
+            "food and recipes",
+            "technology",
+            "health",
+            "sport",
+            "politics",
+            "business",
+            "environment",
+            "movies and TV shows",
+            "books and literature"
+        ];
+
+        static bool _isDownloading;
+
+        private static bool OnDownloadProgress(string path, long? contentLength, long bytesRead)
+        {
+            _isDownloading = true;
+            if (contentLength.HasValue)
+            {
+                double progressPercentage = Math.Round((double)bytesRead / contentLength.Value * 100, 2);
+                Console.Write($"\rDownloading model {progressPercentage:0.00}%");
+            }
+            else
+            {
+                Console.Write($"\rDownloading model {bytesRead} bytes");
+            }
+            return true;
+        }
+
+        private static bool OnLoadProgress(float progress)
+        {
+            if (_isDownloading)
+            {
+                Console.Clear();
+                _isDownloading = false;
+            }
+            Console.Write($"\rLoading model {Math.Round(progress * 100)}%");
+            return true;
+        }
+
+        private static LM LoadModel(string input)
+        {
+            string? modelId = input?.Trim() switch
+            {
+                "0" => "qwen3.5:0.8b",
+                "2" => "qwen3.5:2b",
+                "3" => "ministral3:3b",
+                "4" => "qwen3.5:4b",
+                "5" => "gemma4:e4b",
+                "6" => "qwen3.5:9b",
+                _ => null
+            };
+
+            if (modelId != null)
+            {
+                return LM.LoadFromModelID(modelId,
+                    downloadingProgress: OnDownloadProgress,
+                    loadingProgress: OnLoadProgress);
+            }
+
+            return new LM(new Uri(input!.Trim().Trim('"')),
+                downloadingProgress: OnDownloadProgress,
+                loadingProgress: OnLoadProgress);
+        }
+
+        static void Main(string[] args)
+        {
+            // Set an optional license key here if available.
+            // A free community license can be obtained from: https://lm-kit.com/products/community-edition/
+            LMKit.Licensing.LicenseManager.SetLicenseKey("");
+            Console.InputEncoding = Encoding.UTF8;
+            Console.OutputEncoding = Encoding.UTF8;
+
+            Console.Clear();
+            Console.WriteLine("Please select the model you want to use:\n");
+            Console.WriteLine("0 - Alibaba Qwen 3.5 0.8B (requires approximately 1 GB of VRAM)");
+            Console.WriteLine("2 - Alibaba Qwen 3.5 2B (requires approximately 2 GB of VRAM)");
+            Console.WriteLine("3 - Mistral Ministral 3 3B (requires approximately 3 GB of VRAM)");
+            Console.WriteLine("4 - Alibaba Qwen 3.5 4B (requires approximately 3.5 GB of VRAM)");
+            Console.WriteLine("5 - Google Gemma 4 E4B (requires approximately 6 GB of VRAM)");
+            Console.WriteLine("6 - Alibaba Qwen 3.5 9B (requires approximately 7 GB of VRAM)");
+            Console.Write("Other: Custom model URI\n\n> ");
+
+            string? input = Console.ReadLine();
+            LM model = LoadModel(input ?? "0");
+
+            Console.Clear();
+            Console.ForegroundColor = ConsoleColor.Blue;
+            Console.WriteLine($"Please enter a text to be classified within one of these categories:\n{String.Join(", ", CLASSIFICATION_CATEGORIES)}.");
+            Console.ResetColor();
+
+            Categorization classifier = new(model);
+
+            while (true)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.Write($"\n\nContent: ");
+                Console.ResetColor();
+
+                string? text = Console.ReadLine();
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    break;
+                }
+
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.Write($"\nCategory: ");
+                Console.ResetColor();
+
+                Stopwatch sw = Stopwatch.StartNew();
+                int categoryIndex = classifier.GetBestCategory(CLASSIFICATION_CATEGORIES, text);
+                sw.Stop();
+                if (categoryIndex != -1)
+                {
+                    Console.Write(CLASSIFICATION_CATEGORIES[categoryIndex]);
+                }
+                else
+                {
+                    Console.Write("Unknown");
+                }
+
+                Console.WriteLine($" - Elapsed: {Math.Round(sw.Elapsed.TotalSeconds, 2)} seconds - Confidence: {Math.Round(classifier.Confidence * 100, 1)} %");
+            }
+
+            Console.WriteLine("Demo ended. Press any key to exit.");
+            _ = Console.ReadKey();
+        }
+    }
+}

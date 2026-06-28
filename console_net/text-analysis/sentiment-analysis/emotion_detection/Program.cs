@@ -1,0 +1,126 @@
+using LMKit.Model;
+using LMKit.TextAnalysis;
+using System.Diagnostics;
+using System.Text;
+
+namespace emotion_detection
+{
+    internal class Program
+    {
+        static bool _isDownloading;
+
+        private static bool OnDownloadProgress(string path, long? contentLength, long bytesRead)
+        {
+            _isDownloading = true;
+            if (contentLength.HasValue)
+            {
+                double progressPercentage = Math.Round((double)bytesRead / contentLength.Value * 100, 2);
+                Console.Write($"\rDownloading model {progressPercentage:0.00}%");
+            }
+            else
+            {
+                Console.Write($"\rDownloading model {bytesRead} bytes");
+            }
+            return true;
+        }
+
+        private static bool OnLoadProgress(float progress)
+        {
+            if (_isDownloading)
+            {
+                Console.Clear();
+                _isDownloading = false;
+            }
+            Console.Write($"\rLoading model {Math.Round(progress * 100)}%");
+            return true;
+        }
+
+        private static LM LoadModel(string input)
+        {
+            string? modelId = input?.Trim() switch
+            {
+                "1" => "qwen3.5:9b",
+                "2" => "gemma4:e4b",
+                "3" => "phi4",
+                "4" => "gptoss:20b",
+                "5" => "glm4.7-flash",
+                "6" => "qwen3.6:27b",
+                "7" => "qwen3.6:35b-a3b",
+                "8" => "gemma4:26b-a4b",
+                _ => null
+            };
+
+            if (modelId != null)
+            {
+                return LM.LoadFromModelID(modelId,
+                    downloadingProgress: OnDownloadProgress,
+                    loadingProgress: OnLoadProgress);
+            }
+
+            return new LM(new Uri(input!.Trim().Trim('"')),
+                downloadingProgress: OnDownloadProgress,
+                loadingProgress: OnLoadProgress);
+        }
+
+        static void Main(string[] args)
+        {
+            // Set an optional license key here if available.
+            // A free community license can be obtained from: https://lm-kit.com/products/community-edition/
+            LMKit.Licensing.LicenseManager.SetLicenseKey("");
+            Console.InputEncoding = Encoding.UTF8;
+            Console.OutputEncoding = Encoding.UTF8;
+
+            Console.Clear();
+            Console.WriteLine("Please select the model you want to use:\n");
+            Console.WriteLine("1 - Alibaba Qwen 3.5 9B (requires approximately 7 GB of VRAM)");
+            Console.WriteLine("2 - Google Gemma 4 E4B (requires approximately 6 GB of VRAM)");
+            Console.WriteLine("3 - Microsoft Phi-4 14.7B (requires approximately 11 GB of VRAM)");
+            Console.WriteLine("4 - OpenAI GPT OSS 20B (requires approximately 16 GB of VRAM)");
+            Console.WriteLine("5 - Z.ai GLM 4.7 Flash 30B (requires approximately 18 GB of VRAM)");
+            Console.WriteLine("6 - Alibaba Qwen 3.6 27B (requires approximately 18 GB of VRAM)");
+            Console.WriteLine("7 - Alibaba Qwen 3.6 35B-A3B (requires approximately 22 GB of VRAM)");
+            Console.WriteLine("8 - Google Gemma 4 26B-A4B (requires approximately 18 GB of VRAM)");
+            Console.Write("Other: Custom model URI\n\n> ");
+
+            string? input = Console.ReadLine();
+            LM model = LoadModel(input ?? "0");
+
+            Console.Clear();
+            Console.ForegroundColor = ConsoleColor.Blue;
+            Console.WriteLine("Please enter text to classify the emotion. The emotion will be identified as one of the following: neutral, happiness, anger, sadness, or fear.");
+            Console.ResetColor();
+
+            EmotionDetection classifier = new(model)
+            {
+                NeutralSupport = true
+            };
+
+            while (true)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.Write($"\n\nContent: ");
+                Console.ResetColor();
+
+                string? text = Console.ReadLine();
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    break;
+                }
+
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.Write($"\nCategory: ");
+                Console.ResetColor();
+
+                Stopwatch sw = Stopwatch.StartNew();
+                var category = classifier.GetEmotionCategory(text);
+                sw.Stop();
+
+                Console.WriteLine($"Category: {category} - Elapsed: {Math.Round(sw.Elapsed.TotalSeconds, 2)} seconds - Confidence: {Math.Round(classifier.Confidence * 100, 1)} %");
+            }
+
+            Console.WriteLine("Demo ended. Press any key to exit.");
+            _ = Console.ReadKey();
+        }
+    }
+}

@@ -1,0 +1,6 @@
+@LmKitOmniApi_HostAddress = http://localhost:5032
+
+GET {{LmKitOmniApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

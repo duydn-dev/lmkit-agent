@@ -1,0 +1,370 @@
+using LMKit.Data;
+using LMKit.Extraction;
+using LMKit.Model;
+using System.Diagnostics;
+using System.Text;
+
+namespace structured_data_extraction
+{
+    internal class Program
+    {
+        private static bool _isDownloading;
+
+        private static void Main(string[] args)
+        {
+            // Set an optional license key here if available.
+            // A free community license can be obtained from: https://lm-kit.com/products/community-edition/
+            LMKit.Licensing.LicenseManager.SetLicenseKey("");
+            Console.InputEncoding = Encoding.UTF8;
+            Console.OutputEncoding = Encoding.UTF8;
+
+            Console.Clear();
+            Console.WriteLine("Please select the model you want to use:\n");
+            Console.WriteLine("1 - Alibaba Qwen 3.5 9B        (~7 GB VRAM)");
+            Console.WriteLine("2 - Google Gemma 4 E4B         (~6 GB VRAM)");
+            Console.WriteLine("3 - Microsoft Phi-4 14.7B      (~11 GB VRAM)");
+            Console.WriteLine("4 - OpenAI GPT OSS 20B         (~16 GB VRAM)");
+            Console.WriteLine("5 - Z.ai GLM 4.7 Flash 30B    (~18 GB VRAM)");
+            Console.WriteLine("6 - Alibaba Qwen 3.6 27B       (~18 GB VRAM)");
+            Console.WriteLine("7 - Alibaba Qwen 3.6 35B-A3B   (~22 GB VRAM)");
+            Console.WriteLine("8 - Google Gemma 4 26B-A4B     (~18 GB VRAM)");
+            Console.Write("\nOther entry: A custom model URI\n\n> ");
+
+            string input = Console.ReadLine()?.Trim() ?? "0";
+            LM model = LoadModel(input);
+
+            TextExtraction textExtraction = new(model);
+
+            while (true)
+            {
+                Console.Clear();
+                Console.WriteLine("Please select the content from which you want to extract structured data:\n");
+                Console.WriteLine("0 - invoice.txt (simple extraction)");
+                Console.WriteLine("1 - invoice.txt (extended extraction)");
+                Console.WriteLine("2 - job_offer.txt");
+                Console.WriteLine("3 - medical_record.txt");
+                Console.Write("\n> ");
+                input = Console.ReadLine() ?? string.Empty;
+                string inputFileName = "";
+
+                switch (input.Trim())
+                {
+                    case "0":
+                        textExtraction.Elements = CreateInvoiceElements(extended: false);
+                        inputFileName = "invoice.txt";
+                        break;
+                    case "1":
+                        textExtraction.Elements = CreateInvoiceElements(extended: true);
+                        inputFileName = "invoice.txt";
+                        break;
+                    case "2":
+                        textExtraction.Elements = CreateJobOfferElements();
+                        inputFileName = "job_offer.txt";
+                        break;
+                    case "3":
+                        textExtraction.Elements = CreateMedicalRecordElements();
+                        inputFileName = "medical_record.txt";
+                        break;
+                    default:
+                        continue;
+                }
+
+                Console.Clear();
+
+                string content = File.ReadAllText($"examples/{inputFileName}");
+                textExtraction.SetContent(content);
+
+                WriteColor("File content:\n", ConsoleColor.Green);
+                Console.Write(content);
+
+                Console.WriteLine("\n\nExtracting elements...\n");
+                Stopwatch sw = Stopwatch.StartNew();
+                var result = textExtraction.Parse();
+                sw.Stop();
+
+                WriteColor("\nExtracted elements:\n", ConsoleColor.Green);
+
+                foreach (var item in result.Elements)
+                {
+                    Console.Write($"{item.TextExtractionElement.Name}: ");
+                    WriteColor($"{item}", ConsoleColor.Blue);
+                }
+
+                WriteColor("\nJSON:\n\n", ConsoleColor.Green);
+                Console.WriteLine(result.Json);
+
+                WriteColor($"\nExtraction done in {sw.Elapsed.TotalSeconds} seconds. Hit any key to continue", ConsoleColor.Green);
+                _ = Console.ReadKey();
+            }
+        }
+
+        private static LM LoadModel(string input)
+        {
+            string? modelId = input switch
+            {
+                "1" => "qwen3.5:9b",
+                "2" => "gemma4:e4b",
+                "3" => "phi4",
+                "4" => "gptoss:20b",
+                "5" => "glm4.7-flash",
+                "6" => "qwen3.6:27b",
+                "7" => "qwen3.6:35b-a3b",
+                "8" => "gemma4:26b-a4b",
+                _ => null
+            };
+
+            if (modelId != null)
+            {
+                return LM.LoadFromModelID(
+                    modelId,
+                    downloadingProgress: OnDownloadProgress,
+                    loadingProgress: OnLoadProgress);
+            }
+
+            return new LM(
+                new Uri(input.Trim('"')),
+                downloadingProgress: OnDownloadProgress,
+                loadingProgress: OnLoadProgress);
+        }
+
+        private static bool OnDownloadProgress(string path, long? contentLength, long bytesRead)
+        {
+            _isDownloading = true;
+            if (contentLength.HasValue)
+            {
+                double percent = (double)bytesRead / contentLength.Value * 100;
+                Console.Write($"\rDownloading: {percent:F1}%   ");
+            }
+            else
+            {
+                Console.Write($"\rDownloading: {bytesRead / 1024.0 / 1024.0:F1} MB   ");
+            }
+            return true;
+        }
+
+        private static bool OnLoadProgress(float progress)
+        {
+            if (_isDownloading) { Console.WriteLine(); _isDownloading = false; }
+            Console.Write($"\rLoading: {progress * 100:F0}%   ");
+            return true;
+        }
+
+        private static void WriteColor(string text, ConsoleColor color, bool addNL = true)
+        {
+            Console.ForegroundColor = color;
+            if (addNL)
+            {
+                Console.WriteLine(text);
+            }
+            else
+            {
+                Console.Write(text);
+            }
+            Console.ResetColor();
+        }
+
+        private static List<TextExtractionElement> CreateInvoiceElements(bool extended)
+        {
+            List<TextExtractionElement> elements = new()
+            {
+                new TextExtractionElement("Invoice Reference", ElementType.String, "Unique identifier for the invoice."),
+                new TextExtractionElement("Date", ElementType.Date, "The date the invoice was generated."),
+                new TextExtractionElement("Due Date", ElementType.Date, "The deadline for payment of the invoice.")
+            };
+
+            if (!extended)
+            {
+                elements.Add(new TextExtractionElement("Vendor Name", ElementType.String));
+            }
+            else
+            {
+                elements.Add(new TextExtractionElement(
+                    "Items",
+                    new List<TextExtractionElement>
+                    {
+                    new("Description", ElementType.String, "Detailed description of the item or service."),
+                    new("Quantity", ElementType.Integer, "Number of units of the item or service."),
+                    new("Unit Price", ElementType.Float, "Price per unit of the item or service."),
+                    new("Total", ElementType.Float, "Total cost for the item (Quantity x Unit Price).")
+                    },
+                    isArray: true,
+                    "List of all items or services included in the invoice."
+                ));
+
+                elements.Add(new TextExtractionElement(
+                    "Customer",
+                    new List<TextExtractionElement>
+                    {
+                    new("Name", ElementType.String, "Full name of the customer."),
+                    new("Email", ElementType.String, "Customer's email address."),
+                    new(
+                        "Postal Address",
+                        new List<TextExtractionElement>
+                        {
+                            new("Street Address", ElementType.String),
+                            new("Postal Code", ElementType.String),
+                            new("City", ElementType.String),
+                            new("Country", ElementType.String)
+                        },
+                        isArray: false
+                    ),
+                    new("Phone Number", ElementType.String, "Customer's phone number.")
+                                },
+                                isArray: false,
+                                "Detailed information about the customer."
+                            ));
+
+                elements.Add(new TextExtractionElement(
+                    "Vendor",
+                    new List<TextExtractionElement>
+                    {
+                    new("Name", ElementType.String, "Vendor's business name."),
+                    new("Email", ElementType.String, "Vendor's contact email."),
+                    new("Country", ElementType.String, "Country where the vendor is located."),
+                    new(
+                        "Postal Address",
+                        new List<TextExtractionElement>
+                        {
+                            new("Street Address", ElementType.String),
+                            new("Postal Code", ElementType.String),
+                            new("City", ElementType.String),
+                            new("Country", ElementType.String)
+                        },
+                        isArray: false
+                    ),
+                    new("Phone Number", ElementType.String, "Vendor's contact phone number.")
+                    },
+                    isArray: false,
+                    "Detailed information about the vendor."
+                ));
+
+                var iban = new TextExtractionElement("IBAN", ElementType.String, "International Bank Account Number (IBAN) for the payment.");
+
+                iban.Format.CaseMode = TextExtractionElementFormat.TextCaseMode.UpperCase;
+                iban.Format.DisableSpacingCharacters = true;
+                iban.Format.MaxLength = 34;
+
+                elements.Add(new TextExtractionElement(
+                    "Payment Information",
+                    new List<TextExtractionElement>
+                    {
+                    new("Bank Name", ElementType.String, "Name of the vendor's bank."),
+                    new("Bank Account No", ElementType.String, "Vendor's bank account number."),
+                    iban,
+                    new("BIC", ElementType.String, "Bank Identifier Code (BIC) for international transactions.")
+                    },
+                    isArray: false,
+                    "Details related to the payment method and bank information."
+                ));
+            }
+
+            elements.Add(new TextExtractionElement("Subtotal", ElementType.Float, "Total cost of the invoice before taxes are applied."));
+            elements.Add(new TextExtractionElement("VAT Percentage", ElementType.Float, "The percentage of Value Added Tax (VAT) applied to the subtotal."));
+            elements.Add(new TextExtractionElement("VAT Amount", ElementType.Float, "The calculated VAT amount based on the VAT percentage."));
+            elements.Add(new TextExtractionElement("Total Amount", ElementType.Float, "The total amount due, including VAT."));
+            elements.Add(new TextExtractionElement("Currency", ElementType.String, "Currency in which the invoice amount is specified."));
+            elements.Add(new TextExtractionElement("Payment Terms", ElementType.String, "The terms and conditions for payment of the invoice."));
+
+            return elements;
+        }
+
+        private static List<TextExtractionElement> CreateJobOfferElements()
+        {
+            List<TextExtractionElement> elements = new()
+            {
+                new TextExtractionElement("Job Offer Reference", ElementType.String, "The offer ID provided to the candidate."),
+                new TextExtractionElement("Date", ElementType.Date, "The date the job offer was extended."),
+                new TextExtractionElement("Position", ElementType.String, "The role offered to the candidate."),
+                new TextExtractionElement("Start Date", ElementType.Date, "The start date for the new position."),
+                new TextExtractionElement("Salary", ElementType.Float, "The yearly compensation offered to the candidate."),
+                new TextExtractionElement("Location", ElementType.String, "The location of the job (city, country)."),
+                new TextExtractionElement("Company Name", ElementType.String, "The name of the company extending the offer."),
+                new TextExtractionElement("Company Address", ElementType.String, "The full address of the company."),
+                new TextExtractionElement("Job Description", ElementType.String, "A detailed overview of the responsibilities of the position."),
+                new TextExtractionElement("Terms of Employment", ElementType.String, "The conditions under which the candidate will work."),
+                new TextExtractionElement("Contact Email", ElementType.String, "The contact email for questions about the offer."),
+                new TextExtractionElement("Contact Phone", ElementType.String, "The phone number for contact."),
+                new TextExtractionElement("Signature", ElementType.String, "The official representative's signature on the offer letter.")
+            };
+
+            return elements;
+        }
+
+        private static List<TextExtractionElement> CreateMedicalRecordElements()
+        {
+            List<TextExtractionElement> elements = new()
+            {
+                new TextExtractionElement("Patient Name", ElementType.String, "Full name of the patient."),
+                new TextExtractionElement("Patient ID", ElementType.String, "Unique identifier for the patient."),
+                new TextExtractionElement("Date of Birth", ElementType.Date, "Patient's date of birth."),
+                new TextExtractionElement("Gender", ElementType.String, "Patient's gender."),
+
+                new TextExtractionElement(
+                "Medical History",
+                new List<TextExtractionElement>
+                {
+        new("Condition", ElementType.String, "Name of the medical condition or disease."),
+        new("Diagnosis Date", ElementType.Date, "Date when the condition was diagnosed."),
+        new("Treatment", ElementType.String, "Treatment or procedure administered for the condition.")
+                },
+                isArray: true,
+                "A list of past medical conditions and treatments for the patient."
+            ),
+
+                new TextExtractionElement(
+                "Vital Signs",
+                new List<TextExtractionElement>
+                {
+        new("Heart Rate", ElementType.Float, "Patient's heart rate in beats per minute."),
+        new("Blood Pressure", ElementType.String, "Patient's blood pressure measurement."),
+        new("Temperature", ElementType.Float, "Patient's body temperature in degrees Celsius."),
+        new("Respiratory Rate", ElementType.Float, "Patient's breathing rate in breaths per minute.")
+                },
+                isArray: false,
+                "Patient's vital signs recorded during the medical examination."
+            ),
+
+                new TextExtractionElement(
+                "Medications",
+                new List<TextExtractionElement>
+                {
+        new("Medication Name", ElementType.String, "Name of the medication prescribed."),
+        new("Dosage", ElementType.String, "Dosage of the medication."),
+        new("Frequency", ElementType.String, "Frequency of medication intake."),
+        new("Start Date", ElementType.Date, "Date when the medication was started.")
+
+                },
+                isArray: true,
+                "A list of medications the patient is currently taking."
+            ),
+
+                new TextExtractionElement(
+                "Allergies",
+                new List<TextExtractionElement>
+                {
+        new("Allergen", ElementType.String, "Substance that causes the allergic reaction."),
+        new("Reaction", ElementType.String, "Description of the allergic reaction."),
+        new("Severity", ElementType.String, "Severity of the allergic reaction (e.g., mild, moderate, severe).")
+                },
+                isArray: true,
+                "A list of allergies the patient has."
+            ),
+
+                new TextExtractionElement(
+                "Lab Results",
+                new List<TextExtractionElement>
+                {
+        new("Test Name", ElementType.String, "Name of the laboratory test conducted."),
+        new("Test Date", ElementType.Date, "Date the test was conducted."),
+        new("Result", ElementType.String, "Result of the laboratory test."),
+        new("Reference Range", ElementType.String, "Normal range for the test result.")
+                },
+                isArray: true,
+                "A list of laboratory test results for the patient."
+            )
+            };
+
+            return elements;
+        }
+    }
+}

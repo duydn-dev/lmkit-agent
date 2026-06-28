@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --color-chatgpt-dark: #f9f9f9;
+  --color-chatgpt-light: #ffffff;
+  --color-chatgpt-text: #111827;
+  --color-chatgpt-brand: #0ea5e9; /* Sky Blue */
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background-color: #f9f9f9;
+  color: #111827;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+}
+
+@supports (font-variation-settings: normal) {
+  html, body {
+    font-family: 'InterVariable', 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+#app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent; 
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2); 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3); 
+}

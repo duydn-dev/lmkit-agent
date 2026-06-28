@@ -1,0 +1,353 @@
+using LMKit.Data;
+using LMKit.Model;
+using LMKit.TextAnalysis;
+using System.Diagnostics;
+using System.Text;
+
+namespace document_classification
+{
+    internal class Program
+    {
+        private static bool _isDownloading;
+
+        private static readonly string[] SupportedExtensions =
+            { ".png", ".bmp", ".gif", ".psd", ".pic", ".jpeg", ".jpg", ".pnm", ".hdr",
+              ".tga", ".webp", ".tiff", ".txt", ".html", ".pdf", ".docx", ".xlsx", ".pptx", ".eml", ".mbox" };
+
+        private static readonly List<string> Categories = new()
+        {
+            "invoice",
+            "passport",
+            "driver_license",
+            "bank_statement",
+            "tax_form",
+            "receipt",
+            "contract",
+            "resume",
+            "medical_record",
+            "insurance_claim",
+            "purchase_order",
+            "shipping_label",
+            "company_registration",
+            "utility_bill",
+            "pay_stub",
+            "business_card",
+            "id_card",
+            "birth_certificate",
+            "marriage_certificate",
+            "loan_application",
+            "check",
+            "letter"
+        };
+
+        static void Main(string[] args)
+        {
+            // Set an optional license key here if available.
+            // A free community license can be obtained from: https://lm-kit.com/products/community-edition/
+            LMKit.Licensing.LicenseManager.SetLicenseKey("");
+            Console.InputEncoding = Encoding.UTF8;
+            Console.OutputEncoding = Encoding.UTF8;
+
+            Console.Clear();
+            PrintHeader("Model Selection");
+
+            var models = new (string Id, string Name, string Vram)[]
+            {
+                ("minicpm-o-45",  "MiniCPM o 4.5 9B",       "~5.9 GB"),
+                ("qwen3.5:2b",   "Alibaba Qwen 3.5 2B",    "~2 GB"),
+                ("qwen3.5:4b",   "Alibaba Qwen 3.5 4B",    "~3.5 GB"),
+                ("qwen3.5:9b",   "Alibaba Qwen 3.5 9B",    "~7 GB"),
+                ("gemma4:e4b",   "Google Gemma 4 E4B",      "~6 GB"),
+                ("qwen3.6:27b",  "Alibaba Qwen 3.6 27B",     "~18 GB"),
+                ("qwen3.6:35b-a3b", "Alibaba Qwen 3.6 35B-A3B", "~22 GB"),
+                ("gemma4:26b-a4b", "Google Gemma 4 26B-A4B", "~18 GB")
+            };
+
+            Console.WriteLine("Available models:\n");
+            for (int i = 0; i < models.Length; i++)
+            {
+                Console.WriteLine($"  [{i}] {models[i].Name,-30} (VRAM: {models[i].Vram})");
+            }
+            Console.WriteLine($"\n  [*] Enter a custom model URI");
+
+            Console.Write("\nSelection: ");
+            string input = Console.ReadLine()?.Trim() ?? "0";
+
+            LM model = LoadModel(input, models);
+            Console.Clear();
+
+            PrintHeader("Document Classification Demo");
+            PrintModelInfo(model);
+
+            var categorizer = new Categorization(model)
+            {
+                AllowUnknownCategory = true
+            };
+
+            PrintAvailableCategories();
+            PrintHelp();
+
+            while (true)
+            {
+                Console.WriteLine();
+                Console.Write("Enter path (or command): ");
+                input = Console.ReadLine()?.Trim().Trim('"') ?? "";
+
+                if (string.IsNullOrEmpty(input) || input.Equals("exit", StringComparison.OrdinalIgnoreCase))
+                {
+                    break;
+                }
+
+                if (input.Equals("help", StringComparison.OrdinalIgnoreCase))
+                {
+                    PrintHelp();
+                    continue;
+                }
+
+                if (input.Equals("categories", StringComparison.OrdinalIgnoreCase))
+                {
+                    PrintAvailableCategories();
+                    continue;
+                }
+
+                if (input.Equals("clear", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.Clear();
+                    PrintHeader("Document Classification Demo");
+                    continue;
+                }
+
+                ProcessPath(input, categorizer);
+            }
+
+            Console.WriteLine("\nDemo ended. Press any key to exit.");
+            Console.ReadKey();
+        }
+
+        private static LM LoadModel(string input, (string Id, string Name, string Vram)[] models)
+        {
+            if (int.TryParse(input, out int index) && index >= 0 && index < models.Length)
+            {
+                return LM.LoadFromModelID(
+                    models[index].Id,
+                    downloadingProgress: OnDownloadProgress,
+                    loadingProgress: OnLoadProgress);
+            }
+
+            return new LM(
+                new Uri(input.Trim('"')),
+                downloadingProgress: OnDownloadProgress,
+                loadingProgress: OnLoadProgress);
+        }
+
+        private static bool OnDownloadProgress(string path, long? contentLength, long bytesRead)
+        {
+            _isDownloading = true;
+            if (contentLength.HasValue)
+            {
+                double percent = (double)bytesRead / contentLength.Value * 100;
+                Console.Write($"\rDownloading: {percent:F1}%   ");
+            }
+            else
+            {
+                Console.Write($"\rDownloading: {bytesRead / 1024.0 / 1024.0:F1} MB   ");
+            }
+            return true;
+        }
+
+        private static bool OnLoadProgress(float progress)
+        {
+            if (_isDownloading) { Console.WriteLine(); _isDownloading = false; }
+            Console.Write($"\rLoading: {progress * 100:F0}%   ");
+            return true;
+        }
+
+        private static void ProcessPath(string path, Categorization categorizer)
+        {
+            if (Directory.Exists(path))
+            {
+                ProcessDirectory(path, categorizer);
+            }
+            else if (File.Exists(path))
+            {
+                ClassifyDocument(path, categorizer);
+            }
+            else
+            {
+                WriteColored($"Path not found: {path}", ConsoleColor.Red);
+            }
+        }
+
+        private static void ProcessDirectory(string directoryPath, Categorization categorizer)
+        {
+            var files = Directory.GetFiles(directoryPath)
+                .Where(f => SupportedExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .ToList();
+
+            if (files.Count == 0)
+            {
+                WriteColored("No supported documents found in directory.", ConsoleColor.Yellow);
+                return;
+            }
+
+            Console.WriteLine();
+            WriteColored($"Processing {files.Count} document(s)...", ConsoleColor.Cyan);
+            Console.WriteLine(new string('─', 70));
+
+            var results = new List<(string File, string Category, double Confidence, long TimeMs)>();
+            var totalSw = Stopwatch.StartNew();
+
+            foreach (string file in files)
+            {
+                var result = ClassifyDocument(file, categorizer, isBatch: true);
+                if (result.HasValue)
+                {
+                    results.Add((Path.GetFileName(file), result.Value.Category, result.Value.Confidence, result.Value.TimeMs));
+                }
+            }
+
+            totalSw.Stop();
+
+            Console.WriteLine(new string('─', 70));
+            WriteColored($"Batch complete: {results.Count}/{files.Count} processed in {totalSw.ElapsedMilliseconds:N0} ms", ConsoleColor.Cyan);
+
+            if (results.Count > 0)
+            {
+                var grouped = results.GroupBy(r => r.Category)
+                    .OrderByDescending(g => g.Count())
+                    .ToList();
+
+                Console.WriteLine("\nSummary by category:");
+                foreach (var group in grouped)
+                {
+                    double avgConfidence = group.Average(r => r.Confidence);
+                    Console.WriteLine($"  {group.Key,-20} : {group.Count(),3} document(s)  (avg confidence: {avgConfidence:P0})");
+                }
+            }
+        }
+
+        private static (string Category, double Confidence, long TimeMs)? ClassifyDocument(
+            string filePath,
+            Categorization categorizer,
+            bool isBatch = false)
+        {
+            string fileName = Path.GetFileName(filePath);
+
+            try
+            {
+                var sw = Stopwatch.StartNew();
+                var attachment = new Attachment(filePath);
+                int result = categorizer.GetBestCategory(Categories, attachment);
+                sw.Stop();
+
+                string category = result == -1 ? "unknown" : Categories[result];
+                double confidence = categorizer.Confidence;
+
+                PrintClassificationResult(fileName, category, confidence, sw.ElapsedMilliseconds, isBatch);
+
+                return (category, confidence, sw.ElapsedMilliseconds);
+            }
+            catch (Exception ex)
+            {
+                if (isBatch)
+                {
+                    WriteColored($"  x {fileName}: {ex.Message}", ConsoleColor.Red);
+                }
+                else
+                {
+                    WriteColored($"Error: {ex.Message}", ConsoleColor.Red);
+                }
+                return null;
+            }
+        }
+
+        private static void PrintClassificationResult(string fileName, string category, double confidence, long elapsedMs, bool isBatch)
+        {
+            ConsoleColor confidenceColor = confidence switch
+            {
+                >= 0.8 => ConsoleColor.Green,
+                >= 0.5 => ConsoleColor.Yellow,
+                _ => ConsoleColor.Red
+            };
+
+            if (isBatch)
+            {
+                Console.Write("  ");
+                WriteColored("+ ", ConsoleColor.Green);
+                Console.Write($"{TruncateFileName(fileName, 30),-32}");
+                WriteColored($"{category,-20}", ConsoleColor.White);
+                WriteColored($"{confidence,6:P0}", confidenceColor);
+                Console.WriteLine($"  ({elapsedMs:N0} ms)");
+            }
+            else
+            {
+                Console.WriteLine();
+                Console.WriteLine($"+{"".PadRight(50, '-')}+");
+                Console.Write($"| Category:   ");
+                WriteColored($"{category,-36}", ConsoleColor.White);
+                Console.WriteLine("|");
+                Console.Write($"| Confidence: ");
+                WriteColored($"{confidence,-6:P0}", confidenceColor);
+                Console.WriteLine($"{"",30}|");
+                Console.WriteLine($"| Time:       {elapsedMs:N0} ms{"",32}|".Substring(0, 52) + "|");
+                Console.WriteLine($"+{"".PadRight(50, '-')}+");
+            }
+        }
+
+        private static string TruncateFileName(string fileName, int maxLength)
+        {
+            if (fileName.Length <= maxLength)
+            {
+                return fileName;
+            }
+
+            string ext = Path.GetExtension(fileName);
+            int nameLength = maxLength - ext.Length - 3;
+            return fileName.Substring(0, nameLength) + "..." + ext;
+        }
+
+        private static void PrintHeader(string title)
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"=== {title} ===");
+            Console.ResetColor();
+            Console.WriteLine();
+        }
+
+        private static void PrintModelInfo(LM model)
+        {
+            WriteColored("Model loaded: ", ConsoleColor.Gray);
+            Console.WriteLine(Path.GetFileName(model.ModelUri.LocalPath));
+            Console.WriteLine();
+        }
+
+        private static void PrintAvailableCategories()
+        {
+            Console.WriteLine("Supported categories:");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            for (int i = 0; i < Categories.Count; i += 4)
+            {
+                var batch = Categories.Skip(i).Take(4);
+                Console.WriteLine("  " + string.Join(", ", batch));
+            }
+            Console.ResetColor();
+        }
+
+        private static void PrintHelp()
+        {
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine("Commands: help | categories | clear | exit");
+            Console.WriteLine("Tip: Enter a folder path to batch-process all documents");
+            Console.WriteLine($"Supported formats: {string.Join(", ", SupportedExtensions.Select(e => e.TrimStart('.').ToUpper()))}");
+            Console.ResetColor();
+        }
+
+        private static void WriteColored(string text, ConsoleColor color)
+        {
+            Console.ForegroundColor = color;
+            Console.Write(text);
+            Console.ResetColor();
+        }
+    }
+}
