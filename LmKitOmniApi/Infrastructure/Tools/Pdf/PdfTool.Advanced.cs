@@ -141,12 +141,5 @@ public partial class PdfToolFunctions
         }
         catch (Exception ex) { return $"Error: {ex.Message}"; }
     }
-
-    // STT 107: OCRDocument
-    [LMFunction("OCRDocument", "Extracts text from scanned PDFs. (Uses Vision/OCR Agent internally or Aspose fallback).")]
-    public string OCRDocument([Description("Path to PDF.")] string filePath)
-    {
-        return "True OCR requires Vision capabilities (PaddleOCR/Tesseract). Text extraction from native images can be passed to VisionController.";
-    }
 }
 

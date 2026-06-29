@@ -1,466 +1,238 @@
-1. Document (1–15)
+1. Image Document (1–15)
 STT	Function
-1	CreateDocument
-2	OpenDocument
-3	SaveDocument
-4	SaveAs
-5	CloseDocument
-6	CloneDocument
-7	GetDocumentInfo
-8	SetDocumentInfo
-9	ProtectDocument
-10	UnprotectDocument
-11	CompareDocuments
-12	MergeDocuments
-13	SplitDocument
-14	OptimizeDocument
-15	ValidateDocument
-2. Section (16–25)
+1	CreateImage
+2	OpenImage
+3	SaveImage
+4	SaveImageAs
+5	CloseImage
+6	CloneImage
+7	ResizeCanvas
+8	CropCanvas
+9	RotateCanvas
+10	FlipCanvas
+11	GetImageInfo
+12	SetImageMetadata
+13	OptimizeImage
+14	CompressImage
+15	ConvertImageFormat
+2. Resize & Transform (16–30)
 STT	Function
-16	AddSection
-17	InsertSection
-18	DeleteSection
-19	MoveSection
-20	CopySection
-21	GetSections
-22	SetSectionMargins
-23	SetSectionOrientation
-24	SetSectionColumns
-25	SetSectionPageSize
-3. Page (26–35)
+16	ResizeImage
+17	ScaleImage
+18	CropImage
+19	RotateImage
+20	FlipHorizontal
+21	FlipVertical
+22	SkewImage
+23	PerspectiveTransform
+24	ShearImage
+25	PadImage
+26	TrimTransparentBorders
+27	AutoCrop
+28	AutoRotate
+29	DeskewImage
+30	StraightenImage
+3. Color (31–50)
 STT	Function
-26	InsertPageBreak
-27	RemovePageBreak
-28	GetPageCount
-29	SetPageBackground
-30	SetPageBorder
-31	SetPageColor
-32	SetPageNumbering
-33	RestartPageNumbering
-34	SetPageHeaderDistance
-35	SetPageFooterDistance
-4. Paragraph (36–50)
+31	AdjustBrightness
+32	AdjustContrast
+33	AdjustGamma
+34	AdjustExposure
+35	AdjustSaturation
+36	AdjustHue
+37	AdjustTemperature
+38	AdjustTint
+39	AdjustVibrance
+40	ConvertToGrayscale
+41	ConvertToBlackWhite
+42	InvertColors
+43	SepiaEffect
+44	PosterizeImage
+45	ThresholdImage
+46	EqualizeHistogram
+47	AutoLevels
+48	AutoContrast
+49	ReplaceColor
+50	MakeTransparent
+4. Filters (51–70)
 STT	Function
-36	AddParagraph
-37	InsertParagraph
-38	DeleteParagraph
-39	MoveParagraph
-40	ReplaceParagraph
-41	SetParagraphAlignment
-42	SetParagraphSpacing
-43	SetParagraphIndent
-44	SetParagraphStyle
-45	SetParagraphKeepTogether
-46	SetParagraphKeepWithNext
-47	SetParagraphOutlineLevel
-48	SetParagraphBorders
-49	SetParagraphShading
-50	GetParagraphs
-5. Text (51–70)
+51	BlurImage
+52	GaussianBlur
+53	MedianBlur
+54	MotionBlur
+55	SharpenImage
+56	EmbossImage
+57	EdgeDetection
+58	OilPaintingEffect
+59	PencilSketchEffect
+60	CartoonEffect
+61	PixelateImage
+62	MosaicEffect
+63	NoiseReduction
+64	AddNoise
+65	VignetteEffect
+66	GlowEffect
+67	ShadowEffect
+68	BloomEffect
+69	LensBlur
+70	CustomConvolution
+5. Drawing (71–90)
 STT	Function
-51	InsertText
-52	AppendText
-53	ReplaceText
-54	FindText
-55	FindTextRegex
-56	DeleteText
-57	ExtractText
-58	HighlightText
-59	UnderlineText
-60	StrikeThroughText
-61	SuperscriptText
-62	SubscriptText
-63	SetTextColor
-64	SetTextBackground
-65	SetTextOpacity
-66	SetTextCase
-67	TrimWhitespace
-68	NormalizeWhitespace
-69	CountWords
-70	CountCharacters
-6. Font (71–85)
+71	DrawLine
+72	DrawRectangle
+73	DrawRoundedRectangle
+74	DrawCircle
+75	DrawEllipse
+76	DrawPolygon
+77	DrawBezierCurve
+78	DrawArrow
+79	DrawText
+80	DrawWatermark
+81	DrawImage
+82	DrawQRCode
+83	DrawBarcode
+84	FillRectangle
+85	FillCircle
+86	DrawGrid
+87	DrawBorder
+88	DrawShadow
+89	DrawGradient
+90	DrawPattern
+6. Text (91–100)
 STT	Function
-71	SetFontName
-72	SetFontSize
-73	SetBold
-74	SetItalic
-75	SetUnderline
-76	SetStrikethrough
-77	SetDoubleStrikethrough
-78	SetAllCaps
-79	SetSmallCaps
-80	SetCharacterSpacing
-81	SetKerning
-82	SetFontColor
-83	SetFontScaling
-84	ResetFontFormatting
-85	ListFonts
-7. Table (86–105)
+91	AddText
+92	ReplaceText
+93	RemoveText
+94	MeasureText
+95	SetFont
+96	SetFontSize
+97	SetFontColor
+98	SetTextAlignment
+99	RotateText
+100	WarpText
+7. Layers (101–115)
 STT	Function
-86	CreateTable
-87	DeleteTable
-88	InsertRow
-89	DeleteRow
-90	InsertColumn
-91	DeleteColumn
-92	MergeCells
-93	SplitCell
-94	SetCellText
-95	SetCellStyle
-96	SetTableBorders
-97	SetTableWidth
-98	SetTableAlignment
-99	AutoFitTable
-100	SortTable
-101	RepeatHeaderRow
-102	SetCellPadding
-103	SetCellBackground
-104	GetTables
-105	ExtractTable
-8. Image (106–120)
+101	CreateLayer
+102	DeleteLayer
+103	MergeLayers
+104	DuplicateLayer
+105	MoveLayer
+106	RenameLayer
+107	HideLayer
+108	ShowLayer
+109	LockLayer
+110	UnlockLayer
+111	SetLayerOpacity
+112	BlendLayers
+113	FlattenLayers
+114	ReorderLayers
+115	GroupLayers
+8. Selection (116–125)
 STT	Function
-106	InsertImage
-107	ReplaceImage
-108	DeleteImage
-109	ExtractImages
-110	ResizeImage
-111	RotateImage
-112	CropImage
-113	CompressImages
-114	SetImageWrapping
-115	SetImageAlignment
-116	MoveImage
-117	FlipImage
-118	SetImageTransparency
-119	ConvertImageFormat
-120	GetImages
-9. Shape (121–130)
+116	SelectRectangle
+117	SelectEllipse
+118	SelectPolygon
+119	SelectByColor
+120	InvertSelection
+121	ExpandSelection
+122	ContractSelection
+123	FeatherSelection
+124	ClearSelection
+125	CropSelection
+9. Metadata (126–135)
 STT	Function
-121	InsertShape
-122	DrawRectangle
-123	DrawCircle
-124	DrawLine
-125	DrawArrow
-126	InsertTextBox
-127	InsertWordArt
-128	GroupShapes
-129	UngroupShapes
-130	DeleteShape
-10. Header & Footer (131–138)
+126	GetEXIF
+127	UpdateEXIF
+128	RemoveEXIF
+129	GetIPTC
+130	UpdateIPTC
+131	RemoveMetadata
+132	SetCopyright
+133	SetAuthor
+134	SetGPSLocation
+135	StripMetadata
+10. Export (136–150)
 STT	Function
-131	AddHeader
-132	AddFooter
-133	RemoveHeader
-134	RemoveFooter
-135	SetHeaderText
-136	SetFooterText
-137	InsertPageNumber
-138	InsertPageCount
-11. Bookmark & TOC (139–145)
-STT	Function
-139	CreateBookmark
-140	DeleteBookmark
-141	RenameBookmark
-142	GoToBookmark
-143	InsertTableOfContents
-144	UpdateTableOfContents
-145	RemoveTableOfContents
-12. Mail Merge & Fields (146–150)
-STT	Function
-146	ExecuteMailMerge
-147	InsertMergeField
-148	UpdateFields
-149	LockField
-150	UnlockField
+136	ExportPNG
+137	ExportJPEG
+138	ExportBMP
+139	ExportGIF
+140	ExportTIFF
+141	ExportWEBP
+142	ExportSVG
+143	ExportPDF
+144	ExportPSD
+145	ExportICO
+146	GenerateThumbnail
+147	CreateSpriteSheet
+148	SplitSpriteSheet
+149	OptimizeForWeb
+150	GeneratePreview
+Nếu làm AI Image Editor chuyên nghiệp (250–300 tool)
+Background
+RemoveBackground
+ReplaceBackground
+BlurBackground
+ExtendBackground
+FillBackground
+TransparentBackground
+Face
+DetectFaces
+BlurFaces
+CropFace
+AlignFace
+EnhancePortrait
+Objects
+DetectObjects
+RemoveObject
+ReplaceObject
+CountObjects
+OCR
+DetectText
+ExtractText
+TranslateText
+RemoveText
+RedactText
+Batch Processing
+BatchResize
+BatchWatermark
+BatchConvert
+BatchCompress
+BatchRename
+AI Enhancement
+SuperResolution
+DenoiseImage
+DeblurImage
+RestoreOldPhoto
+ColorizePhoto
+EnhanceLowLight
+UpscaleImage
+FaceRestore
+ScratchRemoval
+ArtifactRemoval
+Canvas
+ExpandCanvas
+AddMargin
+SetCanvasColor
+CenterImage
+FitImageToCanvas
+Composition
+OverlayImage
+BlendImages
+CreateCollage
+CreateContactSheet
+TileImage
+Analysis
+DetectEdges
+DetectContours
+DetectDominantColors
+CalculateHistogram
+MeasureObject
+DetectTransparency
+Kiến trúc Tool Calling đề xuất
 
-- Ngoài ra thêm cho tôi
-Comments
-AddComment
-DeleteComment
-ReplyComment
-ResolveComment
-ExtractComments
-Track Changes
-EnableTrackChanges
-DisableTrackChanges
-AcceptRevision
-RejectRevision
-GetRevisions
-Lists
-CreateBulletList
-CreateNumberList
-IncreaseListLevel
-DecreaseListLevel
-RestartList
-Styles
-CreateStyle
-UpdateStyle
-DeleteStyle
-ApplyStyle
-ListStyles
-Hyperlinks
-InsertHyperlink
-UpdateHyperlink
-RemoveHyperlink
-ValidateHyperlinks
-Footnotes
-InsertFootnote
-InsertEndnote
-DeleteFootnote
-ExtractFootnotes
-Equations
-InsertEquation
-UpdateEquation
-ConvertEquation
-Charts
-InsertChart
-UpdateChart
-DeleteChart
-SetChartData
-ExportChartImage
-Content Controls (Structured Document Tags)
-InsertContentControl
-SetContentControlValue
-LockContentControl
-UnlockContentControl
-RemoveContentControl
-Conversion
-ConvertToPDF
-ConvertToHTML
-ConvertToMarkdown
-ConvertToEPUB
-ConvertToTXT
-ConvertToODT
-ConvertToRTF
-ConvertToXPS
-=> tôi sử dụng aspose word và bạn hãy xây dựng các LmFunction này cho tôi nhé
+Tương tự Word, PDF và Excel, bạn có thể chia các tool thành ba cấp:
 
-1. Workbook (1–15)
-STT	Function
-1	CreateWorkbook
-2	OpenWorkbook
-3	SaveWorkbook
-4	SaveWorkbookAs
-5	CloseWorkbook
-6	CloneWorkbook
-7	MergeWorkbooks
-8	SplitWorkbook
-9	ProtectWorkbook
-10	UnprotectWorkbook
-11	OptimizeWorkbook
-12	GetWorkbookInfo
-13	SetWorkbookProperties
-14	ValidateWorkbook
-15	CalculateWorkbook
-2. Worksheet (16–35)
-STT	Function
-16	AddWorksheet
-17	CopyWorksheet
-18	RenameWorksheet
-19	DeleteWorksheet
-20	MoveWorksheet
-21	HideWorksheet
-22	UnhideWorksheet
-23	ProtectWorksheet
-24	UnprotectWorksheet
-25	SetActiveWorksheet
-26	GetWorksheetNames
-27	DuplicateWorksheet
-28	SetWorksheetTabColor
-29	GetWorksheetStatistics
-30	ClearWorksheet
-31	FreezePanes
-32	UnfreezePanes
-33	SplitWindow
-34	SetZoom
-35	AutoFitWorksheet
-3. Cells (36–60)
-STT	Function
-36	SetCellValue
-37	GetCellValue
-38	ClearCell
-39	MergeCells
-40	UnmergeCells
-41	InsertRow
-42	DeleteRow
-43	InsertColumn
-44	DeleteColumn
-45	CopyCell
-46	MoveCell
-47	ClearRange
-48	CopyRange
-49	MoveRange
-50	InsertRange
-51	DeleteRange
-52	ResizeRange
-53	GetUsedRange
-54	FindCell
-55	ReplaceCellValue
-56	FindAndReplace
-57	FillSeries
-58	AutoFill
-59	SortRange
-60	RemoveDuplicates
-4. Formatting (61–85)
-STT	Function
-61	SetFont
-62	SetFontSize
-63	SetBold
-64	SetItalic
-65	SetUnderline
-66	SetFontColor
-67	SetBackgroundColor
-68	SetBorder
-69	SetAlignment
-70	SetNumberFormat
-71	SetDateFormat
-72	SetCurrencyFormat
-73	SetPercentageFormat
-74	WrapText
-75	SetTextRotation
-76	SetIndent
-77	MergeStyle
-78	CopyStyle
-79	ClearFormatting
-80	AutoFitRow
-81	AutoFitColumn
-82	SetRowHeight
-83	SetColumnWidth
-84	HideRows
-85	HideColumns
-5. Formula (86–100)
-STT	Function
-86	SetFormula
-87	GetFormula
-88	CalculateFormula
-89	RecalculateWorkbook
-90	CopyFormula
-91	ConvertFormulaToValue
-92	InsertNamedRange
-93	DeleteNamedRange
-94	ListNamedRanges
-95	EvaluateFormula
-96	TraceDependents
-97	TracePrecedents
-98	CheckCircularReference
-99	LockFormula
-100	UnlockFormula
-6. Charts (101–115)
-STT	Function
-101	CreateChart
-102	DeleteChart
-103	UpdateChartData
-104	SetChartTitle
-105	SetChartLegend
-106	SetChartAxis
-107	SetChartSeries
-108	AddTrendline
-109	ResizeChart
-110	MoveChart
-111	ExportChartImage
-112	CopyChart
-113	SetChartStyle
-114	SetChartColors
-115	RefreshChart
-7. Pivot Table (116–125)
-STT	Function
-116	CreatePivotTable
-117	RefreshPivotTable
-118	DeletePivotTable
-119	SetPivotDataSource
-120	AddPivotRowField
-121	AddPivotColumnField
-122	AddPivotValueField
-123	AddPivotFilterField
-124	SetPivotStyle
-125	ExpandCollapsePivot
-8. Filter & Sort (126–135)
-STT	Function
-126	ApplyAutoFilter
-127	RemoveFilter
-128	SortAscending
-129	SortDescending
-130	SortByMultipleColumns
-131	FilterByValue
-132	FilterByColor
-133	FilterByDate
-134	FilterTop10
-135	ClearSort
-9. Validation & Conditional Formatting (136–145)
-STT	Function
-136	AddDataValidation
-137	RemoveDataValidation
-138	CreateDropdownList
-139	AddConditionalFormatting
-140	RemoveConditionalFormatting
-141	HighlightDuplicates
-142	HighlightBlanks
-143	HighlightTopValues
-144	AddColorScale
-145	AddIconSet
-10. Objects & Export (146–150)
-STT	Function
-146	InsertImage
-147	InsertShape
-148	InsertHyperlink
-149	ExportToPDF
-150	ExportToHTML
-Có thể mở rộng lên hơn 300 tool
-Tables (ListObject)
-CreateTable
-DeleteTable
-RenameTable
-ResizeTable
-AddTableRow
-RemoveTableRow
-AddTableColumn
-RemoveTableColumn
-ApplyTableStyle
-ConvertTableToRange
-Sparklines
-AddSparkline
-RemoveSparkline
-UpdateSparkline
-SetSparklineStyle
-Comments / Notes
-AddComment
-EditComment
-DeleteComment
-ReplyComment
-GetComments
-Protection
-LockCell
-UnlockCell
-ProtectRange
-UnprotectRange
-AllowEditRange
-Page Setup
-SetPrintArea
-SetPrintTitles
-SetPaperSize
-SetOrientation
-SetMargins
-SetHeader
-SetFooter
-SetScale
-FitToPage
-SetPrintGridlines
-Images
-ReplaceImage
-DeleteImage
-ResizeImage
-RotateImage
-CropImage
-CompressImages
-Import / Export
-ImportCSV
-ExportCSV
-ImportJSON
-ExportJSON
-ImportXML
-ExportXML
-ExportODS
-ExportXLSX
-ExportXLS
-ExportMarkdown
-=> Tương tự với aspose cells nhé
+Low-level tools (~120): thao tác nguyên tử như CropImage, AdjustBrightness, DrawText, BlurImage.
+Medium-level tools (~50): kết hợp nhiều thao tác, ví dụ CreateThumbnail, GenerateSocialMediaBanner, OptimizeForWeb.
+High-level tools (~20): thực hiện quy trình hoàn chỉnh như GenerateProductImage, PreparePassportPhoto, CreatePhotoCollage, EnhancePortrait, RestoreOldPhoto.

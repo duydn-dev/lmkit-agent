@@ -6,6 +6,8 @@ using LmKitOmniApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Security.Cryptography;
+using System.Threading.RateLimiting;
 using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.AI;
 using LmKitOmniApi.Infrastructure.AI.Security;
@@ -31,15 +33,17 @@ builder.Services.AddExceptionHandler<LmKitOmniApi.Infrastructure.Exceptions.Glob
 
 builder.Services.AddControllers();
 
-// Đăng ký CORS
+// Đăng ký CORS (đọc origins từ cấu hình, không hardcode)
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", builder =>
+    options.AddPolicy("ProductionCors", policy =>
     {
-        builder.WithOrigins("http://localhost:5173")
-               .AllowCredentials()
-               .AllowAnyMethod()
-               .AllowAnyHeader();
+        var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+                      ?? new[] { "http://localhost:5173" };
+        policy.WithOrigins(origins)
+              .AllowCredentials()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
     });
 });
 
@@ -159,15 +163,49 @@ builder.Services.AddScoped<IAgentOrchestrator, AgentOrchestrator>();
 builder.Services.AddScoped<IWebSearchService, LmKitOmniApi.Infrastructure.Web.DuckDuckGoSearchService>();
 builder.Services.AddScoped<IOfficeDocumentToolService, LmKitOmniApi.Infrastructure.Tools.OfficeDocumentToolService>();
 
+// ============================================================
+// 🏥 Health Checks
+// ============================================================
+builder.Services.AddHealthChecks();
+
+// ============================================================
+// 🚦 Rate Limiting (bảo vệ tài nguyên LLM đắt đỏ)
+// ============================================================
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("ai-agent", httpContext =>
+        RateLimitPartition.GetTokenBucketLimiter(
+            httpContext.User.Identity?.Name ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            _ => new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 10,
+                ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+                TokensPerPeriod = 5,
+                AutoReplenishment = true
+            }));
+});
+
 var app = builder.Build();
 
-// Đảm bảo Database luôn tồn tại và tạo mới nếu chưa có
+// Database Migration (sử dụng Migrate thay vì EnsureCreated để hỗ trợ schema evolution)
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<LmKitOmniApi.Infrastructure.Data.HermesDbContext>();
-    dbContext.Database.EnsureCreated();
+    
+    // Sử dụng Migrate() thay vì EnsureCreated() để hỗ trợ cập nhật schema
+    // Lưu ý: Cần chạy `dotnet ef migrations add InitialCreate` trước lần đầu tiên
+    try
+    {
+        dbContext.Database.Migrate();
+    }
+    catch
+    {
+        // Fallback cho lần chạy đầu tiên khi chưa có migration
+        dbContext.Database.EnsureCreated();
+    }
 
-    // Data Seeding
+    // Data Seeding — tạo tài khoản admin với mật khẩu ngẫu nhiên an toàn
     if (!dbContext.Tenants.Any())
     {
         var tenant = new Tenant { Name = "Default Tenant" };
@@ -176,17 +214,27 @@ using (var scope = app.Services.CreateScope())
 
         if (!dbContext.Users.Any())
         {
+            // Sinh mật khẩu ngẫu nhiên 16 ký tự thay vì dùng "admin"
+            var randomPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(12));
             var adminUser = new User
             {
                 Username = "admin",
                 Email = "admin@lmkit.net",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin"),
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(randomPassword),
                 FullName = "Admin User",
                 Role = "Admin",
                 TenantId = tenant.Id
             };
             dbContext.Users.Add(adminUser);
             dbContext.SaveChanges();
+
+            // In mật khẩu ra console để admin biết — chỉ hiển thị 1 lần duy nhất
+            Console.WriteLine("============================================");
+            Console.WriteLine($"  ADMIN ACCOUNT CREATED");
+            Console.WriteLine($"  Username: admin");
+            Console.WriteLine($"  Password: {randomPassword}");
+            Console.WriteLine($"  ⚠️  PLEASE CHANGE THIS PASSWORD IMMEDIATELY");
+            Console.WriteLine("============================================");
         }
     }
 }
@@ -204,13 +252,19 @@ if (app.Environment.IsDevelopment())
 app.UseExceptionHandler();
 app.UseHttpsRedirection();
 
-// Kích hoạt CORS
-app.UseCors("AllowAll");
+// Kích hoạt CORS (đã đổi tên policy từ "AllowAll" → "ProductionCors")
+app.UseCors("ProductionCors");
+
+// Kích hoạt Rate Limiting
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Health Check endpoint
+app.MapHealthChecks("/health");
 
 // Map SignalR Hub
 app.MapHub<LmKitOmniApi.Infrastructure.Hubs.NotificationHub>("/hubs/notifications");

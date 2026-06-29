@@ -23,6 +23,7 @@ public class RagPipelineService : IRagPipelineService
     private readonly QueryExpansionService _queryExpansion;
     private readonly ILogger<RagPipelineService> _logger;
     private readonly string _collectionName;
+    private readonly bool _enableHyDE;
 
     public RagPipelineService(
         IVectorStoreService vectorStore, 
@@ -38,6 +39,7 @@ public class RagPipelineService : IRagPipelineService
         _queryExpansion = queryExpansion;
         _logger = logger;
         _collectionName = configuration["VectorStore:CollectionName"] ?? "lmkit_chunks";
+        _enableHyDE = configuration.GetValue<bool>("RagSettings:EnableHyDE", false);
     }
 
     public async Task<string> IngestDocumentAsync(Guid tenantId, string fileName, string content)
@@ -83,7 +85,22 @@ public class RagPipelineService : IRagPipelineService
 
         // === Stage 1: Query Expansion ===
         var expandedQueries = await _queryExpansion.ExpandQueryAsync(query, maxExpansions: 2);
-        _logger.LogInformation("🔍 Expanded to {Count} query variations", expandedQueries.Count);
+        _logger.LogInformation("Expanded to {Count} query variations", expandedQueries.Count);
+
+        // === Stage 1.5: HyDE (Hypothetical Document Embeddings) ===
+        if (_enableHyDE && IsComplexQuery(query))
+        {
+            try
+            {
+                var hydeDoc = await _queryExpansion.GenerateHypotheticalDocumentAsync(query);
+                expandedQueries.Add(hydeDoc);
+                _logger.LogInformation("HyDE document generated and added to search queries");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("HyDE generation failed, continuing without it: {Error}", ex.Message);
+            }
+        }
 
         // === Stage 2: Dense Retrieval (Vector Search) across all expanded queries ===
         var allDenseResults = new List<(string Content, float Score, string Source)>();
@@ -276,5 +293,19 @@ public class RagPipelineService : IRagPipelineService
             .Take(topK)
             .Select(kv => (kv.Key, kv.Value))
             .ToList();
+    }
+
+    /// <summary>
+    /// Xác định xem query có đủ phức tạp để kích hoạt HyDE hay không.
+    /// HyDE hiệu quả với câu hỏi dạng khái niệm, so sánh, giải thích — không cần cho từ khóa đơn giản.
+    /// </summary>
+    private static bool IsComplexQuery(string query)
+    {
+        var complexPrefixes = new[] { "giải thích", "tại sao", "so sánh", "phân tích", "đánh giá", 
+                                      "explain", "why", "compare", "analyze", "how does" };
+        var words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        
+        // Dài > 8 từ hoặc bắt đầu bằng từ khóa phức tạp
+        return words.Length > 8 || complexPrefixes.Any(p => query.StartsWith(p, StringComparison.OrdinalIgnoreCase));
     }
 }

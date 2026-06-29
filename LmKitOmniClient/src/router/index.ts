@@ -28,6 +28,12 @@ const router = createRouter({
       name: 'Login',
       component: () => import('../views/auth/LoginView.vue'),
       meta: { requiresAuth: false }
+    },
+    {
+      path: '/widget/chat',
+      name: 'WidgetChat',
+      component: () => import('../views/widget/ChatWidgetView.vue'),
+      meta: { requiresAuth: false }
     }
   ]
 });

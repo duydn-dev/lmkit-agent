@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 
@@ -18,8 +19,7 @@ public class AgentTelemetryService
     private static long _totalTokensEstimated;
     private static long _totalToolInvocations;
     private static long _totalErrors;
-    private static readonly Dictionary<string, long> _toolUsageCount = new();
-    private static readonly object _metricsLock = new();
+    private static readonly ConcurrentDictionary<string, long> _toolUsageCount = new();
 
     public AgentTelemetryService(ILogger<AgentTelemetryService> logger)
     {
@@ -44,12 +44,7 @@ public class AgentTelemetryService
     public Activity? StartToolInvocation(string toolName, Activity? parentActivity = null)
     {
         Interlocked.Increment(ref _totalToolInvocations);
-        
-        lock (_metricsLock)
-        {
-            _toolUsageCount.TryGetValue(toolName, out var count);
-            _toolUsageCount[toolName] = count + 1;
-        }
+        _toolUsageCount.AddOrUpdate(toolName, 1, (_, count) => count + 1);
 
         var activity = ActivitySource.StartActivity($"Tool.{toolName}", ActivityKind.Internal, parentActivity?.Context ?? default);
         activity?.SetTag("tool.name", toolName);
@@ -89,19 +84,13 @@ public class AgentTelemetryService
     /// <summary>Get current metrics snapshot (for dashboard/API).</summary>
     public AgentMetricsSnapshot GetMetrics()
     {
-        Dictionary<string, long> toolUsage;
-        lock (_metricsLock)
-        {
-            toolUsage = new Dictionary<string, long>(_toolUsageCount);
-        }
-
         return new AgentMetricsSnapshot
         {
             TotalRequests = Interlocked.Read(ref _totalRequests),
             TotalTokensEstimated = Interlocked.Read(ref _totalTokensEstimated),
             TotalToolInvocations = Interlocked.Read(ref _totalToolInvocations),
             TotalErrors = Interlocked.Read(ref _totalErrors),
-            ToolUsageBreakdown = toolUsage
+            ToolUsageBreakdown = new Dictionary<string, long>(_toolUsageCount)
         };
     }
 }

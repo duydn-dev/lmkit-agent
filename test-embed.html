@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Widget Embed</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 50px auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        p {
+            color: #666;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Website Bất Kỳ (Test Host)</h1>
+        <p>Đây là một trang web mô phỏng để kiểm tra tính năng nhúng Chat Widget giống Zalo.</p>
+        <p>Bạn sẽ thấy một nút chat nổi (floating button) ở góc dưới cùng bên phải. Hãy click vào nó để mở khung chat lên.</p>
+        <p>Đảm bảo rằng Backend API và Frontend (Vue) đang chạy tại <code>http://localhost:5173</code>.</p>
+    </div>
+
+    <!-- Nhúng script widget từ máy chủ frontend -->
+    <script src="http://localhost:5173/widget.js"></script>
+</body>
+</html>
