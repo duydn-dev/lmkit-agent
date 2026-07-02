@@ -16,12 +16,14 @@ public class AgentMemoryService : IAgentMemoryService
 {
     private readonly HermesDbContext _dbContext;
     private readonly LmModelManager _modelManager;
+    private readonly IVectorStoreService _vectorStore;
     private readonly ILogger<AgentMemoryService> _logger;
 
-    public AgentMemoryService(HermesDbContext dbContext, LmModelManager modelManager, ILogger<AgentMemoryService> logger)
+    public AgentMemoryService(HermesDbContext dbContext, LmModelManager modelManager, IVectorStoreService vectorStore, ILogger<AgentMemoryService> logger)
     {
         _dbContext = dbContext;
         _modelManager = modelManager;
+        _vectorStore = vectorStore;
         _logger = logger;
     }
 
@@ -178,6 +180,34 @@ public class AgentMemoryService : IAgentMemoryService
             await StoreMemoryAsync(tenantId, userId, type, key, value, 
                 sourceContext: userMessage.Length > 200 ? userMessage.Substring(0, 200) : userMessage,
                 confidence: 0.6f, ct: ct);
+            
+            // Phase 3: Graph Memory Vector Storage
+            // Cập nhật Qdrant: Lưu fact dưới dạng string relationship để semantic search tốt hơn
+            try
+            {
+                var collectionName = $"graph_memory_{tenantId:N}";
+                await _vectorStore.EnsureCollectionExistsAsync(collectionName, 384);
+                
+                var embeddingModel = await _modelManager.GetEmbeddingModelAsync();
+                var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
+                var factString = $"User {userId} ({type}) {key}: {value}";
+                var vector = embedder.GetEmbeddings(factString);
+                
+                var payload = new Dictionary<string, object>
+                {
+                    { "UserId", userId?.ToString() ?? "Anonymous" },
+                    { "Key", key },
+                    { "Value", value },
+                    { "Type", type },
+                    { "Fact", factString }
+                };
+
+                await _vectorStore.UpsertVectorAsync(collectionName, Guid.NewGuid(), vector, payload);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to store graph memory fact in vector DB.");
+            }
         }
     }
 
@@ -185,14 +215,34 @@ public class AgentMemoryService : IAgentMemoryService
     {
         var memories = await RecallMemoriesAsync(tenantId, userId, currentQuery, maxResults: 5, ct);
         
-        if (!memories.Any()) return string.Empty;
-
         var builder = new System.Text.StringBuilder();
         builder.AppendLine("\n--- Agent Memory (Recalled Facts) ---");
         
         foreach (var m in memories)
         {
             builder.AppendLine($"• [{m.MemoryType}] {m.Key}: {m.Value}");
+        }
+        
+        // Phase 3: Semantic recall from Graph Memory
+        try
+        {
+            var collectionName = $"graph_memory_{tenantId:N}";
+            var embeddingModel = await _modelManager.GetEmbeddingModelAsync();
+            var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
+            var queryVector = embedder.GetEmbeddings(currentQuery);
+            var graphResults = await _vectorStore.SearchSimilarAsync(collectionName, queryVector, 3);
+            
+            foreach (var res in graphResults.Where(r => r.Score > 0.6f))
+            {
+                if (res.Payload != null && res.Payload.TryGetValue("Fact", out var factVal))
+                {
+                    builder.AppendLine($"• [Graph Fact] {factVal}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Graph memory collection might not exist yet.");
         }
         
         builder.AppendLine("--- End Memory ---");

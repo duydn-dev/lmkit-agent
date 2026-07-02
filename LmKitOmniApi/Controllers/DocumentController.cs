@@ -4,6 +4,8 @@ using LmKitOmniApi.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MediatR;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -22,10 +24,16 @@ public class DocumentController : ControllerBase
         _mediator = mediator;
     }
 
+    [Authorize]
     [HttpGet]
     public async Task<IActionResult> GetDocuments()
     {
+        var tenantIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "TenantId")?.Value;
+        if (!Guid.TryParse(tenantIdString, out var tenantId)) return Unauthorized();
+
         var docs = await _dbContext.Documents
+            .Include(d => d.User)
+            .Where(d => d.User != null && d.User.TenantId == tenantId)
             .OrderByDescending(d => d.UploadedAt)
             .Select(d => new {
                 d.Id,
@@ -39,8 +47,9 @@ public class DocumentController : ControllerBase
         return Ok(docs);
     }
 
+    [Authorize]
     [HttpPost("upload")]
-    public async Task<IActionResult> UploadDocument(IFormFile file, [FromForm] Guid userId)
+    public async Task<IActionResult> UploadDocument(IFormFile file)
     {
         if (file == null || file.Length == 0) return BadRequest("No file uploaded.");
 
@@ -60,11 +69,14 @@ public class DocumentController : ControllerBase
             await file.CopyToAsync(stream);
         }
 
+        var userIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier || c.Type == "sub")?.Value;
+        if (!Guid.TryParse(userIdString, out var currentUserId)) return Unauthorized();
+
         var doc = new LmKitOmniApi.Domain.Entities.Document
         {
             FileName = file.FileName,
             FilePath = filePath,
-            UserId = userId,
+            UserId = currentUserId,
             IsVectorized = false
         };
 

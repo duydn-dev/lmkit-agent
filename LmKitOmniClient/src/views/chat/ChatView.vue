@@ -80,6 +80,28 @@
                 <div class="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style="animation-delay: 0.2s"></div>
               </div>
 
+              <!-- HITL Approval Card -->
+              <div v-if="msg.hitlTaskId" class="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-xl shadow-sm max-w-md">
+                <div class="flex items-center gap-2 text-orange-800 font-semibold mb-2">
+                  <i class="pi pi-exclamation-triangle"></i>
+                  Yêu cầu xác nhận (Human-in-the-loop)
+                </div>
+                <div class="text-sm text-orange-700 mb-4">
+                  Agent đang cố gắng thực thi một công cụ nhạy cảm. Hệ thống đã tạm dừng để chờ bạn phê duyệt.
+                </div>
+                <div class="flex gap-2" v-if="!msg.hitlResolved">
+                  <button @click="approveTask(msg)" class="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm font-medium rounded-lg transition-colors">
+                    Phê duyệt
+                  </button>
+                  <button @click="rejectTask(msg)" class="flex-1 px-4 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-sm font-medium rounded-lg transition-colors">
+                    Từ chối
+                  </button>
+                </div>
+                <div v-else class="text-sm font-medium" :class="msg.hitlResolved === 'Approved' ? 'text-green-600' : 'text-red-600'">
+                  Đã {{ msg.hitlResolved === 'Approved' ? 'Phê duyệt' : 'Từ chối' }} thao tác này.
+                </div>
+              </div>
+
               <!-- Assistant Action Buttons -->
               <div v-if="!msg.isTyping" class="flex items-center gap-2 mt-3 text-gray-500">
                 <button class="p-1.5 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" title="Copy"><i class="pi pi-copy text-sm"></i></button>
@@ -421,6 +443,12 @@ const sendMessage = async () => {
               await scrollToBottom();
               continue;
           }
+          if (data.startsWith('[HITL_APPROVAL_REQUIRED:')) {
+              const taskId = data.replace('[HITL_APPROVAL_REQUIRED:', '').replace(']', '').trim();
+              assistantMsg.hitlTaskId = taskId;
+              await scrollToBottom();
+              break;
+          }
           if (data.startsWith('[Agent invoked:')) continue; // Ẩn log thô của agent
 
           assistantMsg.content += data;
@@ -434,6 +462,38 @@ const sendMessage = async () => {
   } finally {
     isGenerating.value = false;
     window.dispatchEvent(new CustomEvent('chat-session-created'));
+  }
+};
+
+const approveTask = async (msg: any) => {
+  try {
+    msg.hitlResolved = 'Approved';
+    const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/approve`);
+    if (res.ok) {
+      const result = await res.json();
+      messages.value.push({
+        role: 'system',
+        content: `Đã phê duyệt. Kết quả thực thi tool: ${result.Result}`
+      });
+      // Optionally trigger agent to continue by sending a hidden prompt
+      inputMessage.value = `Tôi đã phê duyệt hành động trên. Kết quả thực thi là: ${result.Result}. Vui lòng tiếp tục.`;
+      await sendMessage();
+    }
+  } catch (error) {
+    console.error('Failed to approve task', error);
+  }
+};
+
+const rejectTask = async (msg: any) => {
+  try {
+    msg.hitlResolved = 'Rejected';
+    await http.post(`/api/TaskApproval/${msg.hitlTaskId}/reject`, { Comment: "User rejected" });
+    messages.value.push({
+      role: 'system',
+      content: `Đã từ chối hành động.`
+    });
+  } catch (error) {
+    console.error('Failed to reject task', error);
   }
 };
 </script>

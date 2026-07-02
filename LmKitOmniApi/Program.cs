@@ -91,14 +91,17 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 // 1. Cấu hình DbContext (PostgreSQL) đọc từ AppSettings
-builder.Services.AddDbContext<HermesDbContext>(options =>
-    options.UseNpgsql(builder.Configuration["PostgreSql"]));
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.Data.Interceptors.AuditSaveChangesInterceptor>();
+builder.Services.AddDbContext<HermesDbContext>((sp, options) =>
+{
+    var interceptor = sp.GetRequiredService<LmKitOmniApi.Infrastructure.Data.Interceptors.AuditSaveChangesInterceptor>();
+    options.UseNpgsql(builder.Configuration["PostgreSql"])
+           .AddInterceptors(interceptor);
+});
 
 // Đăng ký Qdrant Vector DB
-builder.Services.AddSingleton<IVectorStoreService, QdrantVectorService>(sp =>
-{
-    return new QdrantVectorService(builder.Configuration);
-});
+builder.Services.AddSingleton<IVectorStoreService, QdrantVectorService>();
 
 // Cấu hình Hangfire
 builder.Services.AddHangfire(configuration => configuration
@@ -226,6 +229,17 @@ builder.Services.AddRateLimiter(options =>
                 ReplenishmentPeriod = TimeSpan.FromMinutes(1),
                 TokensPerPeriod = 5,
                 AutoReplenishment = true
+            }));
+
+    options.AddPolicy("LoginPolicy", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromSeconds(10),
+                QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0
             }));
 });
 

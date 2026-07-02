@@ -2,18 +2,24 @@ using Qdrant.Client;
 using Qdrant.Client.Grpc;
 using LmKitOmniApi.Application.Abstractions;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Caching.Distributed;
+using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace LmKitOmniApi.Infrastructure.VectorDb;
 
 public class QdrantVectorService : IVectorStoreService
 {
     private readonly QdrantClient _client;
+    private readonly IDistributedCache _cache;
 
-    public QdrantVectorService(IConfiguration configuration)
+    public QdrantVectorService(IConfiguration configuration, IDistributedCache cache)
     {
         var baseUrl = configuration["VectorStore:BaseUrl"] ?? "http://localhost:6334";
         var uri = new Uri(baseUrl);
         _client = new QdrantClient(uri.Host, uri.Port);
+        _cache = cache;
     }
 
     public async Task EnsureCollectionExistsAsync(string collectionName, ulong vectorSize)
@@ -58,6 +64,24 @@ public class QdrantVectorService : IVectorStoreService
 
     public async Task<List<VectorSearchResult>> SearchSimilarAsync(string collectionName, float[] queryVector, int topK)
     {
+        // Tạo Hash cho câu truy vấn (Vector -> string) để làm Cache Key
+        string vectorHash;
+        using (var sha256 = SHA256.Create())
+        {
+            var bytes = new byte[queryVector.Length * 4];
+            Buffer.BlockCopy(queryVector, 0, bytes, 0, bytes.Length);
+            vectorHash = Convert.ToBase64String(sha256.ComputeHash(bytes));
+        }
+
+        var cacheKey = $"qdrant_{collectionName}_{topK}_{vectorHash}";
+        
+        // Cố gắng lấy từ Cache
+        var cachedData = await _cache.GetStringAsync(cacheKey);
+        if (!string.IsNullOrEmpty(cachedData))
+        {
+            var cachedResult = JsonSerializer.Deserialize<List<VectorSearchResult>>(cachedData);
+            if (cachedResult != null) return cachedResult;
+        }
         var searchResult = await _client.SearchAsync(
             collectionName: collectionName,
             vector: queryVector,
@@ -86,6 +110,13 @@ public class QdrantVectorService : IVectorStoreService
                 Payload = payload
             });
         }
+
+        // Lưu vào Cache trong 10 phút
+        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(results), new DistributedCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10)
+        });
+
         return results;
     }
 

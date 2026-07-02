@@ -119,7 +119,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         AgentResiliencePolicy resilience,
         AgentSkillRegistry skillRegistry,
         PromptTemplateEngine promptTemplate,
-        ILogger<AgentOrchestrator> logger)
+        ILogger<AgentOrchestrator> logger,
+        LmKitOmniApi.Infrastructure.Data.HermesDbContext dbContext)
     {
         _modelManager = modelManager;
         _ragService = ragService;
@@ -136,7 +137,9 @@ public class AgentOrchestrator : IAgentOrchestrator
         _skillRegistry = skillRegistry;
         _promptTemplate = promptTemplate;
         _logger = logger;
+        _dbContext = dbContext;
     }
+    private readonly LmKitOmniApi.Infrastructure.Data.HermesDbContext _dbContext;
 
     public async Task<List<string>> DecomposeTaskAsync(string query)
     {
@@ -175,7 +178,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         query = inputResult.ProcessedContent;
 
         var memoryContext = await _memoryService.GetMemoryContextAsync(tenantId, null, query);
-        var reactContext = await ExecuteReActLoopSilentAsync(tenantId, null, "User", query, memoryContext);
+        var reactContext = await ExecuteReActLoopSilentAsync(tenantId, null, "User", Guid.Empty, query, memoryContext);
 
         var model = await _modelManager.GetChatModelAsync();
         var chat = new MultiTurnConversation(model);
@@ -196,7 +199,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// ALL services integrated: security, memory, ReAct, multi-agent, MCP, telemetry, resilience.
     /// </summary>
     public async IAsyncEnumerable<string> StreamProcessQueryAsync(
-        Guid tenantId, string query, ChatHistory history,
+        Guid tenantId, Guid sessionId, Guid userId, string query, ChatHistory history,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         // ── Telemetry: Start trace ──
@@ -251,10 +254,18 @@ public class AgentOrchestrator : IAgentOrchestrator
             var actionLabel = ActionDisplayNames.TryGetValue(action, out var label) ? label : $"🔧 {action}";
             yield return $"[THINKING]: {actionLabel}...\\n";
 
-            // ACT: Execute with RESILIENCE wrapping
-            _telemetry.RecordReActIteration(activity, iteration + 1, action, "executing");
-            var observation = await ExecuteActionWithResilienceAsync(tenantId, null, "User", query, action, cancellationToken);
+            var userRole = "User"; // Should be fetched from DB if needed, default to User for now
+            var actionResult = await ExecuteActionWithResilienceAsync(tenantId, userId, userRole, sessionId, query, action, cancellationToken);
+            
+            // Check for HITL interception
+            if (actionResult.StartsWith("[HITL_APPROVAL_REQUIRED:"))
+            {
+                yield return actionResult;
+                yield break; // Halt execution and wait for user approval
+            }
 
+            var observation = actionResult;
+            _telemetry.RecordReActIteration(activity, iteration + 1, "observation", observation);
             if (!string.IsNullOrEmpty(observation))
             {
                 var obsPreview = observation.Length > 100
@@ -326,7 +337,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     // ═══════════════════════════════════════════
 
     private async Task<string> ExecuteReActLoopSilentAsync(
-        Guid tenantId, Guid? userId, string userRole,
+        Guid tenantId, Guid? userId, string userRole, Guid sessionId,
         string query, string existingContext, CancellationToken ct = default)
     {
         var skillDirectory = await _skillRegistry.GetSkillDirectoryAsync(tenantId, ct);
@@ -337,7 +348,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             var action = await ReasonAboutNextActionAsync(query, contextBuilder.ToString(), iteration, skillDirectory);
             if (action == "DONE" || string.IsNullOrWhiteSpace(action)) break;
 
-            var observation = await ExecuteActionWithResilienceAsync(tenantId, userId, userRole, query, action, ct);
+            var observation = await ExecuteActionWithResilienceAsync(tenantId, userId, userRole, sessionId, query, action, ct);
             if (!string.IsNullOrEmpty(observation))
                 contextBuilder.AppendLine($"\n[Observation from {action}]: {observation}");
         }
@@ -481,7 +492,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// Execute action with RESILIENCE wrapping (retry + circuit breaker).
     /// </summary>
     private async Task<string> ExecuteActionWithResilienceAsync(
-        Guid tenantId, Guid? userId, string userRole,
+        Guid tenantId, Guid? userId, string userRole, Guid sessionId,
         string query, string action, CancellationToken ct)
     {
         // Layer 1: Permission check (C3 Fix: map action name → tool name for correct RBAC)
@@ -489,6 +500,26 @@ public class AgentOrchestrator : IAgentOrchestrator
         var permResult = await _toolPermission.CanInvokeToolAsync(tenantId, userId, userRole, toolNameForPermission, ct);
         if (!permResult.IsAllowed)
         {
+            if (permResult.RequiresApproval)
+            {
+                var taskId = Guid.NewGuid();
+                var approval = new LmKitOmniApi.Domain.Entities.TaskApproval
+                {
+                    Id = taskId,
+                    TenantId = tenantId,
+                    UserId = userId ?? Guid.Empty,
+                    ChatSessionId = sessionId,
+                    ActionName = action, // Store original action (e.g. MCP)
+                    ParametersJson = query, // Store raw query/parameters
+                    Status = "Pending"
+                };
+                _dbContext.TaskApprovals.Add(approval);
+                await _dbContext.SaveChangesAsync(ct);
+
+                _logger.LogWarning("Tool '{Action}' requires human approval. TaskId: {TaskId}", action, taskId);
+                return $"[HITL_APPROVAL_REQUIRED:{taskId}]";
+            }
+
             _logger.LogWarning("Tool '{Action}' (mapped to '{Tool}') denied: {Reason}", action, toolNameForPermission, permResult.DenialReason);
             return $"[Permission denied: {permResult.DenialReason}]";
         }
@@ -628,6 +659,15 @@ public class AgentOrchestrator : IAgentOrchestrator
             default:
                 return $"Unknown action: {action}";
         }
+    }
+
+    /// <summary>
+    /// Executes a tool directly after HITL approval. Bypasses permissions because it's already approved.
+    /// </summary>
+    public async Task<string> ExecuteDirectActionAsync(Guid tenantId, Guid userId, string action, string query, CancellationToken ct = default)
+    {
+        _logger.LogInformation("Executing approved action {Action} directly.", action);
+        return await ExecuteActionCoreAsync(tenantId, userId, query, action, ct);
     }
 
     /// <summary>

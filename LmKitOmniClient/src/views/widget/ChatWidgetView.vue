@@ -56,11 +56,32 @@
               <!-- Content -->
               <div class="text-[13px] leading-relaxed whitespace-pre-wrap break-words text-gray-800 markdown-body" v-html="formatMessage(msg.content)"></div>
               
-              <!-- Typing -->
-              <div v-if="msg.isTyping" class="flex gap-1 mt-1.5">
+              <!-- Typing Indicator -->
+              <div v-if="msg.isTyping" class="flex gap-1 mt-1">
                 <div class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"></div>
                 <div class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 0.1s"></div>
                 <div class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 0.2s"></div>
+              </div>
+
+              <!-- HITL Approval Card -->
+              <div v-if="msg.hitlTaskId" class="mt-3 p-3 bg-orange-50 border border-orange-200 rounded-lg shadow-sm w-full">
+                <div class="flex items-center gap-1.5 text-orange-800 font-semibold mb-1 text-sm">
+                  <i class="pi pi-exclamation-triangle text-xs"></i> Yêu cầu xác nhận
+                </div>
+                <div class="text-xs text-orange-700 mb-3 leading-snug">
+                  Agent cần sự cho phép của bạn để tiếp tục.
+                </div>
+                <div class="flex gap-2" v-if="!msg.hitlResolved">
+                  <button @click="approveTask(msg)" class="flex-1 px-2 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium rounded transition-colors">
+                    Phê duyệt
+                  </button>
+                  <button @click="rejectTask(msg)" class="flex-1 px-2 py-1.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs font-medium rounded transition-colors">
+                    Từ chối
+                  </button>
+                </div>
+                <div v-else class="text-xs font-medium" :class="msg.hitlResolved === 'Approved' ? 'text-green-600' : 'text-red-600'">
+                  Đã {{ msg.hitlResolved === 'Approved' ? 'Phê duyệt' : 'Từ chối' }}.
+                </div>
               </div>
             </div>
           </div>
@@ -214,6 +235,12 @@ const sendMessage = async () => {
               await scrollToBottom();
               continue;
           }
+          if (data.startsWith('[HITL_APPROVAL_REQUIRED:')) {
+              const taskId = data.replace('[HITL_APPROVAL_REQUIRED:', '').replace(']', '').trim();
+              assistantMsg.hitlTaskId = taskId;
+              await scrollToBottom();
+              break;
+          }
           if (data.startsWith('[Agent invoked:')) continue; // Ẩn log thô của agent
 
           assistantMsg.content += data;
@@ -242,6 +269,37 @@ onMounted(() => {
         this.style.height = (this.scrollHeight) + "px";
     }
 });
+
+const approveTask = async (msg: any) => {
+  try {
+    msg.hitlResolved = 'Approved';
+    const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/approve`);
+    if (res.ok) {
+      const result = await res.json();
+      messages.value.push({
+        role: 'system',
+        content: `Đã phê duyệt. Kết quả: ${result.Result}`
+      });
+      inputMessage.value = `Tôi đã phê duyệt hành động trên. Kết quả thực thi là: ${result.Result}. Vui lòng tiếp tục.`;
+      await sendMessage();
+    }
+  } catch (error) {
+    console.error('Failed to approve task', error);
+  }
+};
+
+const rejectTask = async (msg: any) => {
+  try {
+    msg.hitlResolved = 'Rejected';
+    await http.post(`/api/TaskApproval/${msg.hitlTaskId}/reject`, { Comment: "User rejected" });
+    messages.value.push({
+      role: 'system',
+      content: `Đã từ chối hành động.`
+    });
+  } catch (error) {
+    console.error('Failed to reject task', error);
+  }
+};
 </script>
 
 <style scoped>

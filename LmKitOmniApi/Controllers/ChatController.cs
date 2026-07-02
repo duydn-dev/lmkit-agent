@@ -28,6 +28,19 @@ public class ChatController : ControllerBase
     [HttpPost("stream")]
     public async Task StreamChatCompletion([FromBody] StreamChatCommand request, CancellationToken cancellationToken)
     {
+        var userIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier || c.Type == "sub")?.Value;
+        var tenantIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "TenantId")?.Value;
+
+        if (!Guid.TryParse(userIdString, out var currentUserId) || !Guid.TryParse(tenantIdString, out var currentTenantId))
+        {
+            Response.StatusCode = 401;
+            await Response.WriteAsync("Unauthorized");
+            return;
+        }
+
+        request.UserId = currentUserId;
+        request.TenantId = currentTenantId;
+
         Response.Headers.Append("Content-Type", "text/event-stream");
         Response.Headers.Append("Cache-Control", "no-cache");
         Response.Headers.Append("Connection", "keep-alive");
@@ -69,8 +82,17 @@ public class ChatController : ControllerBase
         var fileContextParts = new List<string>();
         if (files != null && files.Count > 0)
         {
-            // Get tenantId from session or default
-            var tenantId = Guid.Empty;
+            // Get tenantId from session
+            var userIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier || c.Type == "sub")?.Value;
+            var tenantIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "TenantId")?.Value;
+
+            if (!Guid.TryParse(userIdString, out var currentUserId) || !Guid.TryParse(tenantIdString, out var tenantId))
+            {
+                Response.StatusCode = 401;
+                await Response.WriteAsync("data: [ERROR: Unauthorized]\n\n");
+                return;
+            }
+
             var uploadDir = Path.Combine(Directory.GetCurrentDirectory(), "Uploads", "ChatAttachments");
             Directory.CreateDirectory(uploadDir);
 
@@ -114,10 +136,17 @@ public class ChatController : ControllerBase
             augmentedMessage = message + "\n\n--- Nội dung file đính kèm ---\n" + string.Join("\n\n", fileContextParts);
         }
 
-        // Step 3: Create and stream the chat command
+        // Get UserId and TenantId for the command
+        var finalUserIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier || c.Type == "sub")?.Value;
+        var finalTenantIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "TenantId")?.Value;
+        Guid.TryParse(finalUserIdString, out var commandUserId);
+        Guid.TryParse(finalTenantIdString, out var commandTenantId);
+
         var command = new StreamChatCommand
         {
             SessionId = Guid.TryParse(sessionId, out var sid) ? sid : Guid.Empty,
+            UserId = commandUserId,
+            TenantId = commandTenantId,
             Message = augmentedMessage,
             ModelId = modelId ?? "qwen3.5:2b"
         };

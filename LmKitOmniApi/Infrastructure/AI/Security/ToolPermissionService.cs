@@ -83,6 +83,19 @@ public class ToolPermissionService : IToolPermissionService
             return Task.FromResult(ToolPermissionResult.NeedApproval());
         }
 
+        // Check 2b: Dynamic MCP Tool names
+        if (toolName.StartsWith("MCP:", StringComparison.OrdinalIgnoreCase))
+        {
+            var mcpToolName = toolName.Substring(4).ToLowerInvariant();
+            if (mcpToolName.Contains("write") || mcpToolName.Contains("delete") || 
+                mcpToolName.Contains("create") || mcpToolName.Contains("update") || 
+                mcpToolName.Contains("execute"))
+            {
+                _logger.LogInformation("⚠️ MCP Tool '{Tool}' requires human approval (User: {User})", toolName, userId);
+                return Task.FromResult(ToolPermissionResult.NeedApproval());
+            }
+        }
+
         // Check 3: Rate limiting
         var rateLimitKey = $"{tenantId}:{userId ?? Guid.Empty}:{toolName}";
         if (IsRateLimited(rateLimitKey, toolName))

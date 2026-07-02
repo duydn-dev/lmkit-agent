@@ -40,9 +40,9 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         var model = await _modelManager.GetChatModelAsync(request.ModelId);
         
         var session = await _dbContext.ChatSessions
-            .FirstOrDefaultAsync(s => s.Id == request.SessionId, cancellationToken);
+            .FirstOrDefaultAsync(s => s.Id == request.SessionId && s.TenantId == request.TenantId, cancellationToken);
         
-        if (session == null) throw new Exception("Chat Session not found");
+        if (session == null) throw new UnauthorizedAccessException("Chat Session not found or access denied.");
 
         // Load messages with absolute cap (prevents loading 10000+ messages)
         var dbMessages = await _dbContext.ChatMessages
@@ -100,7 +100,7 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
 
         var fullResponseBuilder = new System.Text.StringBuilder();
 
-        await foreach (var text in _orchestrator.StreamProcessQueryAsync(session.TenantId, request.Message, history, cancellationToken))
+        await foreach (var text in _orchestrator.StreamProcessQueryAsync(session.TenantId, session.Id, request.UserId, request.Message, history, cancellationToken))
         {
             fullResponseBuilder.Append(text);
             yield return text;
