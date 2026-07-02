@@ -23,7 +23,8 @@ public class SpeechController : ControllerBase
         {
             var command = new TranscribeAudioCommand
             {
-                AudioPath = request.AudioPath
+                AudioPath = request.AudioPath,
+                EnableVad = request.EnableVad
             };
 
             var result = await _mediator.Send(command);
@@ -37,6 +38,33 @@ public class SpeechController : ControllerBase
         catch (FileNotFoundException ex)
         {
             return BadRequest(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Internal server error: {ex.Message}");
+        }
+    }
+
+    [HttpPost("detect-language")]
+    public async Task<IActionResult> DetectLanguage([FromBody] AudioLanguageDetectionRequest request)
+    {
+        if (string.IsNullOrEmpty(request.AudioPath))
+            return BadRequest("AudioPath cannot be empty.");
+
+        try
+        {
+            var command = new DetectAudioLanguageCommand { AudioPath = request.AudioPath };
+            var result = await _mediator.Send(command);
+
+            return Ok(new AudioLanguageDetectionResponse 
+            { 
+                Language = result.Language,
+                Confidence = result.Confidence
+            });
+        }
+        catch (FileNotFoundException ex)
+        {
+            return NotFound(ex.Message);
         }
         catch (Exception ex)
         {

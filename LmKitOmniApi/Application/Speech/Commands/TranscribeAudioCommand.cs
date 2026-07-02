@@ -5,6 +5,7 @@ namespace LmKitOmniApi.Application.Speech.Commands;
 public class TranscribeAudioCommand : IRequest<TranscribeAudioResult>
 {
     public string AudioPath { get; set; } = string.Empty;
+    public bool EnableVad { get; set; } = false;
 }
 
 public class TranscribeAudioResult

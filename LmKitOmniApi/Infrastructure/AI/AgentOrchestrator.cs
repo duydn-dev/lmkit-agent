@@ -229,7 +229,7 @@ public class AgentOrchestrator : IAgentOrchestrator
 
         // ── Step 3: Discover available skills ──
         yield return "[THINKING]: 📋 Kiểm tra danh sách công cụ khả dụng...\\n";
-        var skillDirectory = await _skillRegistry.GetSkillDirectoryAsync(cancellationToken);
+        var skillDirectory = await _skillRegistry.GetSkillDirectoryAsync(tenantId, cancellationToken);
 
         // ── Step 4: ReAct Loop (STREAMING — per-step events) ──
         var contextBuilder = new System.Text.StringBuilder(memoryContext);
@@ -329,7 +329,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         Guid tenantId, Guid? userId, string userRole,
         string query, string existingContext, CancellationToken ct = default)
     {
-        var skillDirectory = await _skillRegistry.GetSkillDirectoryAsync(ct);
+        var skillDirectory = await _skillRegistry.GetSkillDirectoryAsync(tenantId, ct);
         var contextBuilder = new System.Text.StringBuilder(existingContext);
 
         for (int iteration = 0; iteration < MaxReActIterations; iteration++)
@@ -589,7 +589,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             // ── MCP External Tool (H5 Fix: query-based tool selection) ──
             case "MCP":
                 _logger.LogInformation("Attempting MCP tool invocation...");
-                var mcpTools = await _mcpClient.DiscoverToolsAsync(ct);
+                var mcpTools = await _mcpClient.DiscoverToolsAsync(tenantId, ct);
                 if (mcpTools.Count > 0)
                 {
                     // H5 Fix: Select best-matching MCP tool based on query keywords
@@ -606,7 +606,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                         .First().Tool;
 
                     _logger.LogInformation("Selected MCP tool '{Tool}' from {Count} available", bestTool.Name, mcpTools.Count);
-                    var mcpResult = await _mcpClient.InvokeToolAsync(bestTool.Name, new() { ["query"] = query }, ct);
+                    var mcpResult = await _mcpClient.InvokeToolAsync(tenantId, bestTool.Name, new() { ["query"] = query }, ct);
                     await _toolPermission.RecordToolInvocationAsync(tenantId, userId, $"MCP:{bestTool.Name}", query, ct);
                     return mcpResult.Success ? mcpResult.Content : $"[MCP error: {mcpResult.ErrorMessage}]";
                 }

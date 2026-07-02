@@ -1,15 +1,18 @@
+using System.Text.Json;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 
 namespace LmKitOmniApi.Infrastructure.AI.Resilience;
 
 /// <summary>
 /// Resilience policies for agent tool execution.
-/// Provides retry, circuit breaker, and timeout patterns.
+/// Provides retry, circuit breaker, and timeout patterns backed by IDistributedCache.
 /// Inspired by console_net/ai-agents/resilience.
 /// </summary>
 public class AgentResiliencePolicy
 {
     private readonly ILogger<AgentResiliencePolicy> _logger;
+    private readonly IDistributedCache _cache;
 
     // Retry: 3 attempts with exponential backoff
     private const int MaxRetries = 3;
@@ -23,13 +26,10 @@ public class AgentResiliencePolicy
     // Tool timeout
     private static readonly TimeSpan DefaultToolTimeout = TimeSpan.FromSeconds(30);
 
-    // Per-tool circuit breaker state (simple in-memory implementation)
-    private readonly Dictionary<string, CircuitBreakerState> _circuitStates = new();
-    private readonly object _stateLock = new();
-
-    public AgentResiliencePolicy(ILogger<AgentResiliencePolicy> logger)
+    public AgentResiliencePolicy(ILogger<AgentResiliencePolicy> logger, IDistributedCache cache)
     {
         _logger = logger;
+        _cache = cache;
     }
 
     /// <summary>
@@ -42,7 +42,7 @@ public class AgentResiliencePolicy
         CancellationToken ct = default)
     {
         // Check circuit breaker
-        if (IsCircuitOpen(toolName))
+        if (await IsCircuitOpenAsync(toolName, ct))
         {
             _logger.LogWarning("⚡ Circuit breaker OPEN for tool '{Tool}'. Using fallback.", toolName);
             return fallbackValue;
@@ -61,26 +61,25 @@ public class AgentResiliencePolicy
                 var result = await action(cts.Token);
                 
                 // Success — record it
-                RecordSuccess(toolName);
+                await RecordSuccessAsync(toolName, ct);
                 return result;
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 _logger.LogWarning("⏱️ Tool '{Tool}' timed out on attempt {Attempt}/{Max}", toolName, attempt, MaxRetries);
                 lastException = new TimeoutException($"Tool '{toolName}' timed out after {DefaultToolTimeout.TotalSeconds}s");
-                RecordFailure(toolName);
+                await RecordFailureAsync(toolName, ct);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning("🔄 Tool '{Tool}' failed on attempt {Attempt}/{Max}: {Error}",
                     toolName, attempt, MaxRetries, ex.Message);
                 lastException = ex;
-                RecordFailure(toolName);
+                await RecordFailureAsync(toolName, ct);
             }
 
             if (attempt < MaxRetries)
             {
-                // Exponential backoff (L3 Fix: explicit ms calculation for clarity)
                 var delay = TimeSpan.FromMilliseconds(InitialRetryDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
                 _logger.LogInformation("Retrying '{Tool}' in {Delay}ms...", toolName, delay.TotalMilliseconds);
                 await Task.Delay(delay, ct);
@@ -108,68 +107,65 @@ public class AgentResiliencePolicy
         return result;
     }
 
-    private bool IsCircuitOpen(string toolName)
+    private async Task<bool> IsCircuitOpenAsync(string toolName, CancellationToken ct)
     {
-        lock (_stateLock)
+        var cacheKey = $"cb_state:{toolName}";
+        var json = await _cache.GetStringAsync(cacheKey, ct);
+        if (string.IsNullOrEmpty(json)) return false;
+
+        var state = JsonSerializer.Deserialize<CircuitBreakerState>(json);
+        if (state == null) return false;
+
+        if (state.IsOpen && DateTime.UtcNow - state.OpenedAt > CircuitBreakerDuration)
         {
-            if (!_circuitStates.TryGetValue(toolName, out var state))
-                return false;
-
-            if (state.IsOpen && DateTime.UtcNow - state.OpenedAt > CircuitBreakerDuration)
+            // Half-open: allow one request through
+            state.IsOpen = false;
+            state.FailureCount = 0;
+            _logger.LogInformation("⚡ Circuit breaker HALF-OPEN for '{Tool}'. Allowing test request.", toolName);
+            await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(state), new DistributedCacheEntryOptions
             {
-                // Half-open: allow one request through
-                state.IsOpen = false;
-                state.FailureCount = 0;
-                _logger.LogInformation("⚡ Circuit breaker HALF-OPEN for '{Tool}'. Allowing test request.", toolName);
-                return false;
-            }
-
-            return state.IsOpen;
+                AbsoluteExpirationRelativeToNow = CircuitBreakerDuration + CircuitBreakerSamplingWindow
+            }, ct);
+            return false;
         }
+
+        return state.IsOpen;
     }
 
-    private void RecordFailure(string toolName)
+    private async Task RecordFailureAsync(string toolName, CancellationToken ct)
     {
-        lock (_stateLock)
+        var cacheKey = $"cb_state:{toolName}";
+        var json = await _cache.GetStringAsync(cacheKey, ct);
+        var state = string.IsNullOrEmpty(json) ? new CircuitBreakerState() : JsonSerializer.Deserialize<CircuitBreakerState>(json) ?? new CircuitBreakerState();
+
+        state.FailureCount++;
+        state.LastFailure = DateTime.UtcNow;
+
+        if (state.FirstFailure.HasValue && DateTime.UtcNow - state.FirstFailure > CircuitBreakerSamplingWindow)
         {
-            if (!_circuitStates.TryGetValue(toolName, out var state))
-            {
-                state = new CircuitBreakerState();
-                _circuitStates[toolName] = state;
-            }
-
-            state.FailureCount++;
-            state.LastFailure = DateTime.UtcNow;
-
-            // Clean old failures outside sampling window
-            if (state.FirstFailure.HasValue && DateTime.UtcNow - state.FirstFailure > CircuitBreakerSamplingWindow)
-            {
-                state.FailureCount = 1;
-                state.FirstFailure = DateTime.UtcNow;
-            }
-
-            state.FirstFailure ??= DateTime.UtcNow;
-
-            if (state.FailureCount >= CircuitBreakerThreshold)
-            {
-                state.IsOpen = true;
-                state.OpenedAt = DateTime.UtcNow;
-                _logger.LogWarning("⚡ Circuit breaker OPENED for '{Tool}' after {Count} failures.", toolName, state.FailureCount);
-            }
+            state.FailureCount = 1;
+            state.FirstFailure = DateTime.UtcNow;
         }
+
+        state.FirstFailure ??= DateTime.UtcNow;
+
+        if (state.FailureCount >= CircuitBreakerThreshold)
+        {
+            state.IsOpen = true;
+            state.OpenedAt = DateTime.UtcNow;
+            _logger.LogWarning("⚡ Circuit breaker OPENED for '{Tool}' after {Count} failures.", toolName, state.FailureCount);
+        }
+
+        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(state), new DistributedCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = CircuitBreakerDuration + CircuitBreakerSamplingWindow
+        }, ct);
     }
 
-    private void RecordSuccess(string toolName)
+    private async Task RecordSuccessAsync(string toolName, CancellationToken ct)
     {
-        lock (_stateLock)
-        {
-            if (_circuitStates.TryGetValue(toolName, out var state))
-            {
-                state.FailureCount = 0;
-                state.IsOpen = false;
-                state.FirstFailure = null;
-            }
-        }
+        var cacheKey = $"cb_state:{toolName}";
+        await _cache.RemoveAsync(cacheKey, ct);
     }
 
     private class CircuitBreakerState

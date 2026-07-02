@@ -3,6 +3,7 @@ using LmKitOmniApi.Models;
 using LmKitOmniApi.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using MediatR;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -12,11 +13,13 @@ public class DocumentController : ControllerBase
 {
     private readonly LmModelManager _modelManager;
     private readonly LmKitOmniApi.Infrastructure.Data.HermesDbContext _dbContext;
+    private readonly IMediator _mediator;
 
-    public DocumentController(LmModelManager modelManager, LmKitOmniApi.Infrastructure.Data.HermesDbContext dbContext)
+    public DocumentController(LmModelManager modelManager, LmKitOmniApi.Infrastructure.Data.HermesDbContext dbContext, IMediator mediator)
     {
         _modelManager = modelManager;
         _dbContext = dbContext;
+        _mediator = mediator;
     }
 
     [HttpGet]
@@ -105,6 +108,36 @@ public class DocumentController : ControllerBase
                 TotalPages = result.Pages.Count,
                 Elapsed = result.Elapsed
             });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Internal server error: {ex.Message}");
+        }
+    }
+
+    [HttpPost("extract-data")]
+    public async Task<IActionResult> ExtractData([FromBody] ExtractDocumentDataRequest request)
+    {
+        if (string.IsNullOrEmpty(request.DocumentPath))
+            return BadRequest("DocumentPath cannot be empty.");
+
+        try
+        {
+            var command = new LmKitOmniApi.Application.Documents.Commands.ExtractDocumentDataCommand
+            {
+                DocumentPath = request.DocumentPath,
+                JsonSchema = request.JsonSchema
+            };
+            var result = await _mediator.Send(command);
+
+            return Ok(new ExtractDocumentDataResponse
+            {
+                JsonData = result.JsonData
+            });
+        }
+        catch (FileNotFoundException ex)
+        {
+            return NotFound(ex.Message);
         }
         catch (Exception ex)
         {

@@ -12,6 +12,11 @@ using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.AI;
 using LmKitOmniApi.Infrastructure.AI.Security;
 using LmKitOmniApi.Infrastructure.AI.Filters;
+using Hangfire;
+using Hangfire.PostgreSql;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -95,6 +100,15 @@ builder.Services.AddSingleton<IVectorStoreService, QdrantVectorService>(sp =>
     return new QdrantVectorService(builder.Configuration);
 });
 
+// Cấu hình Hangfire
+builder.Services.AddHangfire(configuration => configuration
+    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(builder.Configuration["PostgreSql"])));
+
+builder.Services.AddHangfireServer();
+
 // ============================================================
 // 🛡️ AI Safety & Security Services (Phase 1)
 // ============================================================
@@ -141,6 +155,35 @@ builder.Services.AddScoped<OCRKnowledgeIngestionService>();
 // ============================================================
 // 📊 Observability & Resilience (Phase 6)
 // ============================================================
+
+// 1. Cấu hình IDistributedCache (Redis hoặc In-Memory)
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis");
+if (!string.IsNullOrEmpty(redisConnectionString))
+{
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = redisConnectionString;
+        options.InstanceName = "LmKitOmniApi_";
+    });
+}
+else
+{
+    builder.Services.AddDistributedMemoryCache();
+}
+
+// 2. Cấu hình OpenTelemetry
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService("LmKitOmniApi"))
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddMeter("LmKitOmniApi.AgentMetrics")
+        .AddPrometheusExporter())
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddSource("LmKitOmniApi.Agent"));
+
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Observability.AgentTelemetryService>();
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Resilience.AgentResiliencePolicy>();
 
@@ -260,6 +303,11 @@ app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.UseHangfireDashboard();
+
+// Kích hoạt Prometheus Scrape Endpoint cho OpenTelemetry
+app.UseOpenTelemetryPrometheusScrapingEndpoint();
 
 app.MapControllers();
 

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
 
 namespace LmKitOmniApi.Infrastructure.AI.Observability;
@@ -7,29 +8,33 @@ namespace LmKitOmniApi.Infrastructure.AI.Observability;
 /// <summary>
 /// Agent telemetry service for tracing and metrics.
 /// Provides structured tracking of agent execution steps using ActivitySource (OpenTelemetry compatible).
-/// Inspired by console_net/ai-agents/observability.
 /// </summary>
 public class AgentTelemetryService
 {
     private static readonly ActivitySource ActivitySource = new("LmKitOmniApi.Agent", "1.0.0");
-    private readonly ILogger<AgentTelemetryService> _logger;
+    private static readonly Meter AgentMeter = new("LmKitOmniApi.AgentMetrics", "1.0.0");
 
-    // In-memory metrics (for simple dashboard; production would use Prometheus/OTLP)
-    private static long _totalRequests;
-    private static long _totalTokensEstimated;
-    private static long _totalToolInvocations;
-    private static long _totalErrors;
-    private static readonly ConcurrentDictionary<string, long> _toolUsageCount = new();
+    private readonly Counter<long> _requestsCounter;
+    private readonly Counter<long> _tokensCounter;
+    private readonly Counter<long> _toolsCounter;
+    private readonly Counter<long> _errorsCounter;
+
+    private readonly ILogger<AgentTelemetryService> _logger;
 
     public AgentTelemetryService(ILogger<AgentTelemetryService> logger)
     {
         _logger = logger;
+        
+        _requestsCounter = AgentMeter.CreateCounter<long>("agent_requests_total", description: "Total number of agent requests");
+        _tokensCounter = AgentMeter.CreateCounter<long>("agent_tokens_estimated_total", description: "Total estimated tokens used");
+        _toolsCounter = AgentMeter.CreateCounter<long>("agent_tools_invocations_total", description: "Total number of tool invocations");
+        _errorsCounter = AgentMeter.CreateCounter<long>("agent_errors_total", description: "Total number of errors encountered");
     }
 
     /// <summary>Start a traced agent execution span.</summary>
     public Activity? StartAgentExecution(string operationName, Guid tenantId, string query)
     {
-        Interlocked.Increment(ref _totalRequests);
+        _requestsCounter.Add(1, new KeyValuePair<string, object?>("tenant_id", tenantId.ToString()), new KeyValuePair<string, object?>("operation", operationName));
 
         var activity = ActivitySource.StartActivity(operationName, ActivityKind.Internal);
         activity?.SetTag("agent.tenant_id", tenantId.ToString());
@@ -43,8 +48,7 @@ public class AgentTelemetryService
     /// <summary>Start a traced tool invocation span.</summary>
     public Activity? StartToolInvocation(string toolName, Activity? parentActivity = null)
     {
-        Interlocked.Increment(ref _totalToolInvocations);
-        _toolUsageCount.AddOrUpdate(toolName, 1, (_, count) => count + 1);
+        _toolsCounter.Add(1, new KeyValuePair<string, object?>("tool_name", toolName));
 
         var activity = ActivitySource.StartActivity($"Tool.{toolName}", ActivityKind.Internal, parentActivity?.Context ?? default);
         activity?.SetTag("tool.name", toolName);
@@ -66,13 +70,14 @@ public class AgentTelemetryService
     /// <summary>Record estimated token usage.</summary>
     public void RecordTokenUsage(int estimatedTokens)
     {
-        Interlocked.Add(ref _totalTokensEstimated, estimatedTokens);
+        _tokensCounter.Add(estimatedTokens);
     }
 
     /// <summary>Record an error.</summary>
     public void RecordError(Activity? activity, Exception ex)
     {
-        Interlocked.Increment(ref _totalErrors);
+        _errorsCounter.Add(1, new KeyValuePair<string, object?>("exception_type", ex.GetType().Name));
+
         activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
         activity?.AddEvent(new ActivityEvent("error", tags: new ActivityTagsCollection
         {
@@ -84,14 +89,9 @@ public class AgentTelemetryService
     /// <summary>Get current metrics snapshot (for dashboard/API).</summary>
     public AgentMetricsSnapshot GetMetrics()
     {
-        return new AgentMetricsSnapshot
-        {
-            TotalRequests = Interlocked.Read(ref _totalRequests),
-            TotalTokensEstimated = Interlocked.Read(ref _totalTokensEstimated),
-            TotalToolInvocations = Interlocked.Read(ref _totalToolInvocations),
-            TotalErrors = Interlocked.Read(ref _totalErrors),
-            ToolUsageBreakdown = new Dictionary<string, long>(_toolUsageCount)
-        };
+        // Snapshot is now obsolete since we use OpenTelemetry.
+        // Returning empty snapshot to prevent compilation errors if it's used elsewhere.
+        return new AgentMetricsSnapshot();
     }
 }
 

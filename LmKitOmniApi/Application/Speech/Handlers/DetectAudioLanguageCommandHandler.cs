@@ -6,16 +6,16 @@ using LmKitOmniApi.Services;
 
 namespace LmKitOmniApi.Application.Speech.Handlers;
 
-public class TranscribeAudioCommandHandler : IRequestHandler<TranscribeAudioCommand, TranscribeAudioResult>
+public class DetectAudioLanguageCommandHandler : IRequestHandler<DetectAudioLanguageCommand, DetectAudioLanguageResult>
 {
     private readonly LmModelManager _modelManager;
 
-    public TranscribeAudioCommandHandler(LmModelManager modelManager)
+    public DetectAudioLanguageCommandHandler(LmModelManager modelManager)
     {
         _modelManager = modelManager;
     }
 
-    public async Task<TranscribeAudioResult> Handle(TranscribeAudioCommand request, CancellationToken cancellationToken)
+    public async Task<DetectAudioLanguageResult> Handle(DetectAudioLanguageCommand request, CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(request.AudioPath) || !System.IO.File.Exists(request.AudioPath))
             throw new FileNotFoundException("Audio file not found.", request.AudioPath);
@@ -23,15 +23,13 @@ public class TranscribeAudioCommandHandler : IRequestHandler<TranscribeAudioComm
         var speechModel = await _modelManager.GetSpeechModelAsync();
         var engine = new SpeechToText(speechModel);
 
-        engine.EnableVoiceActivityDetection = request.EnableVad;
-
         var audio = new WaveFile(request.AudioPath);
-        var result = engine.Transcribe(audio);
+        var result = engine.DetectLanguage(audio);
 
-        return new TranscribeAudioResult
+        return new DetectAudioLanguageResult
         {
-            Text = result.Text,
-            DurationSeconds = audio.Duration.TotalSeconds
+            Language = result.Language,
+            Confidence = result.Confidence
         };
     }
 }

@@ -1,73 +1,86 @@
 using System.Net.Http.Json;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.EntityFrameworkCore;
+using LmKitOmniApi.Infrastructure.Data;
+using LmKitOmniApi.Domain.Entities;
 
 namespace LmKitOmniApi.Infrastructure.AI.Mcp;
 
 /// <summary>
 /// MCP (Model Context Protocol) Client Service.
 /// Connects to external MCP servers for dynamic tool discovery and invocation.
-/// Inspired by console_net/ai-agents/mcp-client.
-/// 
-/// MCP enables the AI agent to discover and use tools from external services
-/// without hardcoding them into the codebase.
 /// </summary>
 public class McpClientService
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IConfiguration _configuration;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<McpClientService> _logger;
 
-    // Cache discovered tools from MCP servers
-    private readonly Dictionary<string, List<McpToolDefinition>> _cachedTools = new();
+    // Cache discovered tools from MCP servers per Tenant
+    private readonly Dictionary<Guid, Dictionary<string, List<McpToolDefinition>>> _cachedTools = new();
+    private readonly Dictionary<Guid, DateTime> _lastDiscovery = new();
     private readonly SemaphoreSlim _cacheLock = new(1, 1);
-    private DateTime _lastDiscovery = DateTime.MinValue;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(10);
 
     public McpClientService(
         IHttpClientFactory httpClientFactory,
-        IConfiguration configuration,
+        IServiceScopeFactory scopeFactory,
         ILogger<McpClientService> logger)
     {
         _httpClientFactory = httpClientFactory;
-        _configuration = configuration;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
     /// <summary>
-    /// Discover available tools from all configured MCP servers.
+    /// Discover available tools from all configured MCP servers for a specific tenant.
     /// Caches results for 10 minutes.
     /// </summary>
-    public async Task<List<McpToolDefinition>> DiscoverToolsAsync(CancellationToken ct = default)
+    public async Task<List<McpToolDefinition>> DiscoverToolsAsync(Guid tenantId, CancellationToken ct = default)
     {
         await _cacheLock.WaitAsync(ct);
         try
         {
-            if (DateTime.UtcNow - _lastDiscovery < CacheDuration && _cachedTools.Count > 0)
+            if (_lastDiscovery.TryGetValue(tenantId, out var lastTime) && 
+                DateTime.UtcNow - lastTime < CacheDuration && 
+                _cachedTools.TryGetValue(tenantId, out var tenantCache) && 
+                tenantCache.Count > 0)
             {
-                return _cachedTools.Values.SelectMany(t => t).ToList();
+                return tenantCache.Values.SelectMany(t => t).ToList();
             }
 
-            _cachedTools.Clear();
-            var mcpEndpoints = _configuration.GetSection("Mcp:Servers").Get<List<McpServerConfig>>() ?? new();
+            if (!_cachedTools.ContainsKey(tenantId))
+            {
+                _cachedTools[tenantId] = new Dictionary<string, List<McpToolDefinition>>();
+            }
+            
+            _cachedTools[tenantId].Clear();
+
+            using var scope = _scopeFactory.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
+
+            var mcpEndpoints = await dbContext.ExternalMcpServers
+                .Where(x => x.TenantId == tenantId && x.IsActive)
+                .ToListAsync(ct);
 
             foreach (var server in mcpEndpoints)
             {
                 try
                 {
                     var tools = await DiscoverToolsFromServerAsync(server, ct);
-                    _cachedTools[server.Name] = tools;
-                    _logger.LogInformation("🔗 [MCP] Discovered {Count} tools from '{Server}'", tools.Count, server.Name);
+                    _cachedTools[tenantId][server.Name] = tools;
+                    _logger.LogInformation("🔗 [MCP] Discovered {Count} tools from '{Server}' for Tenant {Tenant}", tools.Count, server.Name, tenantId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning("⚠️ [MCP] Failed to discover tools from '{Server}': {Error}", server.Name, ex.Message);
+                    _logger.LogWarning("⚠️ [MCP] Failed to discover tools from '{Server}' for Tenant {Tenant}: {Error}", server.Name, tenantId, ex.Message);
                 }
             }
 
-            _lastDiscovery = DateTime.UtcNow;
-            return _cachedTools.Values.SelectMany(t => t).ToList();
+            _lastDiscovery[tenantId] = DateTime.UtcNow;
+            return _cachedTools[tenantId].Values.SelectMany(t => t).ToList();
         }
         finally
         {
@@ -78,45 +91,53 @@ public class McpClientService
     /// <summary>
     /// Invoke a tool on an MCP server by name.
     /// </summary>
-    public async Task<McpInvocationResult> InvokeToolAsync(string toolName, Dictionary<string, object> parameters, CancellationToken ct = default)
+    public async Task<McpInvocationResult> InvokeToolAsync(Guid tenantId, string toolName, Dictionary<string, object> parameters, CancellationToken ct = default)
     {
         // Find which server hosts this tool
-        var serverName = _cachedTools
-            .FirstOrDefault(kv => kv.Value.Any(t => t.Name.Equals(toolName, StringComparison.OrdinalIgnoreCase)))
-            .Key;
-
-        if (string.IsNullOrEmpty(serverName))
+        string? serverName = null;
+        
+        if (_cachedTools.TryGetValue(tenantId, out var tenantCache))
         {
-            // Try discovery first
-            await DiscoverToolsAsync(ct);
-            serverName = _cachedTools
+            serverName = tenantCache
                 .FirstOrDefault(kv => kv.Value.Any(t => t.Name.Equals(toolName, StringComparison.OrdinalIgnoreCase)))
                 .Key;
         }
 
         if (string.IsNullOrEmpty(serverName))
         {
-            return McpInvocationResult.Fail($"Tool '{toolName}' not found on any MCP server.");
+            // Try discovery first
+            await DiscoverToolsAsync(tenantId, ct);
+            if (_cachedTools.TryGetValue(tenantId, out var retryCache))
+            {
+                serverName = retryCache
+                    .FirstOrDefault(kv => kv.Value.Any(t => t.Name.Equals(toolName, StringComparison.OrdinalIgnoreCase)))
+                    .Key;
+            }
         }
 
-        var servers = _configuration.GetSection("Mcp:Servers").Get<List<McpServerConfig>>() ?? new();
-        var server = servers.FirstOrDefault(s => s.Name == serverName);
+        if (string.IsNullOrEmpty(serverName))
+        {
+            return McpInvocationResult.Fail($"Tool '{toolName}' not found on any MCP server for Tenant '{tenantId}'.");
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
+        
+        var server = await dbContext.ExternalMcpServers
+            .FirstOrDefaultAsync(s => s.TenantId == tenantId && s.Name == serverName && s.IsActive, ct);
+
         if (server == null)
         {
-            return McpInvocationResult.Fail($"Server '{serverName}' configuration not found.");
+            return McpInvocationResult.Fail($"Server '{serverName}' configuration not found or inactive for Tenant '{tenantId}'.");
         }
 
         try
         {
             var client = _httpClientFactory.CreateClient("MCP");
-            client.BaseAddress = new Uri(server.BaseUrl);
+            client.BaseAddress = new Uri(server.Url);
             client.Timeout = TimeSpan.FromSeconds(30);
 
-            if (!string.IsNullOrEmpty(server.ApiKey))
-            {
-                client.DefaultRequestHeaders.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", server.ApiKey);
-            }
+            ApplyHeaders(client, server.HeadersJson);
 
             var request = new McpToolInvocationRequest
             {
@@ -129,7 +150,7 @@ public class McpClientService
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<McpToolResponse>(cancellationToken: ct);
-                _logger.LogInformation("🔗 [MCP] Tool '{Tool}' invoked successfully on '{Server}'", toolName, serverName);
+                _logger.LogInformation("🔗 [MCP] Tool '{Tool}' invoked successfully on '{Server}' (Tenant {Tenant})", toolName, serverName, tenantId);
                 return McpInvocationResult.Ok(result?.Content ?? "", toolName, serverName);
             }
             else
@@ -149,9 +170,9 @@ public class McpClientService
     /// <summary>
     /// Get a formatted list of MCP tools for injection into agent system prompt.
     /// </summary>
-    public async Task<string> GetToolDirectoryAsync(CancellationToken ct = default)
+    public async Task<string> GetToolDirectoryAsync(Guid tenantId, CancellationToken ct = default)
     {
-        var tools = await DiscoverToolsAsync(ct);
+        var tools = await DiscoverToolsAsync(tenantId, ct);
         if (tools.Count == 0) return string.Empty;
 
         var builder = new System.Text.StringBuilder();
@@ -168,17 +189,13 @@ public class McpClientService
         return builder.ToString();
     }
 
-    private async Task<List<McpToolDefinition>> DiscoverToolsFromServerAsync(McpServerConfig server, CancellationToken ct)
+    private async Task<List<McpToolDefinition>> DiscoverToolsFromServerAsync(ExternalMcpServer server, CancellationToken ct)
     {
         var client = _httpClientFactory.CreateClient("MCP");
-        client.BaseAddress = new Uri(server.BaseUrl);
+        client.BaseAddress = new Uri(server.Url);
         client.Timeout = TimeSpan.FromSeconds(10);
 
-        if (!string.IsNullOrEmpty(server.ApiKey))
-        {
-            client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", server.ApiKey);
-        }
+        ApplyHeaders(client, server.HeadersJson);
 
         var response = await client.GetAsync("/mcp/tools", ct);
         response.EnsureSuccessStatusCode();
@@ -193,17 +210,38 @@ public class McpClientService
 
         return tools;
     }
+    
+    private void ApplyHeaders(HttpClient client, string? headersJson)
+    {
+        if (string.IsNullOrWhiteSpace(headersJson)) return;
+        
+        try
+        {
+            var headers = JsonSerializer.Deserialize<Dictionary<string, string>>(headersJson);
+            if (headers != null)
+            {
+                foreach (var header in headers)
+                {
+                    if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase) && header.Value.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var token = header.Value.Substring(7).Trim();
+                        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                    }
+                    else
+                    {
+                        client.DefaultRequestHeaders.TryAddWithoutValidation(header.Key, header.Value);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "⚠️ [MCP] Failed to parse HeadersJson");
+        }
+    }
 }
 
 // ---- Models ----
-
-public class McpServerConfig
-{
-    public string Name { get; set; } = string.Empty;
-    public string BaseUrl { get; set; } = string.Empty;
-    public string? ApiKey { get; set; }
-    public string? Description { get; set; }
-}
 
 public class McpToolDefinition
 {

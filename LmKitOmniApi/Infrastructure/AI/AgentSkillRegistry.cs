@@ -44,7 +44,7 @@ public class AgentSkillRegistry
     /// Get the full skill directory for injection into ReAct reasoning prompt.
     /// Includes built-in tools, specialized agents, and discovered MCP tools.
     /// </summary>
-    public async Task<string> GetSkillDirectoryAsync(CancellationToken ct = default)
+    public async Task<string> GetSkillDirectoryAsync(Guid tenantId, CancellationToken ct = default)
     {
         var builder = new System.Text.StringBuilder();
         builder.AppendLine("Available actions:");
@@ -65,7 +65,7 @@ public class AgentSkillRegistry
         // 3. MCP tools (dynamic discovery, cached)
         try
         {
-            var mcpTools = await _mcpClient.DiscoverToolsAsync(ct);
+            var mcpTools = await _mcpClient.DiscoverToolsAsync(tenantId, ct);
             foreach (var tool in mcpTools)
             {
                 builder.AppendLine($"- MCP→{tool.Name}: {tool.Description} (Server: {tool.ServerName})");
