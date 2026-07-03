@@ -4,6 +4,9 @@ using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Caching.Distributed;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace LmKitOmniApi.Infrastructure.AI;
 
@@ -18,13 +21,15 @@ public class AgentMemoryService : IAgentMemoryService
     private readonly LmModelManager _modelManager;
     private readonly IVectorStoreService _vectorStore;
     private readonly ILogger<AgentMemoryService> _logger;
+    private readonly IDistributedCache _cache;
 
-    public AgentMemoryService(HermesDbContext dbContext, LmModelManager modelManager, IVectorStoreService vectorStore, ILogger<AgentMemoryService> logger)
+    public AgentMemoryService(HermesDbContext dbContext, LmModelManager modelManager, IVectorStoreService vectorStore, ILogger<AgentMemoryService> logger, IDistributedCache cache)
     {
         _dbContext = dbContext;
         _modelManager = modelManager;
         _vectorStore = vectorStore;
         _logger = logger;
+        _cache = cache;
     }
 
     public async Task<Guid> StoreMemoryAsync(Guid tenantId, Guid? userId, string memoryType, string key, string value,
@@ -47,6 +52,10 @@ public class AgentMemoryService : IAgentMemoryService
             existing.ExpiresAtUtc = expiresAt;
             
             await _dbContext.SaveChangesAsync(ct);
+
+            var cacheKeyExisting = $"AgentMemories:{tenantId}:{userId}";
+            await _cache.RemoveAsync(cacheKeyExisting, ct);
+
             _logger.LogInformation("🧠 Updated memory: [{Type}] {Key} = {Value}", memoryType, key, 
                 value.Length > 50 ? value.Substring(0, 50) + "..." : value);
             return existing.Id;
@@ -70,6 +79,9 @@ public class AgentMemoryService : IAgentMemoryService
         _dbContext.AgentMemories.Add(memory);
         await _dbContext.SaveChangesAsync(ct);
 
+        var cacheKey = $"AgentMemories:{tenantId}:{userId}";
+        await _cache.RemoveAsync(cacheKey, ct);
+
         _logger.LogInformation("🧠 Stored new memory: [{Type}] {Key} = {Value}", memoryType, key,
             value.Length > 50 ? value.Substring(0, 50) + "..." : value);
         return memory.Id;
@@ -82,13 +94,50 @@ public class AgentMemoryService : IAgentMemoryService
     /// </summary>
     public async Task<List<MemoryRecallResult>> RecallMemoriesAsync(Guid tenantId, Guid? userId, string query, int maxResults = 5, CancellationToken ct = default)
     {
-        var candidates = await _dbContext.AgentMemories
-            .Where(m => m.TenantId == tenantId
-                && (m.UserId == null || m.UserId == userId)
-                && (m.ExpiresAtUtc == null || m.ExpiresAtUtc > DateTime.UtcNow))
-            .OrderByDescending(m => m.UpdatedAtUtc)
-            .Take(200)
-            .ToListAsync(ct);
+        var cacheKey = $"AgentMemories:{tenantId}:{userId}";
+        List<AgentMemory>? candidates = null;
+        var cachedMemories = await _cache.GetStringAsync(cacheKey, ct);
+        
+        if (!string.IsNullOrEmpty(cachedMemories))
+        {
+            try
+            {
+                candidates = JsonSerializer.Deserialize<List<AgentMemory>>(cachedMemories, new JsonSerializerOptions
+                {
+                    ReferenceHandler = ReferenceHandler.IgnoreCycles
+                });
+            }
+            catch { /* fallback to db */ }
+        }
+
+        if (candidates == null)
+        {
+            candidates = await _dbContext.AgentMemories
+                .Where(m => m.TenantId == tenantId
+                    && (m.UserId == null || m.UserId == userId)
+                    && (m.ExpiresAtUtc == null || m.ExpiresAtUtc > DateTime.UtcNow))
+                .OrderByDescending(m => m.UpdatedAtUtc)
+                .Take(200)
+                .ToListAsync(ct);
+                
+            try
+            {
+                var json = JsonSerializer.Serialize(candidates, new JsonSerializerOptions
+                {
+                    ReferenceHandler = ReferenceHandler.IgnoreCycles
+                });
+                await _cache.SetStringAsync(cacheKey, json, new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24)
+                }, ct);
+            }
+            catch { /* ignore cache set errors */ }
+        }
+        else
+        {
+            // Filter out any expired memories that might be in the cache
+            candidates = candidates.Where(m => m.ExpiresAtUtc == null || m.ExpiresAtUtc > DateTime.UtcNow).ToList();
+        }
 
         if (!candidates.Any()) return new List<MemoryRecallResult>();
 

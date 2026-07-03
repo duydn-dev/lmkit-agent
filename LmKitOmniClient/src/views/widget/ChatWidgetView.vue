@@ -122,10 +122,12 @@ import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 
 interface Message {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
   isTyping?: boolean;
   thinkingSteps?: string[];
+  hitlTaskId?: string;
+  hitlResolved?: string;
 }
 
 const inputMessage = ref('');

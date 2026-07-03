@@ -1,23 +1,27 @@
+using Hangfire;
+
 namespace LmKitOmniApi.Application.Jobs;
 
-// Mock for TickerQ Job Manager
 public class BackgroundJobManager
 {
     public void ScheduleJob(string jobName, Action jobAction)
     {
-        // Simulate scheduling a background job
-        Task.Run(() =>
+        BackgroundJob.Enqueue(() => ExecuteJob(jobName, jobAction));
+    }
+
+    [JobDisplayName("{0}")]
+    public static void ExecuteJob(string jobName, Action jobAction)
+    {
+        Console.WriteLine($"[JobStarted] {jobName}");
+        try
         {
-            Console.WriteLine($"[JobStarted] {jobName}");
-            try
-            {
-                jobAction();
-                Console.WriteLine($"[JobCompleted] {jobName}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[JobFailed] {jobName} - {ex.Message}");
-            }
-        });
+            jobAction();
+            Console.WriteLine($"[JobCompleted] {jobName}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[JobFailed] {jobName} - {ex.Message}");
+            throw; // Let Hangfire handle retries
+        }
     }
 }

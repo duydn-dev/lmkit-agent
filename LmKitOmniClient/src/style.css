@@ -1,18 +1,20 @@
 @import "tailwindcss";
 
 @theme {
-  --color-chatgpt-dark: #f9f9f9;
-  --color-chatgpt-light: #ffffff;
-  --color-chatgpt-text: #111827;
+  --color-chatgpt-dark: #121212;
+  --color-chatgpt-light: #1e1e1e;
+  --color-chatgpt-text: #e0e0e0;
   --color-chatgpt-brand: #0ea5e9; /* Sky Blue */
+  --color-glass: rgba(30, 30, 30, 0.6);
+  --color-glass-border: rgba(255, 255, 255, 0.08);
 }
 
 html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background-color: #f9f9f9;
-  color: #111827;
+  background-color: var(--color-chatgpt-dark);
+  color: var(--color-chatgpt-text);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   overflow: hidden;
 }
@@ -29,18 +31,36 @@ html, body {
   flex-direction: column;
 }
 
+/* Glassmorphism utilities */
+.glass-panel {
+  background: var(--color-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--color-glass-border);
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent; 
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2); 
+  background: rgba(255, 255, 255, 0.1); 
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3); 
+  background: rgba(255, 255, 255, 0.2); 
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
 }

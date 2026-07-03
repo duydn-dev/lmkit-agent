@@ -71,4 +71,40 @@ public class SpeechController : ControllerBase
             return StatusCode(500, $"Internal server error: {ex.Message}");
         }
     }
+
+    [HttpGet("token")]
+    public IActionResult GetLiveKitToken([FromServices] IConfiguration config, [FromQuery] string room = "omni-room", [FromQuery] string participant = "user-123")
+    {
+        var apiKey = config["LiveKit:ApiKey"];
+        var apiSecret = config["LiveKit:ApiSecret"];
+
+        if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(apiSecret))
+            return StatusCode(500, "LiveKit is not configured");
+
+        var securityKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(apiSecret));
+        var credentials = new Microsoft.IdentityModel.Tokens.SigningCredentials(securityKey, Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256);
+
+        var header = new System.IdentityModel.Tokens.Jwt.JwtHeader(credentials);
+        var payload = new System.IdentityModel.Tokens.Jwt.JwtPayload(
+            issuer: apiKey,
+            audience: null,
+            claims: null,
+            notBefore: DateTime.UtcNow,
+            expires: DateTime.UtcNow.AddHours(2)
+        );
+
+        payload.AddClaim(new System.Security.Claims.Claim(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub, participant));
+        
+        var videoClaim = new Dictionary<string, object>
+        {
+            { "roomJoin", true },
+            { "room", room }
+        };
+        payload.Add("video", videoClaim);
+
+        var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(header, payload);
+        var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+        
+        return Ok(new { token = tokenHandler.WriteToken(token) });
+    }
 }

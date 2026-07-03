@@ -20,6 +20,12 @@ const router = createRouter({
           name: 'Documents',
           component: () => import('../views/documents/DocumentView.vue'),
           meta: { requiresAuth: true }
+        },
+        {
+          path: '/admin/users',
+          name: 'AdminUsers',
+          component: () => import('../views/admin/UserManager.vue'),
+          meta: { requiresAuth: true, requiresAdmin: true }
         }
       ]
     },
@@ -40,9 +46,10 @@ const router = createRouter({
 
 let isAuthChecked = false;
 
-router.beforeEach(async (to, from, next) => {
+router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore();
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth !== false);
+  const requiresAdmin = to.matched.some(record => record.meta.requiresAdmin === true);
 
   if (!isAuthChecked) {
     await authStore.fetchCurrentUser();
@@ -53,6 +60,8 @@ router.beforeEach(async (to, from, next) => {
     next('/login');
   } else if (to.path === '/login' && authStore.isAuthenticated) {
     next('/');
+  } else if (requiresAdmin && authStore.currentUser?.role !== 'Admin') {
+    next('/'); // Không có quyền, chuyển về trang chủ
   } else {
     next();
   }

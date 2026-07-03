@@ -14,6 +14,11 @@
           <i class="pi pi-file-pdf"></i>
           <span>Kho tài liệu (RAG)</span>
         </router-link>
+
+        <router-link v-if="isAdmin" to="/admin/users" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
+          <i class="pi pi-users"></i>
+          <span>Quản lý User</span>
+        </router-link>
       </div>
       
       <div class="flex-1 overflow-y-auto p-3 mt-2 flex flex-col">
@@ -148,6 +153,9 @@ interface ChatSession {
 const router = useRouter();
 const userName = ref('Người dùng');
 const userEmail = ref('user@lmkit.net');
+const userRole = ref('Member');
+
+const isAdmin = computed(() => userRole.value === 'Admin');
 
 const showSettingsModal = ref(false);
 const activeTab = ref('mcp');
@@ -196,6 +204,7 @@ onMounted(() => {
       const user = JSON.parse(userJson);
       userName.value = user.fullName || user.username || 'User';
       userEmail.value = user.email || '';
+      userRole.value = user.role || 'Member';
       
       // Load sessions after getting user info
       loadChatSessions();

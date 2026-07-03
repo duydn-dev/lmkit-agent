@@ -71,7 +71,8 @@
                 </div>
               </div>
 
-              <div class="text-base font-medium leading-relaxed whitespace-pre-wrap break-words text-gray-800 markdown-body" v-html="formatMessage(msg.content)"></div>
+              <!-- Render Message with Charts -->
+              <GenerativeUiRenderer :content="msg.content" />
               
               <!-- Typing Indicator -->
               <div v-if="msg.isTyping" class="flex gap-1 mt-2">
@@ -204,6 +205,9 @@
         </a>
       </div>
     </Drawer>
+    
+    <!-- Voice to Voice Module -->
+    <VoiceWebRtcModule />
   </div>
 </template>
 
@@ -212,14 +216,18 @@ import { ref, nextTick, watch, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
+import GenerativeUiRenderer from '@/components/chat/GenerativeUiRenderer.vue';
+import VoiceWebRtcModule from '@/components/voice/VoiceWebRtcModule.vue';
 
 interface Message {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
   isTyping?: boolean;
   webUrls?: string[];
   thinkingSteps?: string[];
   attachedFiles?: string[];
+  hitlTaskId?: string;
+  hitlResolved?: string;
 }
 
 const inputMessage = ref('');
@@ -315,9 +323,7 @@ const scrollToBottom = async () => {
   }
 };
 
-const formatMessage = (text: string) => {
-  return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>');
-};
+
 
 const triggerFileInput = () => {
   fileInputRef.value?.click();

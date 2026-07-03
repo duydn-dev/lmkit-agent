@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.SignalR;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Infrastructure.VectorDb;
 using LmKitOmniApi.Application.Abstractions;
@@ -17,8 +19,17 @@ using Hangfire.PostgreSql;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Serilog;
+using Microsoft.Extensions.Caching.Distributed;
+using LmKitOmniApi.Infrastructure.Notifications;
+using LmKitOmniApi.Application.Jobs;
+using LmKitOmniApi.Application.Chat;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseSerilog((context, configuration) => 
+    configuration.ReadFrom.Configuration(context.Configuration)
+                 .WriteTo.Console());
 
 // Khởi tạo LM-Kit.NET License
 LMKit.Licensing.LicenseManager.SetLicenseKey("");
@@ -52,8 +63,17 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Đăng ký SignalR
-builder.Services.AddSignalR();
+// Đăng ký SignalR với Redis Backplane
+var signalRRedisConn = builder.Configuration.GetConnectionString("Redis");
+if (!string.IsNullOrEmpty(signalRRedisConn))
+{
+    // builder.Services.AddSignalR().AddStackExchangeRedis(signalRRedisConn);
+    builder.Services.AddSignalR(); // Tạm thời fallback do lỗi package của .NET 10 preview
+}
+else
+{
+    builder.Services.AddSignalR();
+}
 
 // Đăng ký Swagger/OpenAPI
 builder.Services.AddEndpointsApiExplorer();
@@ -86,6 +106,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     context.Token = context.Request.Cookies["hermes_token"];
                 }
                 return Task.CompletedTask;
+            },
+            OnTokenValidated = async context =>
+            {
+                var cache = context.HttpContext.RequestServices.GetRequiredService<IDistributedCache>();
+                var tokenStr = context.Principal?.FindFirst("jti")?.Value ?? context.SecurityToken.Id;
+                if (!string.IsNullOrEmpty(tokenStr))
+                {
+                    var isBlacklisted = await cache.GetStringAsync($"blacklist_{tokenStr}");
+                    if (!string.IsNullOrEmpty(isBlacklisted))
+                    {
+                        context.Fail("Token has been revoked");
+                    }
+                }
             }
         };
     });
@@ -96,7 +129,8 @@ builder.Services.AddScoped<LmKitOmniApi.Infrastructure.Data.Interceptors.AuditSa
 builder.Services.AddDbContext<HermesDbContext>((sp, options) =>
 {
     var interceptor = sp.GetRequiredService<LmKitOmniApi.Infrastructure.Data.Interceptors.AuditSaveChangesInterceptor>();
-    options.UseNpgsql(builder.Configuration["PostgreSql"])
+    options.UseNpgsql(builder.Configuration["PostgreSql"], npgsqlOptions => 
+            npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3))
            .AddInterceptors(interceptor);
 });
 
@@ -112,12 +146,23 @@ builder.Services.AddHangfire(configuration => configuration
 
 builder.Services.AddHangfireServer();
 
+// Đăng ký Neo4j Driver
+var neo4jUri = builder.Configuration["GraphDb:Uri"] ?? "bolt://localhost:7687";
+var neo4jUser = builder.Configuration["GraphDb:Username"] ?? "neo4j";
+var neo4jPassword = builder.Configuration["GraphDb:Password"] ?? "neo4j";
+builder.Services.AddSingleton(Neo4j.Driver.GraphDatabase.Driver(neo4jUri, Neo4j.Driver.AuthTokens.Basic(neo4jUser, neo4jPassword)));
+
+// Đăng ký Telegram Proactive Agent
+builder.Services.Configure<TelegramSettings>(builder.Configuration.GetSection("TelegramSettings"));
+builder.Services.AddScoped<ITelegramNotificationService, TelegramNotificationService>();
+
 // ============================================================
 // 🛡️ AI Safety & Security Services (Phase 1)
 // ============================================================
 builder.Services.AddScoped<IPromptGuardService, PromptGuardService>();
 builder.Services.AddScoped<IToolPermissionService, ToolPermissionService>();
 builder.Services.AddScoped<ToolSandboxService>();
+builder.Services.AddScoped<IExecutionSandboxEngine, ExecutionSandboxEngine>();
 
 // Filter Pipeline (ordered execution)
 builder.Services.AddScoped<IAgentFilter, InputSanitizationFilter>();
@@ -129,6 +174,8 @@ builder.Services.AddScoped<AgentFilterPipeline>();
 // ============================================================
 builder.Services.AddScoped<IAgentMemoryService, AgentMemoryService>();
 builder.Services.AddScoped<ITokenManagementService, TokenManagementService>();
+builder.Services.AddScoped<IGraphKnowledgeService, GraphKnowledgeService>();
+builder.Services.AddScoped<ISentimentAnalyzerService, SentimentAnalyzerService>();
 
 // ============================================================
 // 🔍 Query Expansion (Phase 4 — Hybrid Search)
@@ -149,6 +196,7 @@ builder.Services.AddScoped<ISpecializedAgent, LmKitOmniApi.Infrastructure.AI.Age
 builder.Services.AddScoped<ISpecializedAgent, LmKitOmniApi.Infrastructure.AI.Agents.AnalysisAgent>();
 builder.Services.AddScoped<ISpecializedAgent, LmKitOmniApi.Infrastructure.AI.Agents.VisionAgent>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Agents.MultiAgentOrchestrator>();
+builder.Services.AddScoped<DagWorkflowOrchestrator>();
 
 // ============================================================
 // 📎 Chat + File Attachment (Phase 5)
@@ -220,6 +268,9 @@ builder.Services.AddHealthChecks();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    
+    // In Production with multiple instances, implement an IDistributedCache / Redis-backed sliding window here.
+    // E.g. using AspNetCoreRateLimit or a custom middleware. Using local TokenBucket for now.
     options.AddPolicy("ai-agent", httpContext =>
         RateLimitPartition.GetTokenBucketLimiter(
             httpContext.User.Identity?.Name ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
@@ -245,23 +296,11 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
-// Database Migration (sử dụng Migrate thay vì EnsureCreated để hỗ trợ schema evolution)
+// Database Migration - Bỏ Migrate() tự động trong code API để tránh lock table trên cluster
+// Hãy chạy dotnet ef database update trong CI/CD hoặc Init Container
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<LmKitOmniApi.Infrastructure.Data.HermesDbContext>();
-    
-    // Sử dụng Migrate() thay vì EnsureCreated() để hỗ trợ cập nhật schema
-    // Lưu ý: Cần chạy `dotnet ef migrations add InitialCreate` trước lần đầu tiên
-    try
-    {
-        dbContext.Database.Migrate();
-    }
-    catch
-    {
-        // Fallback cho lần chạy đầu tiên khi chưa có migration
-        dbContext.Database.EnsureCreated();
-    }
-
     // Data Seeding — tạo tài khoản admin với mật khẩu ngẫu nhiên an toàn
     if (!dbContext.Tenants.Any())
     {
@@ -296,6 +335,25 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+// Cấu hình Hangfire Recurring Jobs (Proactive Agent & Model Distillation)
+RecurringJob.AddOrUpdate<ProactiveMonitorJob>(
+    "proactive-monitor-job",
+    job => job.RunMonitorAsync(CancellationToken.None),
+    "*/30 * * * *" // Chạy định kỳ mỗi 30 phút
+);
+
+RecurringJob.AddOrUpdate<ContinuousFineTuningJob>(
+    "nightly-lora-finetuning-job",
+    job => job.RunNightlyFineTuningAsync(CancellationToken.None),
+    "0 2 * * *" // Chạy vào lúc 2:00 AM mỗi ngày
+);
+
+RecurringJob.AddOrUpdate<ReflexionJob>(
+    "nightly-reflexion-job",
+    job => job.RunReflexionAsync(CancellationToken.None),
+    "30 2 * * *" // Chạy vào lúc 2:30 AM mỗi ngày
+);
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -318,7 +376,10 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.UseHangfireDashboard();
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[] { new LmKitOmniApi.Infrastructure.Security.HangfireAuthorizationFilter() }
+});
 
 // Kích hoạt Prometheus Scrape Endpoint cho OpenTelemetry
 app.UseOpenTelemetryPrometheusScrapingEndpoint();

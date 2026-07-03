@@ -104,6 +104,10 @@ public class AuthController : ControllerBase
         _logger.LogInformation("Successful login for {Email} from IP {IP}", request.Email, ipAddress);
 
         var token = GenerateJwtToken(user);
+        var refreshToken = GenerateRefreshToken();
+        user.RefreshToken = refreshToken;
+        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
+        await _dbContext.SaveChangesAsync();
 
         var jwtExpiration = double.Parse(_configuration.GetSection("JwtSettings")["ExpirationInMinutes"] ?? "30");
         var cookieOptions = new CookieOptions
@@ -114,6 +118,15 @@ public class AuthController : ControllerBase
             Expires = DateTime.UtcNow.AddMinutes(jwtExpiration)
         };
         Response.Cookies.Append("hermes_token", token, cookieOptions);
+
+        var refreshCookieOptions = new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = !_env.IsDevelopment(),
+            SameSite = SameSiteMode.Lax,
+            Expires = user.RefreshTokenExpiryTime.Value
+        };
+        Response.Cookies.Append("hermes_refresh_token", refreshToken, refreshCookieOptions);
 
         return Ok(new
         {
@@ -126,10 +139,65 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("logout")]
-    public IActionResult Logout()
+    public async Task<IActionResult> Logout()
     {
+        var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!string.IsNullOrEmpty(userIdString) && Guid.TryParse(userIdString, out var userId))
+        {
+            var user = await _dbContext.Users.FindAsync(userId);
+            if (user != null)
+            {
+                user.RefreshToken = null;
+                await _dbContext.SaveChangesAsync();
+            }
+        }
+
         Response.Cookies.Delete("hermes_token");
+        Response.Cookies.Delete("hermes_refresh_token");
         return Ok();
+    }
+
+    [HttpPost("refresh")]
+    public async Task<IActionResult> Refresh()
+    {
+        if (!Request.Cookies.TryGetValue("hermes_refresh_token", out var refreshToken))
+        {
+            return Unauthorized(new { message = "Không tìm thấy Refresh Token." });
+        }
+
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.RefreshToken == refreshToken);
+        if (user == null || user.RefreshTokenExpiryTime <= DateTime.UtcNow || !user.IsActive)
+        {
+            return Unauthorized(new { message = "Refresh Token không hợp lệ hoặc đã hết hạn." });
+        }
+
+        var newJwtToken = GenerateJwtToken(user);
+        var newRefreshToken = GenerateRefreshToken();
+
+        user.RefreshToken = newRefreshToken;
+        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
+        await _dbContext.SaveChangesAsync();
+
+        var jwtExpiration = double.Parse(_configuration.GetSection("JwtSettings")["ExpirationInMinutes"] ?? "30");
+        var cookieOptions = new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = !_env.IsDevelopment(),
+            SameSite = SameSiteMode.Lax,
+            Expires = DateTime.UtcNow.AddMinutes(jwtExpiration)
+        };
+        Response.Cookies.Append("hermes_token", newJwtToken, cookieOptions);
+
+        var refreshCookieOptions = new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = !_env.IsDevelopment(),
+            SameSite = SameSiteMode.Lax,
+            Expires = user.RefreshTokenExpiryTime.Value
+        };
+        Response.Cookies.Append("hermes_refresh_token", newRefreshToken, refreshCookieOptions);
+
+        return Ok(new { message = "Làm mới Token thành công." });
     }
 
     [Authorize]
@@ -178,6 +246,14 @@ public class AuthController : ControllerBase
         );
 
         return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    private string GenerateRefreshToken()
+    {
+        var randomNumber = new byte[32];
+        using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
+        rng.GetBytes(randomNumber);
+        return Convert.ToBase64String(randomNumber);
     }
 }
 

@@ -11,6 +11,12 @@ services:
       - VectorStore__BaseUrl=http://qdrant:6334
       - JwtSettings__SecretKey=${JWT_SECRET_KEY}
       - Cors__AllowedOrigins__0=${CORS_ORIGIN:-http://localhost:5173}
+      - ConnectionStrings__Redis=${REDIS_CONNECTION_STRING:-redis:6379}
+      - TelegramSettings__BotToken=${TELEGRAM_BOT_TOKEN}
+      - TelegramSettings__ChatId=${TELEGRAM_CHAT_ID}
+      - GraphDb__Uri=bolt://neo4j:7687
+      - GraphDb__Username=neo4j
+      - GraphDb__Password=${POSTGRES_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,6 +54,43 @@ services:
       - qdrantdata:/qdrant/storage
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5.20.0
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/${POSTGRES_PASSWORD}
+    volumes:
+      - neo4jdata:/data
+    restart: unless-stopped
+
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --dev
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    restart: unless-stopped
+
+  client:
+    build:
+      context: LmKitOmniClient
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
 volumes:
   pgdata:
   qdrantdata:
+  neo4jdata:

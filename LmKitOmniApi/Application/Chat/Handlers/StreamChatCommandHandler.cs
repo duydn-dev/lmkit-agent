@@ -8,6 +8,8 @@ using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Services;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Domain.Entities;
+using Microsoft.Extensions.Caching.Distributed;
+using System.Text.Json;
 
 namespace LmKitOmniApi.Application.Chat.Handlers;
 
@@ -17,6 +19,7 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
     private readonly IAgentOrchestrator _orchestrator;
     private readonly ITokenManagementService _tokenManagement;
     private readonly HermesDbContext _dbContext;
+    private readonly IDistributedCache _cache;
 
     // Maximum messages to load from DB (absolute cap)
     private const int MaxMessagesToLoad = 50;
@@ -27,12 +30,14 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         LmModelManager modelManager, 
         IAgentOrchestrator orchestrator, 
         ITokenManagementService tokenManagement,
-        HermesDbContext dbContext)
+        HermesDbContext dbContext,
+        IDistributedCache cache)
     {
         _modelManager = modelManager;
         _orchestrator = orchestrator;
         _tokenManagement = tokenManagement;
         _dbContext = dbContext;
+        _cache = cache;
     }
 
     public async IAsyncEnumerable<string> Handle(StreamChatCommand request, [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -44,21 +49,37 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         
         if (session == null) throw new UnauthorizedAccessException("Chat Session not found or access denied.");
 
-        // Load messages with absolute cap (prevents loading 10000+ messages)
-        var dbMessages = await _dbContext.ChatMessages
-            .Where(m => m.ChatSessionId == request.SessionId)
-            .OrderByDescending(m => m.CreatedAt) // Load newest first
-            .Take(MaxMessagesToLoad)
-            .OrderBy(m => m.CreatedAt) // Then reorder chronologically
-            .ToListAsync(cancellationToken);
-
-        // Token management: apply sliding window with summary
-        var historyMessages = dbMessages.Select(m => new HistoryMessage
+        var cacheKey = $"ChatHistory:{request.SessionId}";
+        List<HistoryMessage>? historyMessages = null;
+        var cachedHistory = await _cache.GetStringAsync(cacheKey, cancellationToken);
+        
+        if (!string.IsNullOrEmpty(cachedHistory))
         {
-            Role = m.Role,
-            Content = m.Content,
-            CreatedAt = m.CreatedAt
-        }).ToList();
+            try
+            {
+                historyMessages = JsonSerializer.Deserialize<List<HistoryMessage>>(cachedHistory);
+            }
+            catch { /* Ignore serialization errors and fallback to DB */ }
+        }
+
+        if (historyMessages == null)
+        {
+            // Load messages with absolute cap (prevents loading 10000+ messages)
+            var dbMessages = await _dbContext.ChatMessages
+                .Where(m => m.ChatSessionId == request.SessionId)
+                .OrderByDescending(m => m.CreatedAt) // Load newest first
+                .Take(MaxMessagesToLoad)
+                .OrderBy(m => m.CreatedAt) // Then reorder chronologically
+                .ToListAsync(cancellationToken);
+
+            // Token management: apply sliding window with summary
+            historyMessages = dbMessages.Select(m => new HistoryMessage
+            {
+                Role = m.Role,
+                Content = m.Content,
+                CreatedAt = m.CreatedAt
+            }).ToList();
+        }
 
         var trimResult = await _tokenManagement.TrimHistoryAsync(historyMessages, HistoryTokenBudget, cancellationToken);
 
@@ -115,5 +136,20 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         };
         _dbContext.ChatMessages.Add(botMsg);
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // Update cache with new messages
+        historyMessages.Add(new HistoryMessage { Role = "user", Content = request.Message, CreatedAt = userMsg.CreatedAt });
+        historyMessages.Add(new HistoryMessage { Role = "assistant", Content = botMsg.Content, CreatedAt = botMsg.CreatedAt });
+        
+        // Keep it to MaxMessagesToLoad for cache to avoid blowing up memory
+        if (historyMessages.Count > MaxMessagesToLoad)
+        {
+            historyMessages = historyMessages.Skip(historyMessages.Count - MaxMessagesToLoad).ToList();
+        }
+
+        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(historyMessages), new DistributedCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(2)
+        }, cancellationToken);
     }
 }
