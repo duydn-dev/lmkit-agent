@@ -123,6 +123,7 @@
 import { ref, nextTick, onMounted } from 'vue';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
+import { errorMessage, readApiError } from '@/api/errors';
 import { formatSafeMessage } from '@/utils/safeFormatting';
 import { ChatSseParser, type ChatStreamEvent } from '@/utils/chatSse';
 
@@ -187,9 +188,7 @@ const sendMessage = async () => {
           if (sessionRes.ok) {
               const newSession = await sessionRes.json();
               currentSessionId.value = newSession.id;
-          } else {
-              throw new Error('Không thể tạo phiên trò chuyện.');
-          }
+          } else throw new Error(await readApiError(sessionRes, 'Không thể tạo phiên trò chuyện'));
     }
     const payload = {
       SessionId: currentSessionId.value || '00000000-0000-0000-0000-000000000000',
@@ -199,15 +198,7 @@ const sendMessage = async () => {
     
     const response = await http.post(ApiFactory.CHAT.STREAM, payload);
 
-    if (!response.ok) {
-      let message = `Yêu cầu thất bại (${response.status}).`;
-      try {
-        const error = await response.json();
-        if (typeof error?.message === 'string') message = error.message;
-        else if (typeof error?.title === 'string') message = error.title;
-      } catch { /* response is not JSON */ }
-      throw new Error(message);
-    }
+    if (!response.ok) throw new Error(await readApiError(response, 'Yêu cầu chat thất bại'));
     if (!response.body) throw new Error('Trình duyệt không hỗ trợ streaming response.');
 
     const reader = response.body.getReader();
@@ -257,7 +248,7 @@ const sendMessage = async () => {
     }
     if (streamFinished) await reader.cancel();
   } catch (error) {
-    assistantMsg.content = `Lỗi phản hồi: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    assistantMsg.content = `Lỗi phản hồi: ${errorMessage(error, 'Không thể tạo câu trả lời.')}`;
     assistantMsg.isTyping = false;
   } finally {
     isGenerating.value = false;
@@ -283,7 +274,7 @@ const approveTask = async (msg: any) => {
   msg.hitlError = undefined;
   try {
     const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/approve`);
-    if (!res.ok) throw new Error(`Phê duyệt thất bại (${res.status}).`);
+    if (!res.ok) throw new Error(await readApiError(res, 'Phê duyệt thất bại'));
     const response = await res.json();
     const result = typeof response.result === 'string' ? response.result : '';
     msg.hitlResolved = 'Approved';
@@ -294,7 +285,7 @@ const approveTask = async (msg: any) => {
     inputMessage.value = `Tôi đã phê duyệt hành động trên. Kết quả thực thi là: ${result}. Vui lòng tiếp tục.`;
     await sendMessage();
   } catch (error) {
-    msg.hitlError = error instanceof Error ? error.message : 'Không thể phê duyệt thao tác.';
+    msg.hitlError = errorMessage(error, 'Không thể phê duyệt thao tác.');
   } finally {
     msg.hitlBusy = false;
   }
@@ -305,14 +296,14 @@ const rejectTask = async (msg: any) => {
   msg.hitlError = undefined;
   try {
     const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/reject`, { Comment: "User rejected" });
-    if (!res.ok) throw new Error(`Từ chối thất bại (${res.status}).`);
+    if (!res.ok) throw new Error(await readApiError(res, 'Từ chối thất bại'));
     msg.hitlResolved = 'Rejected';
     messages.value.push({
       role: 'system',
       content: `Đã từ chối hành động.`
     });
   } catch (error) {
-    msg.hitlError = error instanceof Error ? error.message : 'Không thể từ chối thao tác.';
+    msg.hitlError = errorMessage(error, 'Không thể từ chối thao tác.');
   } finally {
     msg.hitlBusy = false;
   }

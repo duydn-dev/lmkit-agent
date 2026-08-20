@@ -89,6 +89,74 @@ public sealed class ApiIntegrationTests : IClassFixture<LmKitApiFactory>
     }
 
     [Fact]
+    public async Task ChatAttachment_IsDeletedAfterRequestProcessing()
+    {
+        using var isolatedFactory = new LmKitApiFactory();
+        isolatedFactory.EnsureSeeded();
+        using var client = await CreateAuthenticatedClientAsync(isolatedFactory);
+        var attachmentDirectory = Path.Combine(
+            Directory.GetCurrentDirectory(),
+            "Uploads",
+            LmKitApiFactory.TenantId.ToString("N"),
+            LmKitApiFactory.UserId.ToString("N"),
+            "ChatAttachments");
+        var filesBefore = Directory.Exists(attachmentDirectory)
+            ? Directory.GetFiles(attachmentDirectory).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        using var request = new MultipartFormDataContent();
+        request.Add(new StringContent("55555555-5555-5555-5555-555555555555"), "sessionId");
+        request.Add(new StringContent("Tóm tắt file này"), "message");
+        request.Add(new StringContent("false"), "saveToKnowledge");
+        request.Add(new StringContent("Nội dung kiểm tra cleanup file tạm."), "files", "cleanup-check.txt");
+
+        var response = await client.PostAsync("/api/chat/stream-with-files", request);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        var filesAfter = Directory.Exists(attachmentDirectory)
+            ? Directory.GetFiles(attachmentDirectory).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(filesBefore.SetEquals(filesAfter), "Temporary chat attachment was not deleted.");
+        Assert.Contains("cleanup-check.txt", responseBody);
+        Assert.Contains("[DONE]", responseBody);
+    }
+
+    [Fact]
+    public async Task ChatAttachments_RejectsTooManyFilesBeforeWritingScratchData()
+    {
+        using var isolatedFactory = new LmKitApiFactory();
+        isolatedFactory.EnsureSeeded();
+        using var client = await CreateAuthenticatedClientAsync(isolatedFactory);
+        var attachmentDirectory = Path.Combine(
+            Directory.GetCurrentDirectory(),
+            "Uploads",
+            LmKitApiFactory.TenantId.ToString("N"),
+            LmKitApiFactory.UserId.ToString("N"),
+            "ChatAttachments");
+        var filesBefore = Directory.Exists(attachmentDirectory)
+            ? Directory.GetFiles(attachmentDirectory).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        using var request = new MultipartFormDataContent();
+        request.Add(new StringContent("55555555-5555-5555-5555-555555555555"), "sessionId");
+        request.Add(new StringContent("Tóm tắt các file"), "message");
+        request.Add(new StringContent("false"), "saveToKnowledge");
+        for (var index = 0; index < 9; index++)
+            request.Add(new StringContent($"Nội dung {index}"), "files", $"batch-{index}.txt");
+
+        var response = await client.PostAsync("/api/chat/stream-with-files", request);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        var filesAfter = Directory.Exists(attachmentDirectory)
+            ? Directory.GetFiles(attachmentDirectory).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("maximum of 8 attachments", responseBody);
+        Assert.True(filesBefore.SetEquals(filesAfter), "Rejected attachment batch wrote scratch files.");
+    }
+
+    [Fact]
     public async Task RejectApproval_IsOwnerScopedAndCanResolveOnlyOnce()
     {
         using var client = await CreateAuthenticatedClientAsync();
@@ -118,8 +186,11 @@ public sealed class ApiIntegrationTests : IClassFixture<LmKitApiFactory>
     }
 
     private async Task<HttpClient> CreateAuthenticatedClientAsync()
+        => await CreateAuthenticatedClientAsync(_factory);
+
+    private static async Task<HttpClient> CreateAuthenticatedClientAsync(LmKitApiFactory factory)
     {
-        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false,
             HandleCookies = true

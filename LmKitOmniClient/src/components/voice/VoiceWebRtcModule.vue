@@ -30,6 +30,8 @@
 <script setup lang="ts">
 import { ref, onUnmounted } from 'vue';
 import { Room, RoomEvent } from 'livekit-client';
+import { http } from '@/api/http';
+import { errorMessage, readApiError } from '@/api/errors';
 
 const isConnected = ref(false);
 const voiceError = ref('');
@@ -38,24 +40,15 @@ let room: Room | null = null;
 const connectLiveKit = async () => {
   try {
     voiceError.value = '';
-    // Replace with real backend call when Voice WebRTC is fully hooked up.
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = import.meta.env.VITE_LIVEKIT_URL || `${wsProtocol}//${window.location.hostname}:7880`;
     
-    // Fetch token from backend
-    const apiBase = import.meta.env.VITE_API_URL || '';
-    const response = await fetch(`${apiBase}/api/Speech/token?room=omni-room`, {
-      credentials: 'include',
-    });
-    if (!response.ok) {
-      throw new Error('Failed to fetch LiveKit token');
-    }
+    const response = await http.get('/api/Speech/token?room=omni-room');
+    if (!response.ok) throw new Error(await readApiError(response, 'Không thể lấy token thoại'));
     const data = await response.json();
     const token = data.token;
 
-    if (!token) {
-      throw new Error('Received empty token from backend');
-    }
+    if (!token) throw new Error('Máy chủ không trả về token thoại.');
 
     room = new Room({
       audioCaptureDefaults: {
@@ -68,8 +61,12 @@ const connectLiveKit = async () => {
     room.on(RoomEvent.TrackSubscribed, (track) => {
       if (track.kind === 'audio') {
         const audioElement = track.attach();
+        audioElement.dataset.lmkitVoice = 'true';
         document.body.appendChild(audioElement);
       }
+    });
+    room.on(RoomEvent.TrackUnsubscribed, (track) => {
+      track.detach().forEach((element) => element.remove());
     });
 
     await room.connect(url, token);
@@ -79,8 +76,8 @@ const connectLiveKit = async () => {
     
     isConnected.value = true;
   } catch (error) {
-    console.error('LiveKit connection error:', error);
-    voiceError.value = 'Không thể kết nối thoại. Vui lòng thử lại.';
+    voiceError.value = errorMessage(error, 'Không thể kết nối thoại. Vui lòng thử lại.');
+    disconnectLiveKit();
   }
 };
 
@@ -90,6 +87,7 @@ const disconnectLiveKit = () => {
     room = null;
   }
   isConnected.value = false;
+  document.querySelectorAll('audio[data-lmkit-voice]').forEach((element) => element.remove());
 };
 
 const toggleVoice = () => {

@@ -50,7 +50,9 @@ dotnet build .\LmKitOmniApi\LmKitOmniApi.csproj -c Release
 
 Set-Location .\LmKitOmniClient
 npm ci
-npm run build
+npm run test:unit
+npx playwright install chromium
+npm run test:e2e
 ```
 
 Important configuration:

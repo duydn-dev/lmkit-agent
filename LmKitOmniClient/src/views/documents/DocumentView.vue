@@ -18,7 +18,7 @@
             label="Tải tài liệu lên"
             icon="pi pi-cloud-upload"
             severity="info"
-            class="!px-4 !py-2.5 !rounded-xl !text-sm !font-medium !shadow-md !shadow-blue-500/20"
+            class="!px-4 !py-2.5 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800 !shadow-md !shadow-blue-500/20"
           />
         </div>
       </div>
@@ -26,6 +26,9 @@
 
     <!-- Main Content -->
     <div class="flex-1 max-w-7xl mx-auto w-full px-6 py-6">
+      <div v-if="documentError" role="alert" class="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {{ documentError }}
+      </div>
       <!-- Stats Cards -->
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <div class="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm hover:shadow-md hover:border-gray-200 transition-all duration-300">
@@ -136,15 +139,15 @@
               <!-- Status bar -->
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <span v-if="doc.isVectorized" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-600 border border-emerald-200">
+                  <span v-if="doc.isVectorized" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-900 border border-emerald-200">
                     <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                     Hoàn tất
                   </span>
-                  <span v-else-if="doc.vectorizationStatus === 'Failed'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-red-50 text-red-600 border border-red-200">
+                  <span v-else-if="doc.vectorizationStatus === 'Failed'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-red-50 text-red-800 border border-red-200">
                     <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
                     Xử lý lỗi
                   </span>
-                  <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-600 border border-amber-200">
+                  <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-900 border border-amber-200">
                     <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
                     Đang xử lý
                   </span>
@@ -205,15 +208,15 @@
 
           <Column field="isVectorized" header="Trạng thái" sortable>
             <template #body="{ data }">
-              <span v-if="data.isVectorized" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-600 border border-emerald-200">
+              <span v-if="data.isVectorized" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-900 border border-emerald-200">
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                 Hoàn tất
               </span>
-              <span v-else-if="data.vectorizationStatus === 'Failed'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-600 border border-red-200">
+              <span v-else-if="data.vectorizationStatus === 'Failed'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-800 border border-red-200">
                 <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
                 Xử lý lỗi
               </span>
-              <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-600 border border-amber-200">
+              <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-900 border border-amber-200">
                 <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
                 Đang xử lý
               </span>
@@ -426,6 +429,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
+import { errorMessage, readApiError } from '@/api/errors';
 
 interface Document {
   id: string;
@@ -438,6 +442,7 @@ interface Document {
 }
 
 const documents = ref<Document[]>([]);
+const documentError = ref('');
 const showUploadDialog = ref(false);
 const uploading = ref(false);
 const selectedFile = ref<File | null>(null);
@@ -527,28 +532,30 @@ function confirmDelete(doc: Document) {
 const deleteDocument = async () => {
   if (!docToDelete.value) return;
   deleting.value = true;
+  documentError.value = '';
   try {
     const response = await http.delete(`${ApiFactory.DOCUMENT.BASE}/${docToDelete.value.id}`);
     if (response.ok) {
       documents.value = documents.value.filter(d => d.id !== docToDelete.value!.id);
       showDeleteDialog.value = false;
       docToDelete.value = null;
-    }
+    } else documentError.value = await readApiError(response, 'Không thể xóa tài liệu');
   } catch (error) {
-    console.error('Delete failed:', error);
+    documentError.value = errorMessage(error, 'Không thể xóa tài liệu.');
   } finally {
     deleting.value = false;
   }
 };
 
 const loadDocuments = async () => {
+  documentError.value = '';
   try {
     const response = await http.get(ApiFactory.DOCUMENT.BASE);
     if (response.ok) {
       documents.value = await response.json();
-    }
+    } else documentError.value = await readApiError(response, 'Không thể tải danh sách tài liệu');
   } catch (error) {
-    console.error('Failed to load documents:', error);
+    documentError.value = errorMessage(error, 'Không thể tải danh sách tài liệu.');
   }
 };
 
@@ -557,6 +564,7 @@ const uploadFile = async () => {
   
   uploading.value = true;
   uploadProgress.value = 0;
+  documentError.value = '';
   
   uploadProgress.value = 20;
 
@@ -576,12 +584,12 @@ const uploadFile = async () => {
         loadDocuments();
       }, 500);
     } else {
-      console.error('Upload failed');
+      documentError.value = await readApiError(response, 'Không thể tải tài liệu lên');
       uploadProgress.value = 0;
     }
   } catch (error) {
     uploadProgress.value = 0;
-    console.error('Upload error:', error);
+    documentError.value = errorMessage(error, 'Không thể tải tài liệu lên.');
   } finally {
     setTimeout(() => { uploading.value = false; }, 300);
   }

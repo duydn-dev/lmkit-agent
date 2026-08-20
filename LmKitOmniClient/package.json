@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "test:unit": "vitest run",
+    "test:unit": "vitest run src",
+    "test:e2e": "npm run build && playwright test",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -20,6 +21,8 @@
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.62.1",
     "@primevue/auto-import-resolver": "^4.5.5",
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/vite": "^4.3.3",

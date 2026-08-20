@@ -123,6 +123,9 @@
 
     <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-chatgpt-dark via-chatgpt-dark to-transparent pt-10 pb-6 px-4">
       <div class="max-w-3xl mx-auto relative group">
+        <div v-if="chatError" role="alert" class="mb-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {{ chatError }}
+        </div>
         <div class="relative flex flex-col bg-white border border-gray-200 rounded-[28px] p-2 shadow-sm">
           <!-- Attached Files Preview -->
           <div v-if="attachedFiles.length > 0" class="flex flex-wrap gap-2 px-3 pt-2">
@@ -210,6 +213,7 @@ import { defineAsyncComponent, ref, nextTick, watch, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
+import { errorMessage, readApiError } from '@/api/errors';
 import GenerativeUiRenderer from '@/components/chat/GenerativeUiRenderer.vue';
 import { ChatSseParser, type ChatStreamEvent } from '@/utils/chatSse';
 const VoiceWebRtcModule = defineAsyncComponent(
@@ -231,6 +235,7 @@ interface Message {
 
 const inputMessage = ref('');
 const messages = ref<Message[]>([]);
+const chatError = ref('');
 const isGenerating = ref(false);
 const chatContainer = ref<HTMLElement | null>(null);
 const currentSessionId = ref<string | null>(null);
@@ -240,6 +245,7 @@ const fileInputRef = ref<HTMLInputElement | null>(null);
 
 const loadMessages = async () => {
   if (!currentSessionId.value) return;
+  chatError.value = '';
   try {
     const response = await http.get(ApiFactory.CHAT.GET_MESSAGES(currentSessionId.value));
     if (response.ok) {
@@ -276,9 +282,9 @@ const loadMessages = async () => {
         };
       });
       await scrollToBottom();
-    }
+    } else chatError.value = await readApiError(response, 'Không thể tải nội dung đoạn chat');
   } catch (error) {
-    console.error("Failed to load messages", error);
+    chatError.value = errorMessage(error, 'Không thể tải nội dung đoạn chat.');
   }
 };
 const route = useRoute();
@@ -367,10 +373,11 @@ const getCleanUserContent = (content: string) => {
 };
 
 const copyMessage = async (content: string) => {
+  chatError.value = '';
   try {
     await navigator.clipboard.writeText(content);
   } catch (error) {
-    console.error('Failed to copy message', error);
+    chatError.value = errorMessage(error, 'Không thể sao chép nội dung.');
   }
 };
 
@@ -378,6 +385,7 @@ const sendMessage = async () => {
   const content = inputMessage.value.trim();
   const hasFiles = attachedFiles.value.length > 0;
   if ((!content && !hasFiles) || isGenerating.value) return;
+  chatError.value = '';
 
   const fileNames = attachedFiles.value.map(f => f.name);
   messages.value.push({ role: 'user', content: content || `📎 ${fileNames.join(', ')}`, attachedFiles: fileNames.length > 0 ? fileNames : undefined });
@@ -424,15 +432,7 @@ const sendMessage = async () => {
       response = await http.post(ApiFactory.CHAT.STREAM, payload);
     }
 
-    if (!response.ok) {
-      let message = `Yêu cầu thất bại (${response.status}).`;
-      try {
-        const error = await response.json();
-        if (typeof error?.message === 'string') message = error.message;
-        else if (typeof error?.title === 'string') message = error.title;
-      } catch { /* response is not JSON */ }
-      throw new Error(message);
-    }
+    if (!response.ok) throw new Error(await readApiError(response, 'Yêu cầu chat thất bại'));
     if (!response.body) throw new Error('Trình duyệt không hỗ trợ streaming response.');
 
     const reader = response.body.getReader();
@@ -484,7 +484,7 @@ const sendMessage = async () => {
     }
     if (streamFinished) await reader.cancel();
   } catch (error) {
-    assistantMsg.content = `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`;
+    assistantMsg.content = `Lỗi: ${errorMessage(error, 'Không thể tạo câu trả lời.')}`;
     assistantMsg.isTyping = false;
   } finally {
     isGenerating.value = false;
@@ -497,7 +497,7 @@ const approveTask = async (msg: any) => {
   msg.hitlError = undefined;
   try {
     const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/approve`);
-    if (!res.ok) throw new Error(`Phê duyệt thất bại (${res.status}).`);
+    if (!res.ok) throw new Error(await readApiError(res, 'Phê duyệt thất bại'));
     const response = await res.json();
     const result = typeof response.result === 'string' ? response.result : '';
     msg.hitlResolved = 'Approved';
@@ -508,7 +508,7 @@ const approveTask = async (msg: any) => {
     inputMessage.value = `Tôi đã phê duyệt hành động trên. Kết quả thực thi là: ${result}. Vui lòng tiếp tục.`;
     await sendMessage();
   } catch (error) {
-    msg.hitlError = error instanceof Error ? error.message : 'Không thể phê duyệt thao tác.';
+    msg.hitlError = errorMessage(error, 'Không thể phê duyệt thao tác.');
   } finally {
     msg.hitlBusy = false;
   }
@@ -519,14 +519,14 @@ const rejectTask = async (msg: any) => {
   msg.hitlError = undefined;
   try {
     const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/reject`, { Comment: "User rejected" });
-    if (!res.ok) throw new Error(`Từ chối thất bại (${res.status}).`);
+    if (!res.ok) throw new Error(await readApiError(res, 'Từ chối thất bại'));
     msg.hitlResolved = 'Rejected';
     messages.value.push({
       role: 'system',
       content: `Đã từ chối hành động.`
     });
   } catch (error) {
-    msg.hitlError = error instanceof Error ? error.message : 'Không thể từ chối thao tác.';
+    msg.hitlError = errorMessage(error, 'Không thể từ chối thao tác.');
   } finally {
     msg.hitlBusy = false;
   }

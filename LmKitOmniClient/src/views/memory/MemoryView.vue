@@ -9,7 +9,7 @@
         <Button label="Làm mới" icon="pi pi-refresh" severity="secondary" :loading="loading" @click="loadMemories" />
       </div>
 
-      <div v-if="error" class="p-4 mb-5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">{{ error }}</div>
+      <div v-if="error" role="alert" class="p-4 mb-5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">{{ error }}</div>
       <div v-if="!loading && memories.length === 0" class="p-12 text-center bg-white border border-gray-100 rounded-2xl">
         <i class="pi pi-history text-4xl text-gray-300"></i>
         <p class="mt-3 text-gray-500">Trợ lý chưa lưu thông tin nào.</p>
@@ -44,6 +44,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { http } from '@/api/http';
+import { errorMessage, readApiError } from '@/api/errors';
 
 interface MemoryItem {
   id: string;
@@ -64,10 +65,10 @@ async function loadMemories() {
   error.value = '';
   try {
     const response = await http.get('/api/memory');
-    if (!response.ok) throw new Error('Không thể tải bộ nhớ.');
+    if (!response.ok) throw new Error(await readApiError(response, 'Không thể tải bộ nhớ'));
     memories.value = await response.json();
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'Không thể tải bộ nhớ.';
+    error.value = errorMessage(cause, 'Không thể tải bộ nhớ.');
   } finally {
     loading.value = false;
   }
@@ -75,18 +76,28 @@ async function loadMemories() {
 
 async function forget(memory: MemoryItem) {
   if (!confirm(`Quên thông tin “${memory.memoryKey}”?`)) return;
-  const response = await http.delete(`/api/memory/${memory.id}`);
-  if (response.ok) memories.value = memories.value.filter(item => item.id !== memory.id);
-  else error.value = 'Không thể xóa thông tin đã chọn.';
+  error.value = '';
+  try {
+    const response = await http.delete(`/api/memory/${memory.id}`);
+    if (response.ok) memories.value = memories.value.filter(item => item.id !== memory.id);
+    else error.value = await readApiError(response, 'Không thể xóa thông tin đã chọn');
+  } catch (cause) {
+    error.value = errorMessage(cause, 'Không thể xóa thông tin đã chọn.');
+  }
 }
 
 async function confirmMemory(memory: MemoryItem) {
-  const response = await http.post(`/api/memory/${memory.id}/confirm`);
-  if (response.ok) {
-    memory.isConfirmed = true;
-    memory.confidence = Math.max(memory.confidence, 0.95);
-  } else {
-    error.value = 'Không thể xác nhận thông tin đã chọn.';
+  error.value = '';
+  try {
+    const response = await http.post(`/api/memory/${memory.id}/confirm`);
+    if (response.ok) {
+      memory.isConfirmed = true;
+      memory.confidence = Math.max(memory.confidence, 0.95);
+    } else {
+      error.value = await readApiError(response, 'Không thể xác nhận thông tin đã chọn');
+    }
+  } catch (cause) {
+    error.value = errorMessage(cause, 'Không thể xác nhận thông tin đã chọn.');
   }
 }
 

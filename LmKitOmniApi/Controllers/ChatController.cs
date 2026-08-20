@@ -16,6 +16,8 @@ namespace LmKitOmniApi.Controllers;
 public class ChatController : ControllerBase
 {
     private const long MaxAttachmentBytes = 20 * 1024 * 1024;
+    private const long MaxTotalAttachmentBytes = 50 * 1024 * 1024;
+    private const int MaxAttachmentCount = 8;
     private const int MaxMessageCharacters = 50_000;
     private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -127,6 +129,23 @@ public class ChatController : ControllerBase
             await WriteSseAsync("[ERROR: Per-request model selection is not allowed]", cancellationToken);
             return;
         }
+        if (files is { Count: > MaxAttachmentCount })
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await WriteSseAsync($"[ERROR: A maximum of {MaxAttachmentCount} attachments is allowed]", cancellationToken);
+            return;
+        }
+        long totalAttachmentBytes = 0;
+        foreach (var file in files ?? [])
+        {
+            if (file.Length > MaxTotalAttachmentBytes - totalAttachmentBytes)
+            {
+                Response.StatusCode = StatusCodes.Status400BadRequest;
+                await WriteSseAsync("[ERROR: Total attachment size cannot exceed 50 MB]", cancellationToken);
+                return;
+            }
+            totalAttachmentBytes += file.Length;
+        }
 
         // Step 1: Process file attachments
         var fileContextParts = new List<string>();
@@ -162,38 +181,53 @@ public class ChatController : ControllerBase
                     continue;
                 }
 
-                // Save file to disk
+                // The local copy is a processing scratch file. Knowledge persistence
+                // stores extracted chunks in the vector store, not this unbounded upload.
                 var savedPath = Path.Combine(uploadDir, $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}");
-                await using (var stream = new FileStream(savedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                try
                 {
-                    await file.CopyToAsync(stream, cancellationToken);
-                }
+                    await using (var stream = new FileStream(savedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    {
+                        await file.CopyToAsync(stream, cancellationToken);
+                    }
 
-                // Send SSE thinking step
-                await WriteSseAsync($"[THINKING]: Đang xử lý file đính kèm: {file.FileName}...\\n", cancellationToken);
+                    await WriteSseAsync($"[THINKING]: Đang xử lý file đính kèm: {file.FileName}...\\n", cancellationToken);
 
-                // Process file (OCR/convert + auto-save to Qdrant)
-                var result = await _ocrIngestion.ProcessFileForChatAsync(
-                    tenantId,
-                    currentUserId,
-                    savedPath,
-                    safeFileName,
-                    saveToKnowledge,
-                    cancellationToken);
-                
-                if (result.Success)
-                {
-                    var truncated = result.ExtractedText.Length > 3000 
-                        ? result.ExtractedText.Substring(0, 3000) + "... [Nội dung đã được lưu đầy đủ vào kho tri thức]"
-                        : result.ExtractedText;
-                    fileContextParts.Add($"[File: {result.FileName} ({result.FileType})]: {truncated}");
+                    var result = await _ocrIngestion.ProcessFileForChatAsync(
+                        tenantId,
+                        currentUserId,
+                        savedPath,
+                        safeFileName,
+                        saveToKnowledge,
+                        cancellationToken);
                     
-                    var persistenceMessage = saveToKnowledge ? " và lưu vào kho tri thức" : string.Empty;
-                    await WriteSseAsync($"[THINKING]: ✅ Đã xử lý {safeFileName} ({result.FileType}){persistenceMessage}\\n", cancellationToken);
+                    if (result.Success)
+                    {
+                        var truncated = result.ExtractedText.Length > 3000
+                            ? result.ExtractedText.Substring(0, 3000) + "... [Nội dung đã được lưu đầy đủ vào kho tri thức]"
+                            : result.ExtractedText;
+                        fileContextParts.Add($"[File: {result.FileName} ({result.FileType})]: {truncated}");
+
+                        var persistenceMessage = saveToKnowledge ? " và lưu vào kho tri thức" : string.Empty;
+                        await WriteSseAsync($"[THINKING]: ✅ Đã xử lý {safeFileName} ({result.FileType}){persistenceMessage}\\n", cancellationToken);
+                    }
+                    else
+                    {
+                        await WriteSseAsync($"[THINKING]: ⚠️ Không thể xử lý {file.FileName}: {result.ErrorMessage}\\n", cancellationToken);
+                    }
                 }
-                else
+                finally
                 {
-                    await WriteSseAsync($"[THINKING]: ⚠️ Không thể xử lý {file.FileName}: {result.ErrorMessage}\\n", cancellationToken);
+                    try
+                    {
+                        if (System.IO.File.Exists(savedPath)) System.IO.File.Delete(savedPath);
+                        if (Directory.Exists(uploadDir) && !Directory.EnumerateFileSystemEntries(uploadDir).Any())
+                            Directory.Delete(uploadDir);
+                    }
+                    catch (Exception cleanupError)
+                    {
+                        _logger.LogWarning(cleanupError, "Unable to delete temporary chat attachment {Path}", savedPath);
+                    }
                 }
             }
         }

@@ -22,7 +22,8 @@ Set-Location .\LmKitOmniClient
 npm ci
 npm audit --audit-level=high
 npm run test:unit
-npm run build
+npx playwright install chromium
+npm run test:e2e
 Set-Location ..
 docker compose config --quiet
 docker compose build api client

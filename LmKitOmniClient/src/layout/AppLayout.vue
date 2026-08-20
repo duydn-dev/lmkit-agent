@@ -81,8 +81,12 @@
         <router-link to="/memory" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-history mr-2"></i>Bộ nhớ trợ lý</router-link>
         <router-link v-if="isAdmin" to="/admin/users" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-users mr-2"></i>Quản lý User</router-link>
         <button @click="openMobileSettings" class="min-h-11 text-left px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-cog mr-2"></i>Cấu hình</button>
-        <button @click="logout" class="min-h-11 text-left px-3 py-2 rounded text-red-600 hover:bg-red-50"><i class="pi pi-sign-out mr-2"></i>Đăng xuất</button>
+        <button @click="logout" class="min-h-11 text-left px-3 py-2 rounded text-red-700 hover:bg-red-50"><i class="pi pi-sign-out mr-2"></i>Đăng xuất</button>
       </nav>
+
+      <div v-if="appError" role="alert" class="m-3 mb-0 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {{ appError }}
+      </div>
 
       <!-- Router View -->
       <router-view v-slot="{ Component }">
@@ -104,7 +108,7 @@
             </button>
           </div>
           <div class="p-2 border-t border-gray-200">
-            <button @click="logout" class="w-full min-h-11 text-left px-3 py-2.5 rounded-lg flex items-center gap-3 text-red-600 hover:bg-red-400/10 transition-colors text-sm font-medium">
+            <button @click="logout" class="w-full min-h-11 text-left px-3 py-2.5 rounded-lg flex items-center gap-3 text-red-700 hover:bg-red-400/10 transition-colors text-sm font-medium">
               <i class="pi pi-sign-out"></i> Đăng xuất
             </button>
           </div>
@@ -127,7 +131,7 @@
                   <Textarea id="mcp-headers" v-model="mcpForm.headersJson" rows="3" placeholder='Ví dụ {"Authorization":"Bearer ..."}' />
                   <div class="flex items-center justify-between gap-3">
                     <label for="mcp-active" class="flex items-center gap-2 text-sm"><Checkbox inputId="mcp-active" v-model="mcpForm.isActive" binary /> Kích hoạt</label>
-                    <Button type="submit" label="Thêm máy chủ" icon="pi pi-plus" :loading="mcpSaving" class="!min-h-11" />
+                    <Button type="submit" label="Thêm máy chủ" icon="pi pi-plus" :loading="mcpSaving" class="!min-h-11 !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
                   </div>
                 </form>
                 <div v-if="mcpError" role="alert" class="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{{ mcpError }}</div>
@@ -158,6 +162,7 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
+import { errorMessage, readApiError } from '@/api/errors';
 import { useAuthStore } from '@/store/auth.store';
 
 interface ChatSession {
@@ -180,6 +185,7 @@ interface McpServer { id: string; name: string; url: string; isActive: boolean; 
 const mcpServers = ref<McpServer[]>([]);
 const mcpSaving = ref(false);
 const mcpError = ref('');
+const appError = ref('');
 const mcpForm = ref({ name: '', url: '', headersJson: '', isActive: true });
 
 const chatSessions = ref<ChatSession[]>([]);
@@ -202,9 +208,13 @@ const newChat = async () => {
 
 const loadMcpServers = async () => {
   mcpError.value = '';
-  const response = await http.get('/api/mcp-servers');
-  if (response.ok) mcpServers.value = await response.json();
-  else mcpError.value = 'Không thể tải cấu hình MCP.';
+  try {
+    const response = await http.get('/api/mcp-servers');
+    if (response.ok) mcpServers.value = await response.json();
+    else mcpError.value = await readApiError(response, 'Không thể tải cấu hình MCP');
+  } catch (cause) {
+    mcpError.value = errorMessage(cause, 'Không thể tải cấu hình MCP.');
+  }
 };
 
 const createMcpServer = async () => {
@@ -226,11 +236,13 @@ const createMcpServer = async () => {
       isActive: mcpForm.value.isActive
     });
     if (!response.ok) {
-      mcpError.value = await response.text() || 'Không thể thêm máy chủ MCP.';
+      mcpError.value = await readApiError(response, 'Không thể thêm máy chủ MCP');
       return;
     }
     mcpForm.value = { name: '', url: '', headersJson: '', isActive: true };
     await loadMcpServers();
+  } catch (cause) {
+    mcpError.value = errorMessage(cause, 'Không thể thêm máy chủ MCP.');
   } finally {
     mcpSaving.value = false;
   }
@@ -238,9 +250,14 @@ const createMcpServer = async () => {
 
 const deleteMcpServer = async (id: string) => {
   if (!confirm('Xóa máy chủ MCP này?')) return;
-  const response = await http.delete(`/api/mcp-servers/${id}`);
-  if (response.ok) mcpServers.value = mcpServers.value.filter(server => server.id !== id);
-  else mcpError.value = 'Không thể xóa máy chủ MCP.';
+  mcpError.value = '';
+  try {
+    const response = await http.delete(`/api/mcp-servers/${id}`);
+    if (response.ok) mcpServers.value = mcpServers.value.filter(server => server.id !== id);
+    else mcpError.value = await readApiError(response, 'Không thể xóa máy chủ MCP');
+  } catch (cause) {
+    mcpError.value = errorMessage(cause, 'Không thể xóa máy chủ MCP.');
+  }
 };
 
 const selectSession = (id: string) => {
@@ -249,6 +266,7 @@ const selectSession = (id: string) => {
 
 const deleteSession = async (id: string) => {
   if (!confirm("Bạn có chắc chắn muốn xóa đoạn chat này không?")) return;
+  appError.value = '';
   try {
     const response = await http.delete(ApiFactory.CHAT.DELETE_SESSION(id));
     if (response.ok) {
@@ -257,20 +275,21 @@ const deleteSession = async (id: string) => {
         router.push('/chat?new=' + Date.now());
       }
       loadChatSessions();
-    }
+    } else appError.value = await readApiError(response, 'Không thể xóa đoạn chat');
   } catch (error) {
-    console.error("Failed to delete session", error);
+    appError.value = errorMessage(error, 'Không thể xóa đoạn chat.');
   }
 };
 
 const loadChatSessions = async () => {
+  appError.value = '';
   try {
     const response = await http.get(ApiFactory.CHAT.SESSIONS);
     if (response.ok) {
       chatSessions.value = await response.json();
-    }
+    } else appError.value = await readApiError(response, 'Không thể tải lịch sử trò chuyện');
   } catch (error) {
-    console.error("Failed to load chat sessions", error);
+    appError.value = errorMessage(error, 'Không thể tải lịch sử trò chuyện.');
   }
 };
 
