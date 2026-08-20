@@ -4,7 +4,7 @@
 
 **Phạm vi:** API, AI runtime, dữ liệu, bảo mật, web client, kiểm thử và Docker deployment
 
-**Điểm trưởng thành sau remediation:** **7,2/10** (trung bình không trọng số của 23 nhóm)
+**Điểm trưởng thành sau remediation:** **7,3/10** (trung bình không trọng số của 23 nhóm, làm tròn một chữ số)
 
 ## Cách chấm điểm
 
@@ -34,12 +34,12 @@
 | 14 | Text analysis và embeddings | **7,5** | Endpoint có auth, per-user rate limit, input cap và per-model concurrency gate; dùng LM-Kit thật. Còn thiếu batch API và quality set tiếng Việt. |
 | 15 | Content creation pipeline | **6,5** | Multi-stage pipeline và fact-check gateway có thật, input bị giới hạn/rate limit. Chưa có UI, citation schema và factuality/golden evaluation. |
 | 16 | Web search | **6,5** | Typed client, timeout, cancellation, response cap, cache và redirect normalization đã bổ sung. DuckDuckGo HTML scraping vẫn không ổn định như API chính thức và chưa fetch/verify nội dung nguồn. |
-| 17 | Web client chính | **7,5** | XSS từ model HTML đã chặn bằng escape-before-format, Pinia là auth source, logout backend thật, theme hiện hành, memory/MCP UI hoạt động. Chưa có frontend unit/E2E, accessibility audit và toast/error contract thống nhất. |
+| 17 | Web client chính | **7,8** | XSS từ model HTML đã chặn bằng escape-before-format; SSE parser chung xử lý split chunk/error/HITL và có unit test; Pinia là auth source, logout backend thật, memory/MCP UI hoạt động. Chưa có browser E2E, accessibility audit và toast/error contract thống nhất. |
 | 18 | Embeddable chat widget | **4,5** | Đã chặn route bằng auth và giới hạn `postMessage` theo referrer origin, nên không còn giả vờ public/insecure. Chưa phải widget nhúng công khai; cần scoped widget credential, origin allowlist và quota trước khi mở. |
 | 19 | Notification, graph, API key và automation | **4,5** | Fake SignalR echo, Hangfire, Telegram, proactive job và graph runtime đã gỡ khỏi active code. Graph/API-key/notification entities còn là schema kế thừa, không phải chức năng triển khai và không được quảng cáo trong UI. |
 | 20 | Observability, audit và health | **8,0** | Có readiness/liveness, PostgreSQL/Redis/Qdrant/model-license checks, warmup tùy chọn, Prometheus/OTLP, audit và hash tenant trace. Production phải bật ba model gate trong env; chưa có dashboard/alert/SLO và audit query UI. |
 | 21 | Docker/deployment/config | **8,0** | Non-root API, init volume ownership, persisted model/upload/key volumes, dependency health, migration-before-traffic và security headers đã có. Production vẫn cần TLS ingress, secret manager, certificate rotation, backup/restore drill và immutable image registry. |
-| 22 | Test và CI/CD | **7,5** | 87 backend tests pass, frontend/Release/Docker build sạch, npm/NuGet vulnerability audit sạch, migration drift check sạch; CI/Dependabot/container jobs đã thêm. Chưa có browser/model E2E, coverage gate, AI golden set, load/chaos/DAST. |
+| 22 | Test và CI/CD | **8,0** | 91 backend tests (gồm HTTP integration) và 7 frontend unit tests pass; Release/Docker build, npm/NuGet vulnerability audit và migration drift đều sạch; CI chạy cả hai bộ test. Chưa có browser/model E2E, coverage gate, AI golden set, load/chaos/DAST. |
 | 23 | Tài liệu và vận hành | **8,5** | Root README, capability matrix, architecture boundaries, deployment/rollback runbook, ADR và checklist này đã có. Source placeholder với hơn 400 `NotImplementedException` và roadmap quảng cáo sai đã được loại khỏi product tree. |
 
 ## Hạng mục đã đóng trong đợt remediation
@@ -62,7 +62,8 @@
 
 ## Bằng chứng kiểm tra
 
-- `dotnet test ...`: **87/87 pass**, build **0 warning, 0 error** (ngoài thông báo SDK .NET 10 preview trên máy host).
+- `dotnet test ... -c Release`: **91/91 pass**, gồm HTTP integration cho auth cookie, authorization, memory consent/tenant scope và local rate-limit contract.
+- `npm run test:unit`: **7/7 pass**, bao phủ XSS-safe formatting và SSE split-chunk/control/error parsing.
 - `npm run build`: thành công; các route Memory/MCP và formatter an toàn được compile.
 - `npm audit --audit-level=high`: **0 vulnerability**.
 - `dotnet list ... package --vulnerable --include-transitive`: **không có package dễ tổn thương** theo nguồn NuGet hiện tại.

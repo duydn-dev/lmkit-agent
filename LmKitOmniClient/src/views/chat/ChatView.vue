@@ -213,6 +213,7 @@ import { useRoute } from 'vue-router';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import GenerativeUiRenderer from '@/components/chat/GenerativeUiRenderer.vue';
+import { ChatSseParser, type ChatStreamEvent } from '@/utils/chatSse';
 const VoiceWebRtcModule = defineAsyncComponent(
   () => import('@/components/voice/VoiceWebRtcModule.vue')
 );
@@ -431,66 +432,47 @@ const sendMessage = async () => {
 
     assistantMsg.isTyping = false;
 
-    let buffer = '';
+    const parser = new ChatSseParser();
     let streamFinished = false;
     while (!streamFinished) {
       const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      let lineEnd;
-      while ((lineEnd = buffer.indexOf('\n')) !== -1) {
-        let line = buffer.substring(0, lineEnd);
-        if (line.endsWith('\r')) {
-            line = line.substring(0, line.length - 1);
-        }
-        buffer = buffer.substring(lineEnd + 1);
-
-        if (line.startsWith('data:')) {
-          let rawData = line.substring(5);
-          if (rawData.startsWith(' ')) rawData = rawData.substring(1);
-          let data: string;
-          try {
-            data = JSON.parse(rawData);
-          } catch {
-            data = rawData;
-          }
-
-          if (data === '[DONE]') {
+      const events = done
+        ? [...parser.push(decoder.decode()), ...parser.finish()]
+        : parser.push(decoder.decode(value, { stream: true }));
+      for (const event of events) {
+          if (event.type === 'done') {
               streamFinished = true;
               break;
           }
-          if (data.startsWith('[ERROR]:')) {
-              throw new Error(data.substring('[ERROR]:'.length).trim());
+          if (event.type === 'error') {
+              throw new Error(event.value);
           }
           
-          if (data.startsWith('[WEB_SEARCH]:')) {
-              const urls = data.replace('[WEB_SEARCH]:', '').split('|').filter(isSafeWebUrl);
+          if (event.type === 'web-search') {
+              const urls = event.value.split('|').filter(isSafeWebUrl);
               assistantMsg.webUrls = urls;
               continue;
           }
-          if (data.startsWith('[THINKING]:')) {
-              const thinkingMsg = data.replace('[THINKING]:', '').trim();
+          if (event.type === 'thinking') {
               if (!assistantMsg.thinkingSteps) {
                   assistantMsg.thinkingSteps = [];
               }
-              assistantMsg.thinkingSteps.push(thinkingMsg);
+              assistantMsg.thinkingSteps.push(event.value);
               await scrollToBottom();
               continue;
           }
-          if (data.startsWith('[HITL_APPROVAL_REQUIRED:')) {
-              const taskId = data.replace('[HITL_APPROVAL_REQUIRED:', '').replace(']', '').trim();
-              assistantMsg.hitlTaskId = taskId;
+          if (event.type === 'approval') {
+              assistantMsg.hitlTaskId = event.value;
               await scrollToBottom();
               streamFinished = true;
               break;
           }
-          if (data.startsWith('[Agent invoked:')) continue; // Ẩn log thô của agent
+          if (event.type === 'agent-log') continue;
 
-          assistantMsg.content += data;
+          assistantMsg.content += (event as Extract<ChatStreamEvent, { type: 'content' }>).value;
           await scrollToBottom();
-        }
       }
+      if (done) break;
     }
     if (streamFinished) await reader.cancel();
   } catch (error) {

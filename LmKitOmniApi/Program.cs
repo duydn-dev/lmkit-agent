@@ -306,6 +306,20 @@ if (aiRequestsPerWindow <= 0 || aiWindowSeconds <= 0)
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (rejection, ct) =>
+    {
+        var retryAfterSeconds = rejection.Lease.TryGetMetadata(
+            MetadataName.RetryAfter,
+            out var retryAfter)
+            ? Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds))
+            : aiWindowSeconds;
+        rejection.HttpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString();
+        await rejection.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            title = "Too many requests.",
+            status = StatusCodes.Status429TooManyRequests
+        }, ct);
+    };
     
     // Local token bucket is the fallback and also protects each process. When Redis
     // is configured, DistributedAiRateLimitMiddleware adds a cross-replica atomic window.
@@ -433,3 +447,7 @@ app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.Health
 });
 
 app.Run();
+
+// Exposes the top-level application entry point to WebApplicationFactory without
+// changing production startup behavior.
+public partial class Program;

@@ -34,6 +34,7 @@ jobs:
           cache-dependency-path: LmKitOmniClient/package-lock.json
       - run: npm ci
       - run: npm audit --audit-level=high
+      - run: npm run test:unit
       - run: npm run build
 
   containers:

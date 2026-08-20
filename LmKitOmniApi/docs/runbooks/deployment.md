@@ -21,6 +21,7 @@ dotnet build .\LmKitOmniApi\LmKitOmniApi.csproj -c Release
 Set-Location .\LmKitOmniClient
 npm ci
 npm audit --audit-level=high
+npm run test:unit
 npm run build
 Set-Location ..
 docker compose config --quiet
