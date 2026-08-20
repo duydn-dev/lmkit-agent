@@ -4,6 +4,7 @@ using LmKitOmniApi.Application.Vision.Commands;
 using LmKitOmniApi.Models;
 using LmKitOmniApi.Infrastructure.AI.Security;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 
 namespace LmKitOmniApi.Controllers;
@@ -11,8 +12,10 @@ namespace LmKitOmniApi.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
+[EnableRateLimiting("ai-agent")]
 public class VisionController : ControllerBase
 {
+    private const long MaximumImageBytes = 20 * 1024 * 1024;
     private readonly IMediator _mediator;
     private readonly UserResourceAccessService _resources;
 
@@ -27,6 +30,9 @@ public class VisionController : ControllerBase
     {
         var path = ValidateOwnedPath(request.ImagePath);
         if (!path.IsAllowed) return BadRequest(path.DenialReason);
+        if (string.IsNullOrWhiteSpace(request.Prompt) || request.Prompt.Length > 4_000)
+            return BadRequest("Prompt must contain between 1 and 4000 characters.");
+        if (!IsFileWithinLimit(path.SanitizedPath)) return BadRequest("Image exceeds the 20 MB limit.");
         try
         {
             var command = new AnalyzeImageCommand
@@ -59,6 +65,7 @@ public class VisionController : ControllerBase
             return BadRequest("ImagePath cannot be empty.");
         var path = ValidateOwnedPath(request.ImagePath);
         if (!path.IsAllowed) return BadRequest(path.DenialReason);
+        if (!IsFileWithinLimit(path.SanitizedPath)) return BadRequest("Image exceeds the 20 MB limit.");
 
         try
         {
@@ -84,6 +91,9 @@ public class VisionController : ControllerBase
             return BadRequest("ImagePath and Categories must not be empty.");
         var path = ValidateOwnedPath(request.ImagePath);
         if (!path.IsAllowed) return BadRequest(path.DenialReason);
+        if (request.Categories.Length > 100 || request.Categories.Any(category => string.IsNullOrWhiteSpace(category) || category.Length > 100))
+            return BadRequest("Category limits were exceeded.");
+        if (!IsFileWithinLimit(path.SanitizedPath)) return BadRequest("Image exceeds the 20 MB limit.");
 
         try
         {
@@ -117,6 +127,7 @@ public class VisionController : ControllerBase
             return BadRequest("ImagePath cannot be empty.");
         var path = ValidateOwnedPath(request.ImagePath);
         if (!path.IsAllowed) return BadRequest(path.DenialReason);
+        if (!IsFileWithinLimit(path.SanitizedPath)) return BadRequest("Image exceeds the 20 MB limit.");
 
         try
         {
@@ -150,4 +161,7 @@ public class VisionController : ControllerBase
             return PathValidationResult.Deny("Authenticated tenant/user identity is missing.");
         return _resources.ValidateOwnedPath(tenantId, userId, path);
     }
+
+    private static bool IsFileWithinLimit(string path) =>
+        System.IO.File.Exists(path) && new FileInfo(path).Length <= MaximumImageBytes;
 }

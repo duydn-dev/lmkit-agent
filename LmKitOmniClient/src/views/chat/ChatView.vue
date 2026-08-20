@@ -439,8 +439,14 @@ const sendMessage = async () => {
         buffer = buffer.substring(lineEnd + 1);
 
         if (line.startsWith('data:')) {
-          let data = line.substring(5);
-          if (data.startsWith(' ')) data = data.substring(1);
+          let rawData = line.substring(5);
+          if (rawData.startsWith(' ')) rawData = rawData.substring(1);
+          let data: string;
+          try {
+            data = JSON.parse(rawData);
+          } catch {
+            data = rawData;
+          }
 
           if (data === '[DONE]') break;
           

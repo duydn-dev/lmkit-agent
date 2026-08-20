@@ -17,7 +17,7 @@ namespace LmKitOmniApi.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.9")
+                .HasAnnotation("ProductVersion", "10.0.11")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -120,12 +120,12 @@ namespace LmKitOmniApi.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("UserAgent")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
-
-                    b.Property<Guid?>("TenantId")
-                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
@@ -211,15 +211,30 @@ namespace LmKitOmniApi.Migrations
                     b.Property<bool>("IsVectorized")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("LastProcessingError")
+                        .HasColumnType("text");
+
+                    b.Property<int>("ProcessingAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ProcessingLeaseUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime>("UploadedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("VectorizationStatus")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.HasKey("Id");
 
                     b.HasIndex("UserId");
+
+                    b.HasIndex("VectorizationStatus", "ProcessingLeaseUntilUtc", "UploadedAt");
 
                     b.ToTable("Documents");
                 });
@@ -673,6 +688,9 @@ namespace LmKitOmniApi.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("Email")
+                        .IsUnique();
+
                     b.HasIndex("TenantId");
 
                     b.ToTable("Users");
@@ -722,6 +740,12 @@ namespace LmKitOmniApi.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("RefreshTokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("SessionKey")
+                        .IsUnique();
 
                     b.HasIndex("UserId");
 

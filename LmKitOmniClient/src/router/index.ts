@@ -22,6 +22,12 @@ const router = createRouter({
           meta: { requiresAuth: true }
         },
         {
+          path: '/memory',
+          name: 'Memory',
+          component: () => import('../views/memory/MemoryView.vue'),
+          meta: { requiresAuth: true }
+        },
+        {
           path: '/admin/users',
           name: 'AdminUsers',
           component: () => import('../views/admin/UserManager.vue'),
@@ -39,7 +45,9 @@ const router = createRouter({
       path: '/widget/chat',
       name: 'WidgetChat',
       component: () => import('../views/widget/ChatWidgetView.vue'),
-      meta: { requiresAuth: false }
+      // Public widget credentials are not implemented yet. Do not expose an
+      // apparently anonymous route backed by authenticated chat APIs.
+      meta: { requiresAuth: true }
     }
   ]
 });

@@ -42,7 +42,7 @@ public class ResearchAgent : ISpecializedAgent
         return Task.FromResult(confidence);
     }
 
-    public async Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct = default)
+    public async Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string userRole, string query, CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();
         var tools = new List<string>();
@@ -53,8 +53,8 @@ public class ResearchAgent : ISpecializedAgent
             // Step 1: RAG Knowledge Base
             _logger.LogInformation("🔬 [{Agent}] Searching knowledge base...", AgentName);
             var ragExecution = await _toolGateway.ExecuteReadOnlyAsync(
-                tenantId, userId, "User", "QueryKnowledgeBase", query,
-                token => _ragService.QueryKnowledgeBaseAsync(tenantId, query, topK: 3), ct);
+                tenantId, userId, userRole, "QueryKnowledgeBase", query,
+                token => _ragService.QueryKnowledgeBaseAsync(tenantId, userId ?? Guid.Empty, query, topK: 3), ct);
             if (ragExecution.IsSuccess
                 && !string.IsNullOrWhiteSpace(ragExecution.Output)
                 && !ragExecution.Output.Contains("Không tìm thấy"))
@@ -66,8 +66,8 @@ public class ResearchAgent : ISpecializedAgent
             // Step 2: Web Search
             _logger.LogInformation("🔬 [{Agent}] Searching the web...", AgentName);
             var webExecution = await _toolGateway.ExecuteReadOnlyAsync(
-                tenantId, userId, "User", "SearchWeb", query,
-                token => _webSearch.SearchWebAsync(query, count: 3), ct);
+                tenantId, userId, userRole, "SearchWeb", query,
+                token => _webSearch.SearchWebAsync(query, count: 3, token), ct);
             if (webExecution.IsSuccess && !string.IsNullOrWhiteSpace(webExecution.Output))
             {
                 results.AppendLine("[Web Search]: " + webExecution.Output);

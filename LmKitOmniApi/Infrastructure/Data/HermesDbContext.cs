@@ -41,12 +41,17 @@ public class HermesDbContext : DbContext
             .WithMany()
             .HasForeignKey(u => u.TenantId)
             .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.Email)
+            .IsUnique();
 
         modelBuilder.Entity<Document>()
             .HasOne(d => d.User)
             .WithMany(u => u.Documents)
             .HasForeignKey(d => d.UserId)
             .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<Document>()
+            .HasIndex(d => new { d.VectorizationStatus, d.ProcessingLeaseUntilUtc, d.UploadedAt });
 
         modelBuilder.Entity<DocumentChunk>()
             .HasOne(c => c.Document)
@@ -127,5 +132,11 @@ public class HermesDbContext : DbContext
 
         modelBuilder.Entity<UserSession>()
             .HasOne(u => u.User).WithMany().HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<UserSession>()
+            .HasIndex(session => session.SessionKey)
+            .IsUnique();
+        modelBuilder.Entity<UserSession>()
+            .HasIndex(session => session.RefreshTokenHash)
+            .IsUnique();
     }
 }

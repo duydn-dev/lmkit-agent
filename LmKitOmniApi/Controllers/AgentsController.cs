@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using LmKitOmniApi.Application.Agents.Commands;
 using LmKitOmniApi.Models;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 
 namespace LmKitOmniApi.Controllers;
@@ -10,6 +11,7 @@ namespace LmKitOmniApi.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
+[EnableRateLimiting("ai-agent")]
 public class AgentsController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -20,10 +22,11 @@ public class AgentsController : ControllerBase
     }
 
     [HttpPost("content-creation-pipeline")]
-    public async Task<IActionResult> RunContentCreationPipeline([FromBody] ContentCreationPipelineRequest request)
+    public async Task<IActionResult> RunContentCreationPipeline([FromBody] ContentCreationPipelineRequest request, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(request.Topic))
             return BadRequest("Topic cannot be empty.");
+        if (request.Topic.Length > 2_000) return BadRequest("Topic cannot exceed 2000 characters.");
         if (!Guid.TryParse(User.FindFirst("TenantId")?.Value, out var tenantId)
             || !Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
             return Unauthorized();
@@ -37,7 +40,7 @@ public class AgentsController : ControllerBase
                 UserId = userId,
                 UserRole = User.IsInRole("Admin") ? "Admin" : "User"
             };
-            var result = await _mediator.Send(command);
+            var result = await _mediator.Send(command, ct);
 
             return Ok(result);
         }

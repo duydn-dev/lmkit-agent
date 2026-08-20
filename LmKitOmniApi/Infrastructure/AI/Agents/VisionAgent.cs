@@ -51,7 +51,7 @@ public class VisionAgent : ISpecializedAgent
         return Task.FromResult(confidence);
     }
 
-    public async Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct = default)
+    public async Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string userRole, string query, CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();
         var tools = new List<string>();
@@ -59,10 +59,11 @@ public class VisionAgent : ISpecializedAgent
         try
         {
             // Extract image path from query
-            var parts = query.Split(' ');
-            var imagePath = parts.FirstOrDefault(p =>
-                p.Contains(".jpg") || p.Contains(".png") || p.Contains(".jpeg") ||
-                p.Contains(".bmp") || p.Contains(".webp"));
+            var pathMatch = System.Text.RegularExpressions.Regex.Match(
+                query,
+                "(?:\\\"(?<path>[^\\\"]+\\.(?:jpg|jpeg|png|bmp|webp))\\\"|'(?<path>[^']+\\.(?:jpg|jpeg|png|bmp|webp))'|(?<path>\\S+\\.(?:jpg|jpeg|png|bmp|webp)))",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            var imagePath = pathMatch.Success ? pathMatch.Groups["path"].Value : null;
 
             if (string.IsNullOrEmpty(imagePath))
             {
@@ -83,7 +84,7 @@ public class VisionAgent : ISpecializedAgent
             // Step 1: Analyze image (OCR / VLM)
             _logger.LogInformation("👁️ [{Agent}] Analyzing validated image: {Path}", AgentName, pathValidation.SanitizedPath);
             var execution = await _toolGateway.ExecuteReadOnlyAsync(
-                tenantId, userId, "User", "AnalyzeImage", pathValidation.SanitizedPath,
+                tenantId, userId, userRole, "AnalyzeImage", pathValidation.SanitizedPath,
                 token => _mediator.Send(
                     new AnalyzeImageCommand { ImagePath = pathValidation.SanitizedPath }, token), ct);
 

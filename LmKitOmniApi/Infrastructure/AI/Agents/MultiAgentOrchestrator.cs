@@ -35,6 +35,7 @@ public sealed class MultiAgentOrchestrator
     public async Task<string> RouteAndExecuteAsync(
         Guid tenantId,
         Guid? userId,
+        string userRole,
         string query,
         CancellationToken ct = default)
     {
@@ -45,7 +46,7 @@ public sealed class MultiAgentOrchestrator
         }
 
         var model = await _modelManager.GetChatModelAsync();
-        var workers = _agents.Select(agent => CreateWorker(model, agent, tenantId, userId)).ToList();
+        var workers = _agents.Select(agent => CreateWorker(model, agent, tenantId, userId, userRole)).ToList();
 
         var workerDirectory = string.Join(
             "\n",
@@ -108,7 +109,8 @@ public sealed class MultiAgentOrchestrator
         LM model,
         ISpecializedAgent specialist,
         Guid tenantId,
-        Guid? userId)
+        Guid? userId,
+        string userRole)
     {
         var toolName = "execute_" + Regex.Replace(
             specialist.AgentName.ToLowerInvariant(),
@@ -120,7 +122,7 @@ public sealed class MultiAgentOrchestrator
             $"Execute the {specialist.AgentName} application specialist: {specialist.Description}",
             async (request, ct) =>
             {
-                var result = await specialist.ExecuteAsync(tenantId, userId, request, ct);
+                var result = await specialist.ExecuteAsync(tenantId, userId, userRole, request, ct);
                 if (!result.Success)
                     throw new InvalidOperationException(result.ErrorMessage ?? $"{specialist.AgentName} failed.");
                 return result.ResultContent;

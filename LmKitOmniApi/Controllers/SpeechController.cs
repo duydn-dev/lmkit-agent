@@ -4,6 +4,7 @@ using LmKitOmniApi.Application.Speech.Commands;
 using LmKitOmniApi.Models;
 using LmKitOmniApi.Infrastructure.AI.Security;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 
 namespace LmKitOmniApi.Controllers;
@@ -11,6 +12,7 @@ namespace LmKitOmniApi.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
+[EnableRateLimiting("ai-agent")]
 public class SpeechController : ControllerBase
 {
     private readonly IMediator _mediator;

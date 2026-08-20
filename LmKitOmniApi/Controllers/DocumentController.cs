@@ -7,6 +7,9 @@ using MediatR;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using LmKitOmniApi.Infrastructure.AI.Security;
+using Microsoft.AspNetCore.RateLimiting;
+using LmKitOmniApi.Application.Abstractions;
+using LmKitOmniApi.Infrastructure.Security;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -20,17 +23,23 @@ public class DocumentController : ControllerBase
     private readonly LmKitOmniApi.Infrastructure.Data.HermesDbContext _dbContext;
     private readonly IMediator _mediator;
     private readonly UserResourceAccessService _resources;
+    private readonly IVectorStoreService _vectorStore;
+    private readonly string _vectorCollectionName;
 
     public DocumentController(
         LmModelManager modelManager,
         LmKitOmniApi.Infrastructure.Data.HermesDbContext dbContext,
         IMediator mediator,
-        UserResourceAccessService resources)
+        UserResourceAccessService resources,
+        IVectorStoreService vectorStore,
+        IConfiguration configuration)
     {
         _modelManager = modelManager;
         _dbContext = dbContext;
         _mediator = mediator;
         _resources = resources;
+        _vectorStore = vectorStore;
+        _vectorCollectionName = configuration["VectorStore:CollectionName"] ?? "lmkit_chunks";
     }
 
     [Authorize]
@@ -52,9 +61,11 @@ public class DocumentController : ControllerBase
             .Select(d => new {
                 d.Id,
                 d.FileName,
-                d.FilePath,
                 d.UploadedAt,
-                d.IsVectorized
+                d.IsVectorized,
+                d.VectorizationStatus,
+                d.ProcessingAttempts,
+                HasError = d.LastProcessingError != null
             })
             .ToListAsync();
             
@@ -74,6 +85,8 @@ public class DocumentController : ControllerBase
         {
             return BadRequest($"Unsupported file type. Allowed extensions: {string.Join(", ", allowedExtensions)}");
         }
+        if (!await UploadFileValidator.HasExpectedSignatureAsync(file, ext, HttpContext.RequestAborted))
+            return BadRequest("File content does not match its extension.");
 
         if (!TryGetIdentity(out var tenantId, out var currentUserId)) return Unauthorized();
 
@@ -101,7 +114,35 @@ public class DocumentController : ControllerBase
         return Ok(new { Message = "File uploaded successfully. Background job will vectorize it shortly.", DocumentId = doc.Id });
     }
 
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> DeleteDocument(Guid id, CancellationToken cancellationToken)
+    {
+        if (!TryGetIdentity(out var tenantId, out var currentUserId)) return Unauthorized();
+        var isAdmin = User.IsInRole("Admin");
+        var document = await _dbContext.Documents
+            .Include(item => item.User)
+            .Include(item => item.Chunks)
+            .FirstOrDefaultAsync(item => item.Id == id
+                && item.User != null
+                && item.User.TenantId == tenantId
+                && (isAdmin || item.UserId == currentUserId), cancellationToken);
+        if (document is null) return NotFound();
+
+        var vectorIds = document.Chunks.Select(chunk => chunk.VectorId).Distinct().ToArray();
+        if (vectorIds.Length > 0)
+            await _vectorStore.DeleteVectorsAsync(_vectorCollectionName, vectorIds, cancellationToken);
+
+        var ownedPath = _resources.ValidateOwnedPath(tenantId, document.UserId, document.FilePath);
+        if (ownedPath.IsAllowed && System.IO.File.Exists(ownedPath.SanitizedPath))
+            System.IO.File.Delete(ownedPath.SanitizedPath);
+
+        _dbContext.Documents.Remove(document);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
     [HttpPost("convert")]
+    [EnableRateLimiting("ai-agent")]
     public async Task<IActionResult> ConvertDocument([FromBody] DocumentConversionRequest request)
     {
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
@@ -145,6 +186,7 @@ public class DocumentController : ControllerBase
     }
 
     [HttpPost("extract-data")]
+    [EnableRateLimiting("ai-agent")]
     public async Task<IActionResult> ExtractData([FromBody] ExtractDocumentDataRequest request)
     {
         if (string.IsNullOrEmpty(request.DocumentPath))

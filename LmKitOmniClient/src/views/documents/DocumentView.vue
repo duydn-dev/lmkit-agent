@@ -137,6 +137,10 @@
                     <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                     Hoàn tất
                   </span>
+                  <span v-else-if="doc.vectorizationStatus === 'Failed'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-red-50 text-red-600 border border-red-200">
+                    <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                    Xử lý lỗi
+                  </span>
                   <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-600 border border-amber-200">
                     <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
                     Đang xử lý
@@ -200,6 +204,10 @@
               <span v-if="data.isVectorized" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-600 border border-emerald-200">
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                 Hoàn tất
+              </span>
+              <span v-else-if="data.vectorizationStatus === 'Failed'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-600 border border-red-200">
+                <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                Xử lý lỗi
               </span>
               <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-600 border border-amber-200">
                 <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
@@ -417,9 +425,11 @@ import { ApiFactory } from '@/api/api.factory';
 interface Document {
   id: string;
   fileName: string;
-  filePath: string;
   uploadedAt: string;
   isVectorized: boolean;
+  vectorizationStatus: 'Pending' | 'Processing' | 'Completed' | 'Failed';
+  processingAttempts: number;
+  hasError: boolean;
 }
 
 const documents = ref<Document[]>([]);
@@ -543,24 +553,14 @@ const uploadFile = async () => {
   uploading.value = true;
   uploadProgress.value = 0;
   
-  // Simulate upload progress
-  const progressInterval = setInterval(() => {
-    if (uploadProgress.value < 90) {
-      uploadProgress.value += Math.random() * 15;
-    }
-  }, 300);
+  uploadProgress.value = 20;
 
   const formData = new FormData();
   formData.append('file', selectedFile.value);
   
-  const userJson = localStorage.getItem('hermes_user');
-  const userId = userJson ? JSON.parse(userJson).id : '00000000-0000-0000-0000-000000000000';
-  formData.append('userId', userId);
-
   try {
     const response = await http.post(ApiFactory.DOCUMENT.UPLOAD, formData);
 
-    clearInterval(progressInterval);
     uploadProgress.value = 100;
     
     if (response.ok) {
@@ -575,7 +575,6 @@ const uploadFile = async () => {
       uploadProgress.value = 0;
     }
   } catch (error) {
-    clearInterval(progressInterval);
     uploadProgress.value = 0;
     console.error('Upload error:', error);
   } finally {

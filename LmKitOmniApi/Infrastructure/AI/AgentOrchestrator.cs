@@ -19,6 +19,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using LmKitOmniApi.Infrastructure.AI.Tools;
 using LmKitOmniApi.Infrastructure.Security;
+using Microsoft.EntityFrameworkCore;
 
 namespace LmKitOmniApi.Infrastructure.AI;
 
@@ -450,7 +451,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             {
                 var sandboxResult = await _sandbox.ExecuteInSandboxAsync(action, async (sandboxCt) =>
                 {
-                    return await ExecuteActionCoreAsync(tenantId, userId, query, action, sandboxCt);
+                    return await ExecuteActionCoreAsync(tenantId, userId, userRole, query, action, sandboxCt);
                 }, resCt);
 
                 if (sandboxResult.IsSuccess) return sandboxResult.Output;
@@ -460,7 +461,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                 throw new InvalidOperationException(sandboxResult.ErrorMessage ?? $"Tool '{action}' failed.");
             },
             $"[⚡ Resilience fallback: tool '{action}' không khả dụng]",
-            ct);
+            ct,
+            retrySafe: IsRetrySafeAction(action));
 
         var duration = System.Diagnostics.Stopwatch.GetElapsedTime(startedAt);
         _telemetry.RecordToolDuration(action, duration);
@@ -478,12 +480,12 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// Now includes DELEGATE, MCP, and SUMMARIZE actions.
     /// </summary>
     private async Task<string> ExecuteActionCoreAsync(
-        Guid tenantId, Guid? userId, string query, string action, CancellationToken ct)
+        Guid tenantId, Guid? userId, string userRole, string query, string action, CancellationToken ct)
     {
         switch (action)
         {
             case "RAG":
-                var ragResult = await _ragService.QueryKnowledgeBaseAsync(tenantId, query, topK: 3);
+                var ragResult = await _ragService.QueryKnowledgeBaseAsync(tenantId, userId ?? Guid.Empty, query, topK: 3);
                 await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "QueryKnowledgeBase", query, ct);
                 return ragResult;
 
@@ -529,14 +531,14 @@ public class AgentOrchestrator : IAgentOrchestrator
                 return $"Sentiment: {nlpResult.Sentiment}, Entities: {string.Join(", ", nlpResult.ExtractedEntities)}";
 
             case "WEB_SEARCH":
-                var webResult = await _webSearch.SearchWebAsync(query, 5);
+                var webResult = await _webSearch.SearchWebAsync(query, 5, ct);
                 await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "SearchWeb", query, ct);
                 return webResult;
 
             // ── NEW: Multi-Agent Delegation ──
             case "DELEGATE":
                 _logger.LogInformation("🤖 Delegating to multi-agent system...");
-                var agentResult = await _multiAgent.RouteAndExecuteAsync(tenantId, userId, query, ct);
+                var agentResult = await _multiAgent.RouteAndExecuteAsync(tenantId, userId, userRole, query, ct);
                 await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "Delegate", query, ct);
                 return agentResult;
 
@@ -598,6 +600,15 @@ public class AgentOrchestrator : IAgentOrchestrator
         var toolCallId = Guid.NewGuid();
         var startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
         _logger.LogInformation("Executing approved action {Action} directly.", action);
+        var currentRole = await _dbContext.Users
+            .Where(user => user.Id == userId && user.TenantId == tenantId && user.IsActive)
+            .Select(user => user.Role)
+            .SingleOrDefaultAsync(ct)
+            ?? throw new UnauthorizedAccessException("User is inactive or no longer belongs to this tenant.");
+        var permissionName = ActionToToolMap.TryGetValue(action, out var mappedAction) ? mappedAction : action;
+        var currentPermission = await _toolPermission.CanInvokeToolAsync(tenantId, userId, currentRole, permissionName, ct);
+        if (!currentPermission.IsAllowed && !currentPermission.RequiresApproval)
+            throw new UnauthorizedAccessException(currentPermission.DenialReason ?? "Tool permission was revoked after approval.");
         using var toolActivity = _telemetry.StartToolInvocation(action);
         try
         {
@@ -607,7 +618,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                 {
                     var sandboxResult = await _sandbox.ExecuteInSandboxAsync(
                         action,
-                        sandboxCt => ExecuteActionCoreAsync(tenantId, userId, query, action, sandboxCt),
+                        sandboxCt => ExecuteActionCoreAsync(tenantId, userId, currentRole, query, action, sandboxCt),
                         resilienceCt);
 
                     if (sandboxResult.IsSuccess) return sandboxResult.Output;
@@ -617,7 +628,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                         throw new TimeoutException(sandboxResult.ErrorMessage ?? "Approved action timed out.");
                     throw new InvalidOperationException(sandboxResult.ErrorMessage ?? "Approved action failed.");
                 },
-                ct);
+                ct,
+                retrySafe: IsRetrySafeAction(action));
 
             var duration = System.Diagnostics.Stopwatch.GetElapsedTime(startedAt);
             _telemetry.RecordToolDuration(action, duration);
@@ -637,9 +649,10 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
     }
 
-    /// <summary>
-    /// Build system prompt using template engine.
-    /// </summary>
+    private static bool IsRetrySafeAction(string action) => action is
+        "RAG" or "VISION" or "SPEECH" or "NLP" or "WEB_SEARCH" or "DELEGATE" or "SUMMARIZE";
+
+    /// <summary>Build system prompt using template engine.</summary>
     private string BuildSystemPrompt(string context, string memory)
     {
         return _promptTemplate.Render("default", new Dictionary<string, string>

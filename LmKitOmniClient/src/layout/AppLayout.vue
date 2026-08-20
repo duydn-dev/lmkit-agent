@@ -15,6 +15,11 @@
           <span>Kho tài liệu (RAG)</span>
         </router-link>
 
+        <router-link to="/memory" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
+          <i class="pi pi-history"></i>
+          <span>Bộ nhớ trợ lý</span>
+        </router-link>
+
         <router-link v-if="isAdmin" to="/admin/users" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
           <i class="pi pi-users"></i>
           <span>Quản lý User</span>
@@ -43,7 +48,7 @@
       </div>
       
       <div class="p-3 border-t border-gray-200 flex items-center gap-1">
-        <button @click="showSettingsModal = true" class="flex-1 flex items-center gap-3 overflow-hidden px-2 py-2 hover:bg-chatgpt-light rounded-md transition-colors text-left cursor-pointer group">
+        <button @click="openSettings" class="flex-1 flex items-center gap-3 overflow-hidden px-2 py-2 hover:bg-chatgpt-light rounded-md transition-colors text-left cursor-pointer group">
           <div class="w-8 h-8 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0 shadow-sm">
             <span class="text-xs font-bold text-white">{{ userInitials }}</span>
           </div>
@@ -88,12 +93,6 @@
             <button @click="activeTab = 'mcp'" :class="['w-full text-left px-3 py-2.5 rounded-lg mb-1 flex items-center gap-3 transition-colors text-sm font-medium', activeTab === 'mcp' ? 'bg-chatgpt-brand/10 text-sky-700' : 'text-gray-600 hover:bg-gray-200/50']">
               <i class="pi pi-server"></i> Máy chủ MCP
             </button>
-            <button @click="activeTab = 'api'" :class="['w-full text-left px-3 py-2.5 rounded-lg mb-1 flex items-center gap-3 transition-colors text-sm font-medium', activeTab === 'api' ? 'bg-chatgpt-brand/10 text-sky-700' : 'text-gray-600 hover:bg-gray-200/50']">
-              <i class="pi pi-key"></i> Mã Khóa API
-            </button>
-            <button @click="activeTab = 'widget'" :class="['w-full text-left px-3 py-2.5 rounded-lg mb-1 flex items-center gap-3 transition-colors text-sm font-medium', activeTab === 'widget' ? 'bg-chatgpt-brand/10 text-sky-700' : 'text-gray-600 hover:bg-gray-200/50']">
-              <i class="pi pi-objects-column"></i> Widget Plugin
-            </button>
           </div>
           <div class="p-2 border-t border-gray-200">
             <button @click="logout" class="w-full text-left px-3 py-2.5 rounded-lg flex items-center gap-3 text-red-400 hover:bg-red-400/10 transition-colors text-sm font-medium">
@@ -107,30 +106,36 @@
           <div class="flex-1 overflow-y-auto p-6 text-gray-700">
             <div v-if="activeTab === 'mcp'" class="animate-fade-in">
               <h3 class="text-xl font-medium text-gray-900 mb-2">Máy chủ Model Context Protocol (MCP)</h3>
-              <p class="text-sm text-gray-600 mb-6">Kết nối nền tảng Trợ lý AI với các nguồn dữ liệu bên ngoài.</p>
-              <div class="p-8 border border-gray-100 rounded-xl bg-gray-200/50 text-center">
-                <i class="pi pi-database text-4xl text-gray-600 mb-3"></i>
-                <p class="text-gray-500 text-sm">Chưa có máy chủ MCP nào được kết nối.</p>
-              </div>
+              <p class="text-sm text-gray-600 mb-6">Kết nối REST MCP adapter theo tenant. Header bí mật được mã hóa và không bao giờ trả lại giao diện.</p>
+              <div v-if="!isAdmin" class="p-5 border border-amber-200 rounded-xl bg-amber-50 text-amber-700 text-sm">Chỉ Tenant Admin được quản lý máy chủ MCP.</div>
+              <template v-else>
+                <form @submit.prevent="createMcpServer" class="grid gap-3 p-4 bg-white border border-gray-200 rounded-xl mb-5">
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <InputText v-model="mcpForm.name" required placeholder="Tên, ví dụ crm-tools" />
+                    <InputText v-model="mcpForm.url" required type="url" placeholder="https://mcp.example.com" />
+                  </div>
+                  <Textarea v-model="mcpForm.headersJson" rows="3" placeholder='Header JSON tùy chọn, ví dụ {"Authorization":"Bearer ..."}' />
+                  <div class="flex items-center justify-between gap-3">
+                    <label class="flex items-center gap-2 text-sm"><Checkbox v-model="mcpForm.isActive" binary /> Kích hoạt</label>
+                    <Button type="submit" label="Thêm máy chủ" icon="pi pi-plus" :loading="mcpSaving" />
+                  </div>
+                </form>
+                <div v-if="mcpError" class="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{{ mcpError }}</div>
+                <div v-if="mcpServers.length === 0" class="p-8 border border-gray-100 rounded-xl bg-gray-200/50 text-center">
+                  <i class="pi pi-database text-4xl text-gray-600 mb-3"></i>
+                  <p class="text-gray-500 text-sm">Chưa có máy chủ MCP nào được kết nối.</p>
+                </div>
+                <div v-for="server in mcpServers" :key="server.id" class="flex items-center justify-between gap-3 p-4 mb-2 bg-white border border-gray-200 rounded-xl">
+                  <div class="min-w-0">
+                    <div class="font-medium truncate">{{ server.name }}</div>
+                    <div class="text-xs text-gray-500 truncate">{{ server.url }}</div>
+                    <div class="text-xs mt-1" :class="server.isActive ? 'text-green-600' : 'text-gray-400'">{{ server.isActive ? 'Đang hoạt động' : 'Đã tắt' }} · {{ server.hasHeaders ? 'Có header bảo mật' : 'Không có header' }}</div>
+                  </div>
+                  <Button icon="pi pi-trash" severity="danger" text rounded aria-label="Xóa máy chủ MCP" @click="deleteMcpServer(server.id)" />
+                </div>
+              </template>
             </div>
             
-            <div v-if="activeTab === 'api'" class="animate-fade-in">
-              <h3 class="text-xl font-medium text-gray-900 mb-2">Mã Khóa API (API Keys)</h3>
-              <p class="text-sm text-gray-600 mb-6">Quản lý khóa bí mật để sử dụng các công cụ LM-Kit.</p>
-              <div class="p-8 border border-gray-100 rounded-xl bg-gray-200/50 text-center">
-                <i class="pi pi-key text-4xl text-gray-600 mb-3"></i>
-                <p class="text-gray-500 text-sm">Cấu hình API Keys sẽ xuất hiện ở đây.</p>
-              </div>
-            </div>
-            
-            <div v-if="activeTab === 'widget'" class="animate-fade-in">
-              <h3 class="text-xl font-medium text-gray-900 mb-2">Widget Plugin</h3>
-              <p class="text-sm text-gray-600 mb-6">Bật/tắt các tiện ích mở rộng giao diện của người dùng.</p>
-              <div class="p-8 border border-gray-100 rounded-xl bg-gray-200/50 text-center">
-                <i class="pi pi-objects-column text-4xl text-gray-600 mb-3"></i>
-                <p class="text-gray-500 text-sm">Hệ thống Widget đang được phát triển.</p>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -139,10 +144,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
+import { useAuthStore } from '@/store/auth.store';
 
 interface ChatSession {
   id: string;
@@ -151,16 +157,70 @@ interface ChatSession {
 }
 
 const router = useRouter();
-const userName = ref('Người dùng');
-const userEmail = ref('user@lmkit.net');
-const userRole = ref('Member');
+const authStore = useAuthStore();
+const userName = computed(() => authStore.currentUser?.fullName || authStore.currentUser?.email || 'Người dùng');
+const userEmail = computed(() => authStore.currentUser?.email || '');
+const userRole = computed(() => authStore.currentUser?.role || 'Member');
 
 const isAdmin = computed(() => userRole.value === 'Admin');
 
 const showSettingsModal = ref(false);
 const activeTab = ref('mcp');
+interface McpServer { id: string; name: string; url: string; isActive: boolean; hasHeaders: boolean }
+const mcpServers = ref<McpServer[]>([]);
+const mcpSaving = ref(false);
+const mcpError = ref('');
+const mcpForm = ref({ name: '', url: '', headersJson: '', isActive: true });
 
 const chatSessions = ref<ChatSession[]>([]);
+
+const openSettings = async () => {
+  showSettingsModal.value = true;
+  if (isAdmin.value) await loadMcpServers();
+};
+
+const loadMcpServers = async () => {
+  mcpError.value = '';
+  const response = await http.get('/api/mcp-servers');
+  if (response.ok) mcpServers.value = await response.json();
+  else mcpError.value = 'Không thể tải cấu hình MCP.';
+};
+
+const createMcpServer = async () => {
+  mcpError.value = '';
+  let headers: Record<string, string> | undefined;
+  try {
+    headers = mcpForm.value.headersJson.trim() ? JSON.parse(mcpForm.value.headersJson) : undefined;
+  } catch {
+    mcpError.value = 'Header JSON không hợp lệ.';
+    return;
+  }
+  mcpSaving.value = true;
+  try {
+    const response = await http.post('/api/mcp-servers', {
+      name: mcpForm.value.name,
+      url: mcpForm.value.url,
+      headers,
+      replaceHeaders: true,
+      isActive: mcpForm.value.isActive
+    });
+    if (!response.ok) {
+      mcpError.value = await response.text() || 'Không thể thêm máy chủ MCP.';
+      return;
+    }
+    mcpForm.value = { name: '', url: '', headersJson: '', isActive: true };
+    await loadMcpServers();
+  } finally {
+    mcpSaving.value = false;
+  }
+};
+
+const deleteMcpServer = async (id: string) => {
+  if (!confirm('Xóa máy chủ MCP này?')) return;
+  const response = await http.delete(`/api/mcp-servers/${id}`);
+  if (response.ok) mcpServers.value = mcpServers.value.filter(server => server.id !== id);
+  else mcpError.value = 'Không thể xóa máy chủ MCP.';
+};
 
 const selectSession = (id: string) => {
   router.push(`/chat?id=${id}`);
@@ -198,29 +258,17 @@ const userInitials = computed(() => {
 });
 
 onMounted(() => {
-  const userJson = localStorage.getItem('hermes_user');
-  if (userJson) {
-    try {
-      const user = JSON.parse(userJson);
-      userName.value = user.fullName || user.username || 'User';
-      userEmail.value = user.email || '';
-      userRole.value = user.role || 'Member';
-      
-      // Load sessions after getting user info
-      loadChatSessions();
-      
-      // Lắng nghe sự kiện khi có phiên chat mới được tạo
-      window.addEventListener('chat-session-created', loadChatSessions);
-    } catch (e) {
-      console.error(e);
-    }
-  }
+  loadChatSessions();
+  window.addEventListener('chat-session-created', loadChatSessions);
 });
 
-const logout = () => {
-  localStorage.removeItem('hermes_token');
-  localStorage.removeItem('hermes_user');
-  router.push('/login');
+onUnmounted(() => {
+  window.removeEventListener('chat-session-created', loadChatSessions);
+});
+
+const logout = async () => {
+  await authStore.logout();
+  await router.push('/login');
 };
 </script>
 

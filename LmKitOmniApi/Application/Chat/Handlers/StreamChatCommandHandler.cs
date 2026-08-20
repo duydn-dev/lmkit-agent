@@ -42,8 +42,6 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
 
     public async IAsyncEnumerable<string> Handle(StreamChatCommand request, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var model = await _modelManager.GetChatModelAsync(request.ModelId);
-        
         var session = await _dbContext.ChatSessions
             .FirstOrDefaultAsync(s => s.Id == request.SessionId
                 && s.TenantId == request.TenantId
@@ -58,6 +56,11 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
             .SingleOrDefaultAsync(cancellationToken);
         if (storedRole is null) throw new UnauthorizedAccessException("User is inactive or access was revoked.");
         var agentRole = storedRole.Equals("Admin", StringComparison.OrdinalIgnoreCase) ? "Admin" : "User";
+
+        // Validate ownership before loading an expensive model. Model selection
+        // is server-controlled; accepting a URL/model id from a chat request
+        // would enable SSRF and disk/RAM exhaustion.
+        var model = await _modelManager.GetChatModelAsync();
 
         var cacheKey = $"ChatHistory:{request.SessionId}";
         List<HistoryMessage>? historyMessages = null;
@@ -101,8 +104,6 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
             else if (msg.Role == "assistant") history.AddMessage(AuthorRole.Assistant, msg.Content);
             else if (msg.Role == "system") history.AddMessage(AuthorRole.User, msg.Content); // Inject summary as user context
         }
-
-        history.AddMessage(AuthorRole.User, request.Message);
 
         // Save user message
         var userMsg = new ChatMessage

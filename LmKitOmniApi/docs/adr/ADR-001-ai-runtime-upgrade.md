@@ -94,7 +94,7 @@ delete operations and any generated placeholder tool.
 - Telemetry stores lengths/types, not query or response previews.
 - PostgreSQL and Qdrant readiness checks replace the previous always-healthy endpoint.
 - Audit interceptor redacts credentials, keys, tokens, PII and conversational content.
-- The simulated fine-tuning and hard-coded reflexion jobs were removed. The proactive monitor remains disabled unless explicitly enabled.
+- The simulated fine-tuning, hard-coded reflexion and random proactive-monitor jobs were removed, together with their unused Hangfire/Telegram runtime surface.
 - Windows CUDA is referenced only on Windows; Linux containers use LM-Kit base CPU/Vulkan.
 - Frontend uses same-origin nginx proxying, credentialed API calls and lazy-loaded voice code.
 

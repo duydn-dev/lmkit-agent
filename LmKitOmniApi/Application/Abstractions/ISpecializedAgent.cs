@@ -22,7 +22,7 @@ public interface ISpecializedAgent
     Task<double> EvaluateConfidenceAsync(string query, CancellationToken ct = default);
 
     /// <summary>Execute the query and return a result context string.</summary>
-    Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct = default);
+    Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string userRole, string query, CancellationToken ct = default);
 }
 
 public class AgentExecutionResult

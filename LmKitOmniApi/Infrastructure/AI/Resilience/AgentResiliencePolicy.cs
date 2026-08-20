@@ -14,7 +14,7 @@ public class AgentResiliencePolicy
     private readonly ILogger<AgentResiliencePolicy> _logger;
     private readonly IDistributedCache _cache;
 
-    // Retry: 3 attempts with exponential backoff
+    // Retry-safe operations: up to 3 attempts with exponential backoff.
     private const int MaxRetries = 3;
     private static readonly TimeSpan InitialRetryDelay = TimeSpan.FromMilliseconds(500);
 
@@ -39,7 +39,8 @@ public class AgentResiliencePolicy
         string toolName,
         Func<CancellationToken, Task<T>> action,
         T fallbackValue,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool retrySafe = true)
     {
         // Check circuit breaker
         if (await IsCircuitOpenAsync(toolName, ct))
@@ -49,8 +50,9 @@ public class AgentResiliencePolicy
         }
 
         var lastException = (Exception?)null;
+        var maximumAttempts = retrySafe ? MaxRetries : 1;
 
-        for (int attempt = 1; attempt <= MaxRetries; attempt++)
+        for (int attempt = 1; attempt <= maximumAttempts; attempt++)
         {
             try
             {
@@ -66,19 +68,19 @@ public class AgentResiliencePolicy
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                _logger.LogWarning("⏱️ Tool '{Tool}' timed out on attempt {Attempt}/{Max}", toolName, attempt, MaxRetries);
+                _logger.LogWarning("⏱️ Tool '{Tool}' timed out on attempt {Attempt}/{Max}", toolName, attempt, maximumAttempts);
                 lastException = new TimeoutException($"Tool '{toolName}' timed out after {DefaultToolTimeout.TotalSeconds}s");
                 await RecordFailureAsync(toolName, ct);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning("🔄 Tool '{Tool}' failed on attempt {Attempt}/{Max}: {Error}",
-                    toolName, attempt, MaxRetries, ex.Message);
+                    toolName, attempt, maximumAttempts, ex.Message);
                 lastException = ex;
                 await RecordFailureAsync(toolName, ct);
             }
 
-            if (attempt < MaxRetries)
+            if (attempt < maximumAttempts)
             {
                 var delay = TimeSpan.FromMilliseconds(InitialRetryDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
                 _logger.LogInformation("Retrying '{Tool}' in {Delay}ms...", toolName, delay.TotalMilliseconds);
@@ -87,7 +89,7 @@ public class AgentResiliencePolicy
         }
 
         _logger.LogError("❌ Tool '{Tool}' failed after {Max} attempts. Using fallback. Last error: {Error}",
-            toolName, MaxRetries, lastException?.Message);
+            toolName, maximumAttempts, lastException?.Message);
         return fallbackValue;
     }
 
@@ -115,13 +117,15 @@ public class AgentResiliencePolicy
     public async Task<T> ExecuteRequiredWithResilienceAsync<T>(
         string toolName,
         Func<CancellationToken, Task<T>> action,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool retrySafe = true)
     {
         if (await IsCircuitOpenAsync(toolName, ct))
             throw new InvalidOperationException($"Circuit breaker is open for tool '{toolName}'.");
 
         Exception? lastException = null;
-        for (var attempt = 1; attempt <= MaxRetries; attempt++)
+        var maximumAttempts = retrySafe ? MaxRetries : 1;
+        for (var attempt = 1; attempt <= maximumAttempts; attempt++)
         {
             try
             {
@@ -143,7 +147,7 @@ public class AgentResiliencePolicy
                 await RecordFailureAsync(toolName, ct);
             }
 
-            if (attempt < MaxRetries)
+            if (attempt < maximumAttempts)
             {
                 var delay = TimeSpan.FromMilliseconds(
                     InitialRetryDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
@@ -152,7 +156,7 @@ public class AgentResiliencePolicy
         }
 
         throw new InvalidOperationException(
-            $"Tool '{toolName}' failed after {MaxRetries} attempts.",
+            $"Tool '{toolName}' failed after {maximumAttempts} attempts.",
             lastException);
     }
 

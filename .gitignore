@@ -53,6 +53,7 @@ appsettings.Development.json
 appsettings.Local.json
 
 ## Uploads & Temporary Data
+.tmp/
 LmKitOmniApi/Uploads/
 LmKitOmniApi/Temp/
 LmKitOmniApi/Documents/

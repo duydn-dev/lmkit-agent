@@ -25,11 +25,13 @@ class Http {
   }
 
   private async _request(url: string, options: RequestInit): Promise<Response> {
-    const isRefreshUrl = url === '/api/auth/refresh';
+    const isAuthLifecycleUrl = url === '/api/auth/login'
+      || url === '/api/auth/refresh'
+      || url === '/api/auth/logout';
     let response = await fetch(`${BASE_URL}${url}`, options);
 
     // If 401 and it's not the refresh endpoint itself
-    if (response.status === 401 && !isRefreshUrl) {
+    if (response.status === 401 && !isAuthLifecycleUrl) {
       if (!this.isRefreshing) {
         this.isRefreshing = true;
         
@@ -49,9 +51,8 @@ class Http {
             this.isRefreshing = false;
             this.onRefreshed(false);
             // If refresh fails, we could redirect to login here
-            if (typeof window !== 'undefined') {
-               // Let the auth store or component handle it if possible, or force redirect:
-               window.location.href = '/login';
+            if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+               window.location.assign('/login');
             }
           }
         } catch (e) {

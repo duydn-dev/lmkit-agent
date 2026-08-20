@@ -14,19 +14,16 @@ using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.AI;
 using LmKitOmniApi.Infrastructure.AI.Security;
 using LmKitOmniApi.Infrastructure.AI.Filters;
-using Hangfire;
-using Hangfire.PostgreSql;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
 using Microsoft.Extensions.Caching.Distributed;
-using LmKitOmniApi.Infrastructure.Notifications;
-using LmKitOmniApi.Application.Jobs;
 using LmKitOmniApi.Application.Chat;
 using LmKitOmniApi.Infrastructure.AI.Tools;
 using LmKitOmniApi.Infrastructure.Security;
 using Microsoft.AspNetCore.DataProtection;
+using System.Security.Cryptography.X509Certificates;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -57,10 +54,19 @@ builder.Services.AddControllers();
 var dataProtectionKeyPath = builder.Configuration["DataProtection:KeyPath"]
     ?? Path.Combine(builder.Environment.ContentRootPath, "App_Data", "DataProtectionKeys");
 Directory.CreateDirectory(dataProtectionKeyPath);
-builder.Services.AddDataProtection()
+var dataProtection = builder.Services.AddDataProtection()
     .SetApplicationName("LmKitOmniApi")
     .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyPath));
+var dataProtectionCertificatePath = builder.Configuration["DataProtection:CertificatePath"];
+if (!string.IsNullOrWhiteSpace(dataProtectionCertificatePath))
+{
+    var certificate = X509CertificateLoader.LoadPkcs12FromFile(
+        dataProtectionCertificatePath,
+        builder.Configuration["DataProtection:CertificatePassword"]);
+    dataProtection.ProtectKeysWithCertificate(certificate);
+}
 builder.Services.AddSingleton<TaskApprovalPayloadProtector>();
+builder.Services.AddSingleton<McpHeaderProtector>();
 
 // Đăng ký CORS (đọc origins từ cấu hình, không hardcode)
 builder.Services.AddCors(options =>
@@ -136,8 +142,29 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     if (!string.IsNullOrEmpty(isBlacklisted))
                     {
                         context.Fail("Token has been revoked");
+                        return;
                     }
                 }
+
+                if (!Guid.TryParse(context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
+                    || !Guid.TryParse(context.Principal?.FindFirstValue("sid"), out var sessionId)
+                    || !Guid.TryParse(context.Principal?.FindFirstValue("TenantId"), out var tenantId))
+                {
+                    context.Fail("Token session claims are invalid");
+                    return;
+                }
+
+                var authDb = context.HttpContext.RequestServices.GetRequiredService<HermesDbContext>();
+                var sessionIsActive = await authDb.UserSessions.AnyAsync(session =>
+                    session.Id == sessionId
+                    && session.UserId == userId
+                    && session.Status == "active"
+                    && session.ExpiresAtUtc > DateTime.UtcNow
+                    && session.User != null
+                    && session.User.IsActive
+                    && session.User.TenantId == tenantId,
+                    context.HttpContext.RequestAborted);
+                if (!sessionIsActive) context.Fail("Session is inactive or revoked");
             }
         };
     });
@@ -155,21 +182,6 @@ builder.Services.AddDbContext<HermesDbContext>((sp, options) =>
 
 // Đăng ký Qdrant Vector DB
 builder.Services.AddSingleton<IVectorStoreService, QdrantVectorService>();
-
-// Cấu hình Hangfire
-builder.Services.AddHangfire(configuration => configuration
-    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-    .UseSimpleAssemblyNameTypeSerializer()
-    .UseRecommendedSerializerSettings()
-    .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(builder.Configuration["PostgreSql"])));
-
-builder.Services.AddHangfireServer();
-
-// Đăng ký Neo4j Driver
-
-// Đăng ký Telegram Proactive Agent
-builder.Services.Configure<TelegramSettings>(builder.Configuration.GetSection("TelegramSettings"));
-builder.Services.AddScoped<ITelegramNotificationService, TelegramNotificationService>();
 
 // ============================================================
 // 🛡️ AI Safety & Security Services (Phase 1)
@@ -205,6 +217,7 @@ builder.Services.AddScoped<IRagPipelineService, RagPipelineService>();
 
 // Đăng ký Background Worker cho RAG Bất đồng bộ
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DocumentVectorizationWorker>();
+builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DataRetentionWorker>();
 
 // ============================================================
 // 🔄 Multi-Agent System (Phase 3)
@@ -278,15 +291,21 @@ builder.Services.AddSingleton<LmKitDefaultToolCatalog>();
 builder.Services.AddScoped<IAgentOrchestrator, AgentOrchestrator>();
 
 // Đăng ký Advanced Tools
-builder.Services.AddScoped<IWebSearchService, LmKitOmniApi.Infrastructure.Web.DuckDuckGoSearchService>();
+builder.Services.AddHttpClient<IWebSearchService, LmKitOmniApi.Infrastructure.Web.DuckDuckGoSearchService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("LmKitOmniAgent/1.0");
+});
 builder.Services.AddScoped<IOfficeDocumentToolService, LmKitOmniApi.Infrastructure.Tools.OfficeDocumentToolService>();
 
 // ============================================================
 // 🏥 Health Checks
 // ============================================================
-builder.Services.AddHealthChecks()
+var healthChecks = builder.Services.AddHealthChecks()
     .AddCheck<LmKitOmniApi.Infrastructure.Health.PostgresHealthCheck>("postgres", tags: ["ready"])
     .AddCheck<LmKitOmniApi.Infrastructure.Health.QdrantHealthCheck>("qdrant", tags: ["ready"]);
+if (!string.IsNullOrWhiteSpace(redisConnectionString))
+    healthChecks.AddCheck<LmKitOmniApi.Infrastructure.Health.RedisHealthCheck>("redis", tags: ["ready"]);
 
 // ============================================================
 // 🚦 Rate Limiting (bảo vệ tài nguyên LLM đắt đỏ)
@@ -321,6 +340,14 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+if (builder.Configuration.GetValue<bool>("Database:ApplyMigrations"))
+{
+    using var migrationScope = app.Services.CreateScope();
+    var migrationDb = migrationScope.ServiceProvider.GetRequiredService<HermesDbContext>();
+    app.Logger.LogInformation("Applying database migrations before accepting traffic.");
+    migrationDb.Database.Migrate();
+}
 
 // Bootstrap is explicit. Production must provision the first administrator via
 // secret-backed configuration or an external identity workflow.
@@ -357,11 +384,6 @@ if (builder.Configuration.GetValue<bool>("BootstrapAdmin:Enabled"))
     }
 }
 
-if (builder.Configuration.GetValue<bool>("AgentJobs:ProactiveMonitorEnabled"))
-    RecurringJob.AddOrUpdate<ProactiveMonitorJob>("proactive-monitor-job", job => job.RunMonitorAsync(CancellationToken.None), "*/30 * * * *");
-else
-    RecurringJob.RemoveIfExists("proactive-monitor-job");
-
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -373,21 +395,20 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseExceptionHandler();
-app.UseHttpsRedirection();
+if (builder.Configuration.GetValue("HttpsRedirection:Enabled", true))
+{
+    if (!app.Environment.IsDevelopment()) app.UseHsts();
+    app.UseHttpsRedirection();
+}
 
 // Kích hoạt CORS (đã đổi tên policy từ "AllowAll" → "ProductionCors")
 app.UseCors("ProductionCors");
 
-// Kích hoạt Rate Limiting
-app.UseRateLimiter();
-
 app.UseAuthentication();
+// Authentication must run first so rate-limit partitions use the stable user id
+// instead of grouping every signed-in caller behind the same proxy IP.
+app.UseRateLimiter();
 app.UseAuthorization();
-
-app.UseHangfireDashboard("/hangfire", new DashboardOptions
-{
-    Authorization = new[] { new LmKitOmniApi.Infrastructure.Security.HangfireAuthorizationFilter() }
-});
 
 // Kích hoạt Prometheus Scrape Endpoint cho OpenTelemetry
 app.UseWhen(
@@ -407,8 +428,17 @@ app.MapControllers();
 
 // Health Check endpoint
 app.MapHealthChecks("/health");
+app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = _ => false
+});
+app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+});
 
 // Map SignalR Hub
-app.MapHub<LmKitOmniApi.Infrastructure.Hubs.NotificationHub>("/hubs/notifications");
+app.MapHub<LmKitOmniApi.Infrastructure.Hubs.NotificationHub>("/hubs/notifications")
+    .RequireAuthorization();
 
 app.Run();

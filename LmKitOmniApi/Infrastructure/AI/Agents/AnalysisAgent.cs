@@ -38,14 +38,14 @@ public class AnalysisAgent : ISpecializedAgent
         return Task.FromResult(confidence);
     }
 
-    public async Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct = default)
+    public async Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string userRole, string query, CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();
         try
         {
             _logger.LogInformation("📊 [{Agent}] Analyzing text...", AgentName);
             var execution = await _toolGateway.ExecuteReadOnlyAsync(
-                tenantId, userId, "User", "AnalyzeText", null,
+                tenantId, userId, userRole, "AnalyzeText", null,
                 async token =>
                 {
                     var analysis = await _mediator.Send(new AnalyzeTextCommand { Text = query }, token);

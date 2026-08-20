@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.AI.Security;
+using LmKitOmniApi.Infrastructure.Security;
 
 namespace LmKitOmniApi.Infrastructure.AI.Mcp;
 
@@ -19,23 +20,40 @@ public class McpClientService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<McpClientService> _logger;
     private readonly ToolSandboxService _sandbox;
+    private readonly McpHeaderProtector _headerProtector;
 
     // Cache discovered tools from MCP servers per Tenant
-    private readonly Dictionary<Guid, Dictionary<string, List<McpToolDefinition>>> _cachedTools = new();
-    private readonly Dictionary<Guid, DateTime> _lastDiscovery = new();
-    private readonly SemaphoreSlim _cacheLock = new(1, 1);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, IReadOnlyDictionary<string, List<McpToolDefinition>>> CachedTools = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTime> LastDiscovery = new();
+    private static readonly SemaphoreSlim CacheLock = new(1, 1);
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(10);
 
     public McpClientService(
         IHttpClientFactory httpClientFactory,
         IServiceScopeFactory scopeFactory,
         ToolSandboxService sandbox,
+        McpHeaderProtector headerProtector,
         ILogger<McpClientService> logger)
     {
         _httpClientFactory = httpClientFactory;
         _scopeFactory = scopeFactory;
         _sandbox = sandbox;
+        _headerProtector = headerProtector;
         _logger = logger;
+    }
+
+    public async Task InvalidateTenantCacheAsync(Guid tenantId, CancellationToken ct = default)
+    {
+        await CacheLock.WaitAsync(ct);
+        try
+        {
+            CachedTools.TryRemove(tenantId, out _);
+            LastDiscovery.TryRemove(tenantId, out _);
+        }
+        finally
+        {
+            CacheLock.Release();
+        }
     }
 
     /// <summary>
@@ -44,23 +62,18 @@ public class McpClientService
     /// </summary>
     public async Task<List<McpToolDefinition>> DiscoverToolsAsync(Guid tenantId, CancellationToken ct = default)
     {
-        await _cacheLock.WaitAsync(ct);
+        await CacheLock.WaitAsync(ct);
         try
         {
-            if (_lastDiscovery.TryGetValue(tenantId, out var lastTime) && 
+            if (LastDiscovery.TryGetValue(tenantId, out var lastTime) &&
                 DateTime.UtcNow - lastTime < CacheDuration && 
-                _cachedTools.TryGetValue(tenantId, out var tenantCache) && 
+                CachedTools.TryGetValue(tenantId, out var tenantCache) &&
                 tenantCache.Count > 0)
             {
                 return tenantCache.Values.SelectMany(t => t).ToList();
             }
 
-            if (!_cachedTools.ContainsKey(tenantId))
-            {
-                _cachedTools[tenantId] = new Dictionary<string, List<McpToolDefinition>>();
-            }
-            
-            _cachedTools[tenantId].Clear();
+            var discoveredForTenant = new Dictionary<string, List<McpToolDefinition>>(StringComparer.OrdinalIgnoreCase);
 
             using var scope = _scopeFactory.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
@@ -74,7 +87,7 @@ public class McpClientService
                 try
                 {
                     var tools = await DiscoverToolsFromServerAsync(server, ct);
-                    _cachedTools[tenantId][server.Name] = tools;
+                    discoveredForTenant[server.Name] = tools;
                     _logger.LogInformation("🔗 [MCP] Discovered {Count} tools from '{Server}' for Tenant {Tenant}", tools.Count, server.Name, tenantId);
                 }
                 catch (Exception ex)
@@ -83,12 +96,13 @@ public class McpClientService
                 }
             }
 
-            _lastDiscovery[tenantId] = DateTime.UtcNow;
-            return _cachedTools[tenantId].Values.SelectMany(t => t).ToList();
+            CachedTools[tenantId] = discoveredForTenant;
+            LastDiscovery[tenantId] = DateTime.UtcNow;
+            return discoveredForTenant.Values.SelectMany(t => t).ToList();
         }
         finally
         {
-            _cacheLock.Release();
+            CacheLock.Release();
         }
     }
 
@@ -100,7 +114,7 @@ public class McpClientService
         // Find which server hosts this tool
         string? serverName = null;
         
-        if (_cachedTools.TryGetValue(tenantId, out var tenantCache))
+        if (CachedTools.TryGetValue(tenantId, out var tenantCache))
         {
             serverName = tenantCache
                 .FirstOrDefault(kv => kv.Value.Any(t => t.Name.Equals(toolName, StringComparison.OrdinalIgnoreCase)))
@@ -111,7 +125,7 @@ public class McpClientService
         {
             // Try discovery first
             await DiscoverToolsAsync(tenantId, ct);
-            if (_cachedTools.TryGetValue(tenantId, out var retryCache))
+            if (CachedTools.TryGetValue(tenantId, out var retryCache))
             {
                 serverName = retryCache
                     .FirstOrDefault(kv => kv.Value.Any(t => t.Name.Equals(toolName, StringComparison.OrdinalIgnoreCase)))
@@ -228,7 +242,8 @@ public class McpClientService
         
         try
         {
-            var headers = JsonSerializer.Deserialize<Dictionary<string, string>>(headersJson);
+            var plaintextHeaders = _headerProtector.Unprotect(headersJson);
+            var headers = JsonSerializer.Deserialize<Dictionary<string, string>>(plaintextHeaders);
             if (headers != null)
             {
                 foreach (var header in headers)

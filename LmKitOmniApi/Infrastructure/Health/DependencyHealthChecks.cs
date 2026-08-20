@@ -1,6 +1,6 @@
-using System.Net.Sockets;
 using LmKitOmniApi.Infrastructure.Data;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Qdrant.Client;
 
 namespace LmKitOmniApi.Infrastructure.Health;
 
@@ -30,10 +30,11 @@ public sealed class PostgresHealthCheck : IHealthCheck
 
 public sealed class QdrantHealthCheck : IHealthCheck
 {
-    private readonly Uri _endpoint;
+    private readonly QdrantClient _client;
     public QdrantHealthCheck(IConfiguration configuration)
     {
-        _endpoint = new Uri(configuration["VectorStore:BaseUrl"] ?? "http://localhost:6334");
+        var endpoint = new Uri(configuration["VectorStore:BaseUrl"] ?? "http://localhost:6334");
+        _client = new QdrantClient(endpoint.Host, endpoint.Port);
     }
 
     public async Task<HealthCheckResult> CheckHealthAsync(
@@ -42,8 +43,7 @@ public sealed class QdrantHealthCheck : IHealthCheck
     {
         try
         {
-            using var client = new TcpClient();
-            await client.ConnectAsync(_endpoint.Host, _endpoint.Port, cancellationToken);
+            await _client.ListCollectionsAsync(cancellationToken: cancellationToken);
             return HealthCheckResult.Healthy();
         }
         catch (Exception ex)

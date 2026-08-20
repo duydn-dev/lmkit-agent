@@ -5,6 +5,9 @@ using System.Security.Claims;
 using LmKitOmniApi.Application.Chat.Commands;
 using LmKitOmniApi.Application.Chat.Queries;
 using LmKitOmniApi.Infrastructure.AI;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Text.Json;
+using LmKitOmniApi.Infrastructure.Security;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -13,6 +16,7 @@ namespace LmKitOmniApi.Controllers;
 public class ChatController : ControllerBase
 {
     private const long MaxAttachmentBytes = 20 * 1024 * 1024;
+    private const int MaxMessageCharacters = 50_000;
     private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif", ".tiff",
@@ -33,9 +37,23 @@ public class ChatController : ControllerBase
     /// Stream chat completion — JSON body (text only, no files).
     /// </summary>
     [Authorize] // M6 Fix: was missing — chat endpoints must require authentication
+    [EnableRateLimiting("ai-agent")]
     [HttpPost("stream")]
     public async Task StreamChatCompletion([FromBody] StreamChatCommand request, CancellationToken cancellationToken)
     {
+        if (request.SessionId == Guid.Empty || string.IsNullOrWhiteSpace(request.Message) || request.Message.Length > MaxMessageCharacters)
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await Response.WriteAsJsonAsync(new { message = $"SessionId and a message up to {MaxMessageCharacters} characters are required." }, cancellationToken);
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(request.ModelId))
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await Response.WriteAsJsonAsync(new { message = "Per-request model selection is not allowed." }, cancellationToken);
+            return;
+        }
+
         var userIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier || c.Type == "sub")?.Value;
         var tenantIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "TenantId")?.Value;
 
@@ -59,14 +77,10 @@ public class ChatController : ControllerBase
         {
             if (cancellationToken.IsCancellationRequested) break;
             
-            // Format SSE
-            var message = $"data: {chunk}\n\n";
-            await Response.WriteAsync(message, cancellationToken);
-            await Response.Body.FlushAsync(cancellationToken);
+            await WriteSseAsync(chunk, cancellationToken);
         }
         
-        await Response.WriteAsync("data: [DONE]\n\n", cancellationToken);
-        await Response.Body.FlushAsync(cancellationToken);
+        await WriteSseAsync("[DONE]", cancellationToken);
     }
 
     /// <summary>
@@ -74,6 +88,7 @@ public class ChatController : ControllerBase
     /// Files are processed (OCR/converted), injected into context, and auto-saved to Qdrant.
     /// </summary>
     [Authorize] // M6 Fix: was missing — chat endpoints must require authentication
+    [EnableRateLimiting("ai-agent")]
     [HttpPost("stream-with-files")]
     public async Task StreamChatWithFiles(
         [FromForm] string sessionId,
@@ -100,6 +115,18 @@ public class ChatController : ControllerBase
         {
             Response.StatusCode = StatusCodes.Status400BadRequest;
             await WriteSseAsync("[ERROR: Invalid session id]", cancellationToken);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(message) || message.Length > MaxMessageCharacters)
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await WriteSseAsync($"[ERROR: Message must contain between 1 and {MaxMessageCharacters} characters]", cancellationToken);
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(modelId))
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await WriteSseAsync("[ERROR: Per-request model selection is not allowed]", cancellationToken);
             return;
         }
 
@@ -131,6 +158,11 @@ public class ChatController : ControllerBase
                     await WriteSseAsync($"[THINKING]: ⚠️ Loại file không được hỗ trợ: {safeFileName}\\n", cancellationToken);
                     continue;
                 }
+                if (!await UploadFileValidator.HasExpectedSignatureAsync(file, extension, cancellationToken))
+                {
+                    await WriteSseAsync($"[THINKING]: ⚠️ Nội dung file không khớp phần mở rộng: {safeFileName}\n", cancellationToken);
+                    continue;
+                }
 
                 // Save file to disk
                 var savedPath = Path.Combine(uploadDir, $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}");
@@ -145,6 +177,7 @@ public class ChatController : ControllerBase
                 // Process file (OCR/convert + auto-save to Qdrant)
                 var result = await _ocrIngestion.ProcessFileForChatAsync(
                     tenantId,
+                    currentUserId,
                     savedPath,
                     safeFileName,
                     saveToKnowledge,
@@ -180,7 +213,7 @@ public class ChatController : ControllerBase
             UserId = currentUserId,
             TenantId = tenantId,
             Message = augmentedMessage,
-            ModelId = modelId ?? "qwen3.5:2b"
+            ModelId = string.Empty
         };
 
         var chatStream = _mediator.CreateStream(command, cancellationToken);
@@ -196,7 +229,9 @@ public class ChatController : ControllerBase
 
     private async Task WriteSseAsync(string data, CancellationToken ct)
     {
-        var message = $"data: {data}\n\n";
+        // JSON encoding keeps newlines and control characters inside one SSE
+        // event and prevents model output from injecting fake SSE fields.
+        var message = $"data: {JsonSerializer.Serialize(data)}\n\n";
         await Response.WriteAsync(message, ct);
         await Response.Body.FlushAsync(ct);
     }

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
+using System.Security.Cryptography;
 
 namespace LmKitOmniApi.Infrastructure.AI.Observability;
 
@@ -45,10 +46,11 @@ public class AgentTelemetryService
         Interlocked.Increment(ref _totalRequests);
 
         var activity = ActivitySource.StartActivity(operationName, ActivityKind.Internal);
-        activity?.SetTag("agent.tenant_id", tenantId.ToString());
+        var tenantScope = Convert.ToHexString(SHA256.HashData(tenantId.ToByteArray()))[..12];
+        activity?.SetTag("agent.tenant_scope", tenantScope);
         activity?.SetTag("agent.query_length", query.Length);
 
-        _logger.LogInformation("📊 [Telemetry] Started: {Operation} (Tenant: {Tenant})", operationName, tenantId);
+        _logger.LogInformation("📊 [Telemetry] Started: {Operation} (Tenant scope: {TenantScope})", operationName, tenantScope);
         return activity;
     }
 

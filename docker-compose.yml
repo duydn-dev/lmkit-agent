@@ -8,22 +8,27 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - PostgreSql=Server=postgres;Port=5432;Database=LmKitAgent;Username=postgres;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD};
+      - Database__ApplyMigrations=true
       - VectorStore__BaseUrl=http://qdrant:6334
       - JwtSettings__SecretKey=${JWT_SECRET_KEY:?Set JWT_SECRET_KEY}
-      - Cors__AllowedOrigins__0=${CORS_ORIGIN:-http://localhost:5173}
+      - AuthCookies__Secure=${AUTH_COOKIE_SECURE:-false}
+      - HttpsRedirection__Enabled=false
+      - Cors__AllowedOrigins__0=${CORS_ORIGIN:-http://localhost}
       - ConnectionStrings__Redis=${REDIS_CONNECTION_STRING:-redis:6379}
-      - TelegramSettings__BotToken=${TELEGRAM_BOT_TOKEN:-}
-      - TelegramSettings__ChatId=${TELEGRAM_CHAT_ID:-}
       - LMKit__LicenseKey=${LMKIT_LICENSE_KEY:-}
       - LiveKit__ApiKey=${LIVEKIT_API_KEY:-}
       - LiveKit__ApiSecret=${LIVEKIT_API_SECRET:-}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - DataProtection__KeyPath=/var/lib/lmkit/keys
     depends_on:
+      volume-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       qdrant:
         condition: service_started
+      redis:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -32,6 +37,8 @@ services:
     restart: unless-stopped
     volumes:
       - dataprotectionkeys:/var/lib/lmkit/keys
+      - models:/app/Models
+      - uploads:/app/Uploads
 
   postgres:
     image: postgres:17-alpine
@@ -49,6 +56,16 @@ services:
       retries: 5
     restart: unless-stopped
 
+  volume-init:
+    image: alpine:3.22
+    user: root
+    command: ["sh", "-c", "chown -R 1654:1654 /keys /models /uploads"]
+    volumes:
+      - dataprotectionkeys:/keys
+      - models:/models
+      - uploads:/uploads
+    restart: "no"
+
   qdrant:
     image: qdrant/qdrant:v1.13.6
     ports:
@@ -62,6 +79,11 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   livekit:
@@ -88,3 +110,5 @@ volumes:
   pgdata:
   qdrantdata:
   dataprotectionkeys:
+  models:
+  uploads:

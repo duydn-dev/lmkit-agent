@@ -51,10 +51,6 @@
           />
         </form>
         
-        <!-- Footer -->
-        <div class="mt-8 pt-6 border-t border-gray-200 text-center text-sm text-gray-500">
-          Tài khoản mặc định: <span class="text-gray-700 font-mono">admin@lmkit.net / admin</span>
-        </div>
       </div>
     </div>
   </div>
@@ -69,8 +65,8 @@ import { useAuthStore } from '@/store/auth.store';
 
 const router = useRouter();
 const authStore = useAuthStore();
-const email = ref('admin@lmkit.net');
-const password = ref('admin');
+const email = ref('');
+const password = ref('');
 const isLoading = ref(false);
 const errorMessage = ref('');
 
@@ -84,10 +80,11 @@ const handleLogin = async () => {
     const response = await http.post(ApiFactory.AUTH.LOGIN, { email: email.value, password: password.value });
     
     if (response.ok) {
-      await authStore.fetchCurrentUser();
-      
-      // Redirect to home
-      router.push('/');
+      if (await authStore.fetchCurrentUser()) {
+        router.push('/');
+      } else {
+        errorMessage.value = 'Đăng nhập thành công nhưng không thể thiết lập phiên làm việc.';
+      }
     } else {
       const errorData = await response.json().catch(() => null);
       errorMessage.value = errorData?.message || 'Đăng nhập thất bại. Kiểm tra lại thông tin.';

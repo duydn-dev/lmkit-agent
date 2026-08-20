@@ -7,6 +7,6 @@ public interface ITextChunkingService
 
 public interface IRagPipelineService
 {
-    Task<string> IngestDocumentAsync(Guid tenantId, string fileName, string content);
-    Task<string> QueryKnowledgeBaseAsync(Guid tenantId, string query, int topK = 3);
+    Task<string> IngestDocumentAsync(Guid tenantId, Guid userId, string fileName, string content);
+    Task<string> QueryKnowledgeBaseAsync(Guid tenantId, Guid userId, string query, int topK = 3);
 }

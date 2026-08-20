@@ -42,7 +42,7 @@ public class RagPipelineService : IRagPipelineService
         _enableHyDE = configuration.GetValue<bool>("RagSettings:EnableHyDE", false);
     }
 
-    public async Task<string> IngestDocumentAsync(Guid tenantId, string fileName, string content)
+    public async Task<string> IngestDocumentAsync(Guid tenantId, Guid userId, string fileName, string content)
     {
         var embeddingModel = await _modelManager.GetEmbeddingModelAsync();
         await _vectorStore.EnsureCollectionExistsAsync(_collectionName, (ulong)embeddingModel.EmbeddingSize);
@@ -51,8 +51,9 @@ public class RagPipelineService : IRagPipelineService
         var chunks = _chunkingService.ChunkText(content);
         int totalChunks = 0;
 
-        foreach (var chunk in chunks)
+        for (var chunkIndex = 0; chunkIndex < chunks.Count; chunkIndex++)
         {
+            var chunk = chunks[chunkIndex];
             var vector = embedder.GetEmbeddings(chunk);
             
             // Extract keywords for sparse search support
@@ -61,8 +62,11 @@ public class RagPipelineService : IRagPipelineService
             var payload = new Dictionary<string, object>
             {
                 { "TenantId", tenantId.ToString() },
+                { "OwnerUserId", userId.ToString() },
+                { "AccessScope", BuildPrivateAccessScope(tenantId, userId) },
                 { "FileName", fileName },
                 { "Content", chunk },
+                { "ChunkIndex", chunkIndex },
                 { "Keywords", string.Join(" ", keywords) } // Sparse search field
             };
             
@@ -75,7 +79,7 @@ public class RagPipelineService : IRagPipelineService
         return $"Ingested {totalChunks} chunks from {fileName}.";
     }
 
-    public async Task<string> QueryKnowledgeBaseAsync(Guid tenantId, string query, int topK = 3)
+    public async Task<string> QueryKnowledgeBaseAsync(Guid tenantId, Guid userId, string query, int topK = 3)
     {
         _logger.LogInformation("Hybrid search starting for tenant {TenantId}; query length {QueryLength}",
             tenantId, query.Length);
@@ -112,24 +116,22 @@ public class RagPipelineService : IRagPipelineService
             var tenantResults = await _vectorStore.SearchSimilarWithAnyPayloadAsync(
                 _collectionName,
                 queryVector,
-                "TenantId",
-                new[] { tenantId.ToString() },
+                "AccessScope",
+                new[] { BuildPrivateAccessScope(tenantId, userId) },
                 initialTopK);
 
             foreach (var r in tenantResults)
             {
                 if (r.Payload.ContainsKey("Content"))
                 {
-                    var source = r.Payload.TryGetValue("FileName", out var fileName)
-                        ? fileName
-                        : "knowledge-base";
+                    var source = BuildSourceLabel(r.Payload);
                     allDenseResults.Add((r.Payload["Content"], r.Score, source));
                 }
             }
         }
 
         // === Stage 3: Sparse Retrieval (Keyword Matching — BM25-like) ===
-        var sparseResults = await PerformKeywordSearchAsync(tenantId, query);
+        var sparseResults = await PerformKeywordSearchAsync(tenantId, userId, query);
 
         // === Stage 4: Reciprocal Rank Fusion (RRF) ===
         var fusedResults = ReciprocalRankFusion(allDenseResults, sparseResults, topK * 3);
@@ -184,7 +186,7 @@ public class RagPipelineService : IRagPipelineService
     /// which meant documents outside the vector top-50 were invisible to keyword search.
     /// Now uses Qdrant's native payload filter — completely independent of vector similarity.
     /// </summary>
-    private async Task<List<(string Content, float Score, string Source)>> PerformKeywordSearchAsync(Guid tenantId, string query)
+    private async Task<List<(string Content, float Score, string Source)>> PerformKeywordSearchAsync(Guid tenantId, Guid userId, string query)
     {
         var results = new List<(string Content, float Score, string Source)>();
         
@@ -198,17 +200,15 @@ public class RagPipelineService : IRagPipelineService
                 _collectionName,
                 payloadField: "Keywords",
                 keywords: keywords.ToList(),
-                tenantFilterField: "TenantId",
-                tenantId: tenantId.ToString(),
+                tenantFilterField: "AccessScope",
+                tenantId: BuildPrivateAccessScope(tenantId, userId),
                 topK: 20
             );
 
             foreach (var r in payloadResults)
             {
                 if (!r.Payload.ContainsKey("Content")) continue;
-                var source = r.Payload.TryGetValue("FileName", out var fileName)
-                    ? fileName
-                    : "knowledge-base";
+                var source = BuildSourceLabel(r.Payload);
                 results.Add((r.Payload["Content"], r.Score, source));
             }
 
@@ -220,7 +220,7 @@ public class RagPipelineService : IRagPipelineService
             _logger.LogWarning("Keyword search failed, falling back to vector+filter: {Error}", ex.Message);
             
             // Fallback: original vector-based keyword filtering (graceful degradation)
-            results = await PerformKeywordSearchFallbackAsync(tenantId, query);
+            results = await PerformKeywordSearchFallbackAsync(tenantId, userId, query);
         }
 
         return results;
@@ -230,7 +230,7 @@ public class RagPipelineService : IRagPipelineService
     /// Fallback sparse search — original vector-then-filter approach.
     /// Used when Qdrant payload index is not available.
     /// </summary>
-    private async Task<List<(string Content, float Score, string Source)>> PerformKeywordSearchFallbackAsync(Guid tenantId, string query)
+    private async Task<List<(string Content, float Score, string Source)>> PerformKeywordSearchFallbackAsync(Guid tenantId, Guid userId, string query)
     {
         var results = new List<(string Content, float Score, string Source)>();
         var keywords = _queryExpansion.ExtractKeywords(query);
@@ -243,8 +243,8 @@ public class RagPipelineService : IRagPipelineService
         var tenantResults = await _vectorStore.SearchSimilarWithAnyPayloadAsync(
             _collectionName,
             queryVector,
-            "TenantId",
-            new[] { tenantId.ToString() },
+            "AccessScope",
+            new[] { BuildPrivateAccessScope(tenantId, userId) },
             50);
 
         foreach (var r in tenantResults)
@@ -259,9 +259,7 @@ public class RagPipelineService : IRagPipelineService
             if (matchCount > 0)
             {
                 var bm25Score = (float)matchCount / keywords.Count();
-                var source = r.Payload.TryGetValue("FileName", out var fileName)
-                    ? fileName
-                    : "knowledge-base";
+                var source = BuildSourceLabel(r.Payload);
                 results.Add((r.Payload["Content"], bm25Score, source));
             }
         }
@@ -331,5 +329,16 @@ public class RagPipelineService : IRagPipelineService
         
         // Dài > 8 từ hoặc bắt đầu bằng từ khóa phức tạp
         return words.Length > 8 || complexPrefixes.Any(p => query.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string BuildPrivateAccessScope(Guid tenantId, Guid userId) =>
+        $"private:{tenantId:N}:{userId:N}";
+
+    private static string BuildSourceLabel(IReadOnlyDictionary<string, string> payload)
+    {
+        var fileName = payload.TryGetValue("FileName", out var file) ? file : "knowledge-base";
+        return payload.TryGetValue("ChunkIndex", out var chunkIndex)
+            ? $"{fileName}#chunk-{chunkIndex}"
+            : fileName;
     }
 }

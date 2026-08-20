@@ -38,6 +38,7 @@ public class OCRKnowledgeIngestionService
     /// </summary>
     public async Task<FileProcessingResult> ProcessFileForChatAsync(
         Guid tenantId,
+        Guid userId,
         string filePath,
         string fileName,
         bool saveToKnowledge = false,
@@ -87,7 +88,7 @@ public class OCRKnowledgeIngestionService
             if (saveToKnowledge && !string.IsNullOrWhiteSpace(extractedText) && extractedText.Length > 10)
             {
                 _logger.LogInformation("💾 Auto-saving attachment content to knowledge base: {File}", fileName);
-                await _ragService.IngestDocumentAsync(tenantId, $"ChatAttachment_{fileName}", extractedText);
+                await _ragService.IngestDocumentAsync(tenantId, userId, $"ChatAttachment_{fileName}", extractedText);
             }
 
             return new FileProcessingResult

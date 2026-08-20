@@ -63,7 +63,7 @@ Include: A compelling title, Introduction, 3-5 main sections, Key points, Conclu
                             request.UserRole,
                             "QueryKnowledgeBase",
                             query,
-                            _ => _ragService.QueryKnowledgeBaseAsync(request.TenantId, query, topK: 5),
+                            _ => _ragService.QueryKnowledgeBaseAsync(request.TenantId, request.UserId, query, topK: 5),
                             ct);
                         if (!execution.IsSuccess) throw new InvalidOperationException(execution.ErrorMessage);
                         return execution.Output;
@@ -79,7 +79,7 @@ Include: A compelling title, Introduction, 3-5 main sections, Key points, Conclu
                             request.UserRole,
                             "SearchWeb",
                             query,
-                            _ => _webSearch.SearchWebAsync(query, count: 5),
+                            token => _webSearch.SearchWebAsync(query, count: 5, token),
                             ct);
                         if (!execution.IsSuccess) throw new InvalidOperationException(execution.ErrorMessage);
                         return execution.Output;
@@ -97,6 +97,15 @@ Include: A compelling title, Introduction, 3-5 main sections, Key points, Conclu
         var pipelineResult = await pipeline.ExecuteAsync(
             $"Create content about: {request.Topic}",
             cancellationToken);
+        if (!pipelineResult.Success)
+        {
+            var stageErrors = string.Join("; ", pipelineResult.AgentResults
+                .Where(stage => !stage.IsSuccess)
+                .Select(stage => stage.Error?.Message)
+                .Where(message => !string.IsNullOrWhiteSpace(message)));
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(stageErrors) ? "Content pipeline failed." : stageErrors);
+        }
 
         var result = new RunContentCreationPipelineResult
         {

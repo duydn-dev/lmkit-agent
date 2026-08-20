@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@primevue/themes": "^4.5.4",
+    "@primeuix/themes": "^2.0.3",
     "chart.js": "^4.5.1",
     "livekit-client": "^2.21.0",
     "pinia": "^3.0.4",

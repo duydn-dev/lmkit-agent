@@ -120,6 +120,7 @@
 import { ref, nextTick, onMounted } from 'vue';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
+import { formatSafeMessage } from '@/utils/safeFormatting';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -142,9 +143,9 @@ const chatContainer = ref<HTMLElement | null>(null);
 const currentSessionId = ref<string | null>(null);
 
 const closeWidget = () => {
-    // Gửi thông báo ra trang web chứa iframe để đóng iframe lại
-    if (window.parent) {
-        window.parent.postMessage({ type: 'lmkit-close-widget' }, '*');
+    if (window.parent && document.referrer) {
+        const parentOrigin = new URL(document.referrer).origin;
+        window.parent.postMessage({ type: 'lmkit-close-widget' }, parentOrigin);
     }
 };
 
@@ -155,10 +156,7 @@ const scrollToBottom = async () => {
   }
 };
 
-const formatMessage = (text: string) => {
-  if (!text) return '';
-  return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>');
-};
+const formatMessage = formatSafeMessage;
 
 const getCleanUserContent = (content: string) => {
   return content.replace(/\n\n--- Nội dung file đính kèm ---[\s\S]*/g, '').trim();
@@ -220,8 +218,14 @@ const sendMessage = async () => {
         buffer = buffer.substring(lineEnd + 1);
 
         if (line.startsWith('data:')) {
-          let data = line.substring(5);
-          if (data.startsWith(' ')) data = data.substring(1);
+          let rawData = line.substring(5);
+          if (rawData.startsWith(' ')) rawData = rawData.substring(1);
+          let data: string;
+          try {
+            data = JSON.parse(rawData);
+          } catch {
+            data = rawData;
+          }
 
           if (data === '[DONE]') break;
           

@@ -228,8 +228,10 @@ public class AgentMemoryService : IAgentMemoryService
         {
             var memoryId = await StoreMemoryAsync(tenantId, userId, type, key, value,
                 sourceContext: userMessage.Length > 200 ? userMessage.Substring(0, 200) : userMessage,
-                confidence: 0.9f,
-                isConfirmed: true,
+                // Regex extraction is useful but fallible. It must never label
+                // an inferred fact as user-confirmed.
+                confidence: 0.7f,
+                isConfirmed: false,
                 ct: ct);
             
             // Phase 3: Graph Memory Vector Storage

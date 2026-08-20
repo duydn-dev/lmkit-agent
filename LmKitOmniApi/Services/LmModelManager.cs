@@ -1,4 +1,7 @@
 using LMKit.Model;
+using System.Net;
+using System.Net.Sockets;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LmKitOmniApi.Services;
 
@@ -21,6 +24,9 @@ public class LmModelManager : IDisposable
     private readonly SemaphoreSlim _rerankerLock;
     private readonly SemaphoreSlim _segmentationLock;
     private readonly SemaphoreSlim _chatInferenceGate;
+    private readonly long _maxDownloadBytes;
+    private readonly TimeSpan _downloadTimeout;
+    private readonly ILogger<LmModelManager> _logger;
 
     public string DefaultChatModelId { get; set; }
     public string DefaultVisionModelId { get; set; }
@@ -29,8 +35,11 @@ public class LmModelManager : IDisposable
     public string DefaultRerankerModelId { get; set; }
     public string DefaultSegmentationModelId { get; set; }
 
-    public LmModelManager(Microsoft.Extensions.Configuration.IConfiguration configuration)
+    public LmModelManager(
+        Microsoft.Extensions.Configuration.IConfiguration configuration,
+        ILogger<LmModelManager>? logger = null)
     {
+        _logger = logger ?? NullLogger<LmModelManager>.Instance;
         var config = configuration.GetSection("AiModels");
         DefaultChatModelId = config["DefaultChat"] ?? "qwen3.5:2b";
         DefaultVisionModelId = config["DefaultVision"] ?? "paddleocr-vl-1.6:0.9b";
@@ -38,6 +47,13 @@ public class LmModelManager : IDisposable
         DefaultSpeechModelId = config["DefaultSpeech"] ?? "whisper-tiny";
         DefaultRerankerModelId = config["DefaultReranker"] ?? "bge-reranker-v2-m3";
         DefaultSegmentationModelId = config["DefaultSegmentation"] ?? "u2net";
+        _maxDownloadBytes = config.GetValue<long>("MaxDownloadBytes", 8L * 1024 * 1024 * 1024);
+        if (_maxDownloadBytes <= 0)
+            throw new InvalidOperationException("AiModels:MaxDownloadBytes must be greater than zero.");
+        var timeoutMinutes = config.GetValue<int>("DownloadTimeoutMinutes", 30);
+        if (timeoutMinutes is < 1 or > 180)
+            throw new InvalidOperationException("AiModels:DownloadTimeoutMinutes must be between 1 and 180.");
+        _downloadTimeout = TimeSpan.FromMinutes(timeoutMinutes);
 
         var limits = configuration.GetSection("SemaphoreLimits");
         int chatLimit = limits.GetValue<int>("Chat", 1);
@@ -60,8 +76,12 @@ public class LmModelManager : IDisposable
                 id = id.Replace("/blob/", "/resolve/");
             }
 
-            var fileName = Path.GetFileName(new Uri(id).LocalPath);
+            var sourceUri = new Uri(id, UriKind.Absolute);
+            await ValidateRemoteModelUriAsync(sourceUri);
+            var fileName = Path.GetFileName(sourceUri.LocalPath);
             if (string.IsNullOrEmpty(fileName)) fileName = "model.gguf";
+            fileName = string.Concat(fileName.Select(character =>
+                Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
             
             var modelsDir = Path.Combine(Directory.GetCurrentDirectory(), "Models");
             Directory.CreateDirectory(modelsDir);
@@ -69,51 +89,135 @@ public class LmModelManager : IDisposable
 
             if (!File.Exists(localPath))
             {
-                Console.WriteLine($"[LmModelManager] Đang bắt đầu tải model từ: {id}");
-                using var client = new HttpClient();
-                using var response = await client.GetAsync(id, HttpCompletionOption.ResponseHeadersRead);
-                response.EnsureSuccessStatusCode();
+                _logger.LogInformation("Downloading configured model from {ModelUri}", sourceUri);
+                using var timeout = new CancellationTokenSource(_downloadTimeout);
+                using var handler = new SocketsHttpHandler { AllowAutoRedirect = false };
+                using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+                using var response = await SendWithValidatedRedirectsAsync(client, sourceUri, timeout.Token);
 
                 var totalBytes = response.Content.Headers.ContentLength ?? -1L;
+                if (totalBytes > _maxDownloadBytes)
+                    throw new InvalidOperationException($"Configured model exceeds the {_maxDownloadBytes} byte download limit.");
                 var canReportProgress = totalBytes != -1 && totalBytes != 0;
 
-                using var contentStream = await response.Content.ReadAsStreamAsync();
-                using var fileStream = new FileStream(localPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
+                await using var contentStream = await response.Content.ReadAsStreamAsync(timeout.Token);
+                var temporaryPath = localPath + $".{Guid.NewGuid():N}.download";
 
-                var buffer = new byte[8192];
-                var totalRead = 0L;
-                var bytesRead = 0;
-                int lastProgress = -1;
-
-                while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length)) != 0)
+                try
                 {
-                    await fileStream.WriteAsync(buffer, 0, bytesRead);
-                    totalRead += bytesRead;
-
-                    if (canReportProgress)
+                    await using (var fileStream = new FileStream(
+                        temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, true))
                     {
-                        var progress = (int)((totalRead * 100) / totalBytes);
-                        if (progress != lastProgress && progress % 5 == 0) // Report every 5%
+                        var buffer = new byte[64 * 1024];
+                        var totalRead = 0L;
+                        var lastProgress = -1;
+                        int bytesRead;
+                        while ((bytesRead = await contentStream.ReadAsync(buffer, timeout.Token)) != 0)
                         {
-                            Console.WriteLine($"[LmModelManager] Tiến trình tải model: {progress}% ({totalRead / (1024 * 1024)}MB / {totalBytes / (1024 * 1024)}MB)");
-                            lastProgress = progress;
+                            totalRead += bytesRead;
+                            if (totalRead > _maxDownloadBytes)
+                                throw new InvalidOperationException($"Configured model exceeded the {_maxDownloadBytes} byte download limit.");
+
+                            await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), timeout.Token);
+                            if (canReportProgress)
+                            {
+                                var progress = (int)((totalRead * 100) / totalBytes);
+                                if (progress >= lastProgress + 5)
+                                {
+                                    _logger.LogInformation("Model download progress: {Progress}%", progress);
+                                    lastProgress = progress;
+                                }
+                            }
                         }
+
+                        await fileStream.FlushAsync(timeout.Token);
                     }
+
+                    File.Move(temporaryPath, localPath);
                 }
-                Console.WriteLine($"[LmModelManager] Tải model hoàn tất, lưu tại: {localPath}");
+                finally
+                {
+                    if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+                }
+                _logger.LogInformation("Configured model download completed at {LocalPath}", localPath);
             }
             else
             {
-                Console.WriteLine($"[LmModelManager] Model đã tồn tại tại {localPath}, bỏ qua bước tải.");
+                _logger.LogInformation("Using existing configured model at {LocalPath}", localPath);
             }
             
             id = localPath; // Gán lại ID bằng đường dẫn local
         }
 
-        Console.WriteLine($"[LmModelManager] Khởi tạo model {id} (Có thể mất vài giây nạp vào RAM)...");
+        _logger.LogInformation("Loading model {ModelId}", id);
         var model = await Task.Run(() => LM.LoadFromModelID(id));
-        Console.WriteLine($"[LmModelManager] Đã tải model thành công.");
+        _logger.LogInformation("Model loaded successfully");
         return model;
+    }
+
+    private static async Task<HttpResponseMessage> SendWithValidatedRedirectsAsync(
+        HttpClient client,
+        Uri initialUri,
+        CancellationToken ct)
+    {
+        var currentUri = initialUri;
+        for (var redirectCount = 0; redirectCount <= 5; redirectCount++)
+        {
+            await ValidateRemoteModelUriAsync(currentUri, ct);
+            var response = await client.GetAsync(currentUri, HttpCompletionOption.ResponseHeadersRead, ct);
+            if ((int)response.StatusCode is >= 300 and < 400)
+            {
+                var location = response.Headers.Location;
+                response.Dispose();
+                if (location is null)
+                    throw new InvalidOperationException("Model download redirect did not include a destination.");
+                currentUri = location.IsAbsoluteUri ? location : new Uri(currentUri, location);
+                continue;
+            }
+
+            response.EnsureSuccessStatusCode();
+            return response;
+        }
+
+        throw new InvalidOperationException("Model download exceeded the redirect limit.");
+    }
+
+    private static async Task ValidateRemoteModelUriAsync(Uri uri, CancellationToken ct = default)
+    {
+        if (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Remote models must use HTTPS.");
+        if (!IsTrustedModelHost(uri.DnsSafeHost))
+            throw new InvalidOperationException("Remote model host is not trusted.");
+
+        var addresses = await Dns.GetHostAddressesAsync(uri.DnsSafeHost, ct);
+        if (addresses.Length == 0 || addresses.Any(IsPrivateOrLocalAddress))
+            throw new InvalidOperationException("Remote model host resolved to a private or local address.");
+    }
+
+    internal static bool IsTrustedModelHost(string host) =>
+        host.Equals("huggingface.co", StringComparison.OrdinalIgnoreCase)
+        || host.EndsWith(".huggingface.co", StringComparison.OrdinalIgnoreCase)
+        || host.Equals("hf.co", StringComparison.OrdinalIgnoreCase)
+        || host.EndsWith(".hf.co", StringComparison.OrdinalIgnoreCase);
+
+    internal static bool IsPrivateOrLocalAddress(IPAddress address)
+    {
+        if (IPAddress.IsLoopback(address)) return true;
+        if (address.AddressFamily == AddressFamily.InterNetwork)
+        {
+            var bytes = address.GetAddressBytes();
+            return bytes[0] == 10
+                || bytes[0] == 127
+                || bytes[0] == 0
+                || (bytes[0] == 169 && bytes[1] == 254)
+                || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
+                || (bytes[0] == 192 && bytes[1] == 168);
+        }
+
+        return address.IsIPv6LinkLocal
+            || address.IsIPv6SiteLocal
+            || address.Equals(IPAddress.IPv6Loopback)
+            || address.Equals(IPAddress.IPv6Any);
     }
 
     public async Task<LM> GetChatModelAsync(string? modelId = null)
