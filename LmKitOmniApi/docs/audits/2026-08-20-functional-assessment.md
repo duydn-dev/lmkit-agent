@@ -34,7 +34,7 @@
 | 14 | Text analysis và embeddings | **7,5** | Endpoint có auth, per-user rate limit, input cap và per-model concurrency gate; dùng LM-Kit thật. Còn thiếu batch API và quality set tiếng Việt. |
 | 15 | Content creation pipeline | **6,5** | Multi-stage pipeline và fact-check gateway có thật, input bị giới hạn/rate limit. Chưa có UI, citation schema và factuality/golden evaluation. |
 | 16 | Web search | **6,5** | Typed client, timeout, cancellation, response cap, cache và redirect normalization đã bổ sung. DuckDuckGo HTML scraping vẫn không ổn định như API chính thức và chưa fetch/verify nội dung nguồn. |
-| 17 | Web client chính | **7,8** | XSS từ model HTML đã chặn; SSE parser chung có unit test; Copy hoạt động thật, action giả đã gỡ; HITL chỉ đổi trạng thái sau response thành công và đọc đúng camel-case contract. Chưa có browser E2E, accessibility audit và toast/error contract thống nhất. |
+| 17 | Web client chính | **8,1** | XSS từ model HTML đã chặn; SSE parser chung có unit test; Copy/HITL hoạt động thật; landmark, form label, keyboard focus, 44 px target, live region và reduced-motion đã được audit/remediate. Chưa có browser E2E, screen-reader/contrast/reflow verification và toast/error contract thống nhất. |
 | 18 | Embeddable chat widget | **4,5** | Đã chặn route bằng auth và giới hạn `postMessage` theo referrer origin, nên không còn giả vờ public/insecure. Chưa phải widget nhúng công khai; cần scoped widget credential, origin allowlist và quota trước khi mở. |
 | 19 | Notification, graph, API key và automation | **4,5** | Fake SignalR echo, Hangfire, Telegram, proactive job và graph runtime đã gỡ khỏi active code. Graph/API-key/notification entities còn là schema kế thừa, không phải chức năng triển khai và không được quảng cáo trong UI. |
 | 20 | Observability, audit và health | **8,0** | Có readiness/liveness, PostgreSQL/Redis/Qdrant/model-license checks, warmup tùy chọn, Prometheus/OTLP, audit và hash tenant trace. Production phải bật ba model gate trong env; chưa có dashboard/alert/SLO và audit query UI. |
@@ -63,7 +63,7 @@
 ## Bằng chứng kiểm tra
 
 - `dotnet test ... -c Release`: **92/92 pass**, gồm HTTP integration cho auth cookie, authorization, memory consent/tenant scope, approval isolation/idempotency và local rate-limit contract.
-- `npm run test:unit`: **7/7 pass**, bao phủ XSS-safe formatting và SSE split-chunk/control/error parsing.
+- `npm run test:unit`: **12/12 pass**, bao phủ XSS-safe formatting, SSE split-chunk/control/error parsing và 5 accessibility source guardrails.
 - `npm run build`: thành công; các route Memory/MCP và formatter an toàn được compile.
 - `npm audit --audit-level=high`: **0 vulnerability**.
 - `dotnet list ... package --vulnerable --include-transitive`: **không có package dễ tổn thương** theo nguồn NuGet hiện tại.

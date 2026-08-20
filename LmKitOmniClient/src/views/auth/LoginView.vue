@@ -17,7 +17,7 @@
         </div>
         
         <!-- Error Message -->
-        <div v-if="errorMessage" class="mb-6 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center flex items-center justify-center gap-2">
+        <div v-if="errorMessage" role="alert" aria-live="assertive" class="mb-6 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm text-center flex items-center justify-center gap-2">
           <i class="pi pi-exclamation-circle"></i>
           {{ errorMessage }}
         </div>
@@ -25,19 +25,16 @@
         <!-- Login Form -->
         <form @submit.prevent="handleLogin" class="space-y-5">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1.5">Email / Tài khoản</label>
+            <label for="login-email" class="block text-sm font-medium text-gray-700 mb-1.5">Email / Tài khoản</label>
             <IconField>
               <InputIcon class="pi pi-user" />
-              <InputText v-model="email" placeholder="Nhập email của bạn..." fluid required />
+              <InputText id="login-email" v-model="email" type="email" autocomplete="username" placeholder="Nhập email của bạn..." fluid required />
             </IconField>
           </div>
           
           <div>
-            <div class="flex justify-between items-center mb-1.5">
-              <label class="block text-sm font-medium text-gray-700">Mật khẩu</label>
-              <a href="#" class="text-xs text-chatgpt-brand hover:text-sky-600 transition-colors">Quên mật khẩu?</a>
-            </div>
-            <Password v-model="password" inputId="password" placeholder="••••••••" toggleMask :feedback="false" fluid required />
+            <label for="login-password" class="block text-sm font-medium text-gray-700 mb-1.5">Mật khẩu</label>
+            <Password v-model="password" inputId="login-password" autocomplete="current-password" placeholder="••••••••" toggleMask :feedback="false" fluid required />
           </div>
           
           <Button 
@@ -47,7 +44,7 @@
             icon="pi pi-sign-in" 
             fluid 
             severity="info" 
-            class="mt-2"
+            class="mt-2 !min-h-11"
           />
         </form>
         

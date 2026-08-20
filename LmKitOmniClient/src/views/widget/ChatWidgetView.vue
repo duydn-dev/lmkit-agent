@@ -14,13 +14,13 @@
           </div>
         </div>
       </div>
-      <button @click="closeWidget" class="text-white/80 hover:text-white p-1 hover:bg-white/10 rounded-full transition-colors" title="Thu nhỏ">
+      <button @click="closeWidget" class="text-white hover:text-white w-11 h-11 hover:bg-white/10 rounded-full transition-colors" aria-label="Thu nhỏ cửa sổ trò chuyện">
         <i class="pi pi-minus"></i>
       </button>
     </div>
 
     <!-- Chat History -->
-    <div ref="chatContainer" class="flex-1 overflow-y-auto p-4 scroll-smooth bg-gray-50/50">
+    <div ref="chatContainer" class="flex-1 overflow-y-auto p-4 scroll-smooth bg-gray-50/50" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Lịch sử trò chuyện">
       <div v-if="messages.length === 0" class="h-full flex flex-col items-center justify-center text-center opacity-70">
         <i class="pi pi-comments text-4xl text-gray-300 mb-2"></i>
         <p class="text-xs text-gray-500">Bắt đầu trò chuyện với AI...</p>
@@ -73,10 +73,10 @@
                 </div>
                 <div v-if="msg.hitlError" class="text-xs text-red-700 mb-2" role="alert">{{ msg.hitlError }}</div>
                 <div class="flex gap-2" v-if="!msg.hitlResolved">
-                  <button @click="approveTask(msg)" :disabled="msg.hitlBusy" class="flex-1 px-2 py-1.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-xs font-medium rounded transition-colors">
+                  <button @click="approveTask(msg)" :disabled="msg.hitlBusy" class="flex-1 min-h-11 px-2 py-1.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-xs font-medium rounded transition-colors">
                     Phê duyệt
                   </button>
-                  <button @click="rejectTask(msg)" :disabled="msg.hitlBusy" class="flex-1 px-2 py-1.5 bg-white hover:bg-gray-50 disabled:opacity-50 text-gray-700 border border-gray-300 text-xs font-medium rounded transition-colors">
+                  <button @click="rejectTask(msg)" :disabled="msg.hitlBusy" class="flex-1 min-h-11 px-2 py-1.5 bg-white hover:bg-gray-50 disabled:opacity-50 text-gray-700 border border-gray-300 text-xs font-medium rounded transition-colors">
                     Từ chối
                   </button>
                 </div>
@@ -96,8 +96,9 @@
         <textarea 
           v-model="inputMessage" 
           @keydown.enter.prevent="sendMessage"
-          class="flex-1 bg-transparent border-0 focus:ring-0 resize-none outline-none py-2.5 pl-4 pr-2 text-[13px] text-gray-700 max-h-24 leading-snug" 
+          class="flex-1 bg-transparent border-0 resize-none py-2.5 pl-4 pr-2 text-[13px] text-gray-700 max-h-24 leading-snug"
           rows="1"
+          aria-label="Tin nhắn"
           placeholder="Nhập tin nhắn..."
           style="scrollbar-width: none;"
         ></textarea>
@@ -105,7 +106,8 @@
         <button 
           @click="sendMessage"
           :disabled="!inputMessage.trim() || isGenerating"
-          class="w-8 h-8 flex items-center justify-center rounded-full bg-blue-600 text-white disabled:opacity-50 disabled:bg-gray-300 hover:bg-blue-700 transition-colors shrink-0"
+          aria-label="Gửi tin nhắn"
+          class="w-11 h-11 flex items-center justify-center rounded-full bg-blue-600 text-white disabled:opacity-50 disabled:bg-gray-300 hover:bg-blue-700 transition-colors shrink-0"
         >
           <i class="pi pi-send text-xs"></i>
         </button>

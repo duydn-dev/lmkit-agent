@@ -5,10 +5,13 @@
       <div class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></div>
       Voice Active
     </div>
+    <div v-if="voiceError" role="alert" class="max-w-56 text-xs bg-red-50 text-red-700 border border-red-200 px-3 py-2 rounded-lg">{{ voiceError }}</div>
 
     <!-- Main Mic Button -->
     <button 
       @click="toggleVoice" 
+      :aria-pressed="isConnected"
+      :aria-label="isConnected ? 'Ngắt kết nối thoại' : 'Bắt đầu kết nối thoại'"
       class="relative flex items-center justify-center w-14 h-14 rounded-full shadow-xl transition-all duration-300"
       :class="[
         isConnected 
@@ -29,10 +32,12 @@ import { ref, onUnmounted } from 'vue';
 import { Room, RoomEvent } from 'livekit-client';
 
 const isConnected = ref(false);
+const voiceError = ref('');
 let room: Room | null = null;
 
 const connectLiveKit = async () => {
   try {
+    voiceError.value = '';
     // Replace with real backend call when Voice WebRTC is fully hooked up.
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = import.meta.env.VITE_LIVEKIT_URL || `${wsProtocol}//${window.location.hostname}:7880`;
@@ -75,6 +80,7 @@ const connectLiveKit = async () => {
     isConnected.value = true;
   } catch (error) {
     console.error('LiveKit connection error:', error);
+    voiceError.value = 'Không thể kết nối thoại. Vui lòng thử lại.';
   }
 };
 

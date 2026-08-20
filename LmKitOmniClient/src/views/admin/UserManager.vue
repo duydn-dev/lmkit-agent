@@ -6,7 +6,7 @@
           <h1 class="text-2xl font-bold text-gray-900">Quản lý Người dùng</h1>
           <p class="text-gray-500 mt-1">Cấp tài khoản và phân quyền trong hệ thống</p>
         </div>
-        <button @click="openNewDialog" class="bg-chatgpt-brand hover:bg-chatgpt-brand/90 text-white px-4 py-2 rounded-md font-medium transition-colors shadow-sm flex items-center gap-2">
+        <button @click="openNewDialog" class="min-h-11 bg-chatgpt-brand hover:bg-chatgpt-brand/90 text-white px-4 py-2 rounded-md font-medium transition-colors shadow-sm flex items-center gap-2">
           <i class="pi pi-user-plus"></i>
           Thêm người dùng
         </button>
@@ -46,10 +46,10 @@
           <Column header="Thao tác" :exportable="false" style="min-width: 8rem" alignFrozen="right" :frozen="true">
             <template #body="{ data }">
               <div class="flex gap-2">
-                <button @click="editUser(data)" class="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Sửa quyền">
+                <button @click="editUser(data)" class="w-11 h-11 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" :aria-label="`Sửa quyền của ${data.email}`">
                   <i class="pi pi-pencil"></i>
                 </button>
-                <button @click="toggleUserStatus(data)" :class="['p-2 rounded transition-colors', data.isActive ? 'text-gray-500 hover:text-red-600 hover:bg-red-50' : 'text-gray-500 hover:text-green-600 hover:bg-green-50']" :title="data.isActive ? 'Khóa tài khoản' : 'Mở khóa'">
+                <button @click="toggleUserStatus(data)" :class="['w-11 h-11 rounded transition-colors', data.isActive ? 'text-gray-500 hover:text-red-600 hover:bg-red-50' : 'text-gray-500 hover:text-green-600 hover:bg-green-50']" :aria-label="`${data.isActive ? 'Khóa' : 'Mở khóa'} tài khoản ${data.email}`">
                   <i :class="data.isActive ? 'pi pi-lock' : 'pi pi-lock-open'"></i>
                 </button>
               </div>
@@ -84,8 +84,8 @@
 
         <template #footer>
           <div class="flex justify-end gap-2 mt-4">
-            <button @click="hideDialog" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md transition-colors font-medium">Hủy</button>
-            <button @click="saveUser" class="px-4 py-2 bg-chatgpt-brand hover:bg-chatgpt-brand/90 text-white rounded-md transition-colors font-medium">Lưu lại</button>
+            <button @click="hideDialog" class="min-h-11 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md transition-colors font-medium">Hủy</button>
+            <button @click="saveUser" class="min-h-11 px-4 py-2 bg-chatgpt-brand hover:bg-chatgpt-brand/90 text-white rounded-md transition-colors font-medium">Lưu lại</button>
           </div>
         </template>
       </Dialog>

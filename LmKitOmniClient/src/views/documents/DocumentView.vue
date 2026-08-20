@@ -76,22 +76,25 @@
             <i class="pi pi-search absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
             <InputText
               v-model="searchQuery"
+              aria-label="Tìm kiếm tài liệu"
               placeholder="Tìm kiếm tài liệu..."
               class="!pl-9 !pr-4 !py-2.5 !rounded-xl !border-gray-200 !bg-white !shadow-sm !text-sm !w-72 focus:!border-blue-400 focus:!ring-2 focus:!ring-blue-100 transition-all"
             />
           </div>
           <Button
             icon="pi pi-filter-slash"
-            class="!w-10 !h-10 !rounded-xl !border-gray-200 !bg-white !text-gray-500 !shadow-sm hover:!bg-gray-50"
+            class="!w-11 !h-11 !rounded-xl !border-gray-200 !bg-white !text-gray-500 !shadow-sm hover:!bg-gray-50"
             @click="searchQuery = ''"
+            aria-label="Xóa bộ lọc"
             v-tooltip.top="'Xóa bộ lọc'"
           />
         </div>
         <div class="flex items-center gap-2">
           <Button
             :icon="viewMode === 'grid' ? 'pi pi-list' : 'pi pi-th-large'"
-            class="!w-10 !h-10 !rounded-xl !border-gray-200 !bg-white !text-gray-500 !shadow-sm hover:!bg-gray-50"
+            class="!w-11 !h-11 !rounded-xl !border-gray-200 !bg-white !text-gray-500 !shadow-sm hover:!bg-gray-50"
             @click="viewMode = viewMode === 'grid' ? 'table' : 'grid'"
+            :aria-label="viewMode === 'grid' ? 'Chuyển sang chế độ bảng' : 'Chuyển sang chế độ lưới'"
             v-tooltip.top="viewMode === 'grid' ? 'Chế độ bảng' : 'Chế độ lưới'"
           />
           <span class="text-xs text-gray-400 font-medium">{{ filteredDocuments.length }} tài liệu</span>
@@ -111,7 +114,7 @@
           <div
             v-for="(doc, index) in filteredDocuments"
             :key="doc.id"
-            class="group relative bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl hover:border-gray-200 transition-all duration-300 overflow-hidden animate-fade-in-up cursor-pointer"
+            class="group relative bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl hover:border-gray-200 transition-all duration-300 overflow-hidden animate-fade-in-up"
             :style="{ animationDelay: `${index * 50}ms` }"
           >
             <!-- Top accent bar -->
@@ -148,8 +151,9 @@
                 </div>
                 <Button
                   icon="pi pi-trash"
-                  class="!w-8 !h-8 !rounded-xl !bg-transparent !text-gray-300 hover:!text-red-500 hover:!bg-red-50 !border-none transition-all"
+                  class="!w-11 !h-11 !rounded-xl !bg-transparent !text-gray-500 hover:!text-red-600 hover:!bg-red-50 !border-none transition-all"
                   @click.stop="confirmDelete(doc)"
+                  :aria-label="`Xóa tài liệu ${doc.fileName}`"
                   v-tooltip.top="'Xóa tài liệu'"
                 />
               </div>
@@ -219,8 +223,7 @@
           <Column header="Thao tác" :exportable="false" style="min-width: 8rem">
             <template #body="{ data }">
               <div class="flex items-center gap-1">
-                <Button icon="pi pi-eye" class="!w-8 !h-8 !rounded-lg !bg-transparent !text-gray-400 hover:!text-blue-500 hover:!bg-blue-50 !border-none" v-tooltip.top="'Xem chi tiết'" />
-                <Button icon="pi pi-trash" class="!w-8 !h-8 !rounded-lg !bg-transparent !text-gray-400 hover:!text-red-500 hover:!bg-red-50 !border-none" @click="confirmDelete(data)" v-tooltip.top="'Xóa tài liệu'" />
+                <Button icon="pi pi-trash" class="!w-11 !h-11 !rounded-lg !bg-transparent !text-gray-500 hover:!text-red-600 hover:!bg-red-50 !border-none" @click="confirmDelete(data)" :aria-label="`Xóa tài liệu ${data.fileName}`" v-tooltip.top="'Xóa tài liệu'" />
               </div>
             </template>
           </Column>
@@ -270,6 +273,7 @@
         >
           <input
             type="file"
+            aria-label="Chọn tài liệu để tải lên"
             @change="handleFileChange"
             @dragenter="isDragging = true"
             @dragleave="isDragging = false"
@@ -310,8 +314,9 @@
               </div>
             </div>
             <button
-              class="w-8 h-8 rounded-lg bg-gray-100 hover:bg-red-50 text-gray-400 hover:text-red-500 flex items-center justify-center transition-all shrink-0 z-20"
+              class="w-11 h-11 rounded-lg bg-gray-100 hover:bg-red-50 text-gray-500 hover:text-red-600 flex items-center justify-center transition-all shrink-0 z-20"
               @click.stop="selectedFile = null"
+              :aria-label="`Bỏ file ${selectedFile.name}`"
             >
               <i class="pi pi-times text-xs"></i>
             </button>
@@ -329,7 +334,7 @@
                 <span class="font-medium text-gray-700">Đang tải lên & xử lý...</span>
                 <span class="text-blue-500 font-semibold text-xs">{{ uploadProgress }}%</span>
               </div>
-              <div class="h-2 w-full bg-blue-100 rounded-full overflow-hidden">
+              <div class="h-2 w-full bg-blue-100 rounded-full overflow-hidden" role="progressbar" aria-label="Tiến độ tải tài liệu" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="uploadProgress">
                 <div
                   class="h-full bg-gradient-to-r from-blue-400 to-cyan-400 rounded-full transition-all duration-500 ease-out"
                   :style="{ width: uploadProgress + '%' }"
@@ -349,7 +354,7 @@
             severity="secondary"
             @click="showUploadDialog = false"
             :disabled="uploading"
-            class="!px-4 !py-2 !rounded-xl !text-sm !font-medium"
+            class="!min-h-11 !px-4 !py-2 !rounded-xl !text-sm !font-medium"
           />
           <Button
             label="Tải lên"
@@ -357,7 +362,7 @@
             :loading="uploading"
             @click="uploadFile"
             :disabled="!selectedFile || uploading"
-            class="!px-5 !py-2 !rounded-xl !text-sm !font-medium !bg-gradient-to-r !from-blue-500 !to-blue-600 !border-none hover:!from-blue-600 hover:!to-blue-700 !shadow-lg !shadow-blue-500/20"
+            class="!min-h-11 !px-5 !py-2 !rounded-xl !text-sm !font-medium !bg-gradient-to-r !from-blue-500 !to-blue-600 !border-none hover:!from-blue-600 hover:!to-blue-700 !shadow-lg !shadow-blue-500/20"
           />
         </div>
       </template>
@@ -402,14 +407,14 @@
             text
             severity="secondary"
             @click="showDeleteDialog = false"
-            class="!px-4 !py-2 !rounded-xl !text-sm"
+            class="!min-h-11 !px-4 !py-2 !rounded-xl !text-sm"
           />
           <Button
             label="Xóa"
             icon="pi pi-trash"
             @click="deleteDocument"
             :loading="deleting"
-            class="!px-4 !py-2 !rounded-xl !text-sm !bg-gradient-to-r !from-red-500 !to-red-600 !border-none hover:!from-red-600 hover:!to-red-700 !shadow-lg !shadow-red-500/20"
+            class="!min-h-11 !px-4 !py-2 !rounded-xl !text-sm !bg-gradient-to-r !from-red-500 !to-red-600 !border-none hover:!from-red-600 hover:!to-red-700 !shadow-lg !shadow-red-500/20"
           />
         </div>
       </template>

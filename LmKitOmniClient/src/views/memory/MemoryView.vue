@@ -31,8 +31,8 @@
               <p class="mt-3 text-xs text-gray-400">Cập nhật {{ formatDate(memory.updatedAtUtc) }}</p>
             </div>
             <div class="flex items-center gap-1">
-              <Button v-if="!memory.isConfirmed" icon="pi pi-check" severity="success" text rounded aria-label="Xác nhận thông tin này" @click="confirmMemory(memory)" />
-              <Button icon="pi pi-trash" severity="danger" text rounded aria-label="Quên thông tin này" @click="forget(memory)" />
+              <Button v-if="!memory.isConfirmed" icon="pi pi-check" severity="success" text rounded aria-label="Xác nhận thông tin này" class="!w-11 !h-11" @click="confirmMemory(memory)" />
+              <Button icon="pi pi-trash" severity="danger" text rounded aria-label="Quên thông tin này" class="!w-11 !h-11" @click="forget(memory)" />
             </div>
           </div>
         </article>

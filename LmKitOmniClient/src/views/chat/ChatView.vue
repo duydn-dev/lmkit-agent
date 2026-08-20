@@ -1,7 +1,7 @@
 <template>
   <div class="flex-1 flex flex-col relative w-full h-full">
     <!-- Chat History -->
-    <div ref="chatContainer" class="flex-1 overflow-y-auto scroll-smooth">
+    <div ref="chatContainer" class="flex-1 overflow-y-auto scroll-smooth" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Lịch sử trò chuyện">
       <div v-if="messages.length === 0" class="h-full flex flex-col items-center justify-center text-center px-4">
         <div class="w-16 h-16 rounded-full bg-chatgpt-brand flex items-center justify-center mb-6 shadow-lg shadow-chatgpt-brand/20">
           <i class="pi pi-sparkles text-2xl text-white"></i>
@@ -27,8 +27,8 @@
                 <div class="text-base font-medium whitespace-pre-wrap break-words">{{ getCleanUserContent(msg.content) }}</div>
               </div>
               <!-- User Action -->
-              <div class="flex items-center gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-500">
-                <button @click="copyMessage(getCleanUserContent(msg.content))" class="p-1 hover:text-gray-900 transition-colors" title="Sao chép"><i class="pi pi-copy text-sm"></i></button>
+              <div class="flex items-center gap-2 mt-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity text-gray-500">
+                <button @click="copyMessage(getCleanUserContent(msg.content))" class="w-11 h-11 hover:text-gray-900 transition-colors" aria-label="Sao chép tin nhắn của bạn"><i class="pi pi-copy text-sm"></i></button>
               </div>
             </div>
           </div>
@@ -60,7 +60,7 @@
               </div>
 
               <!-- Web Search Chip -->
-              <div v-if="msg.webUrls && msg.webUrls.length > 0" class="mb-3 flex items-center gap-2 cursor-pointer group/chip w-max" @click="openDrawer(msg.webUrls)">
+              <button v-if="msg.webUrls && msg.webUrls.length > 0" type="button" class="mb-3 min-h-11 flex items-center gap-2 cursor-pointer group/chip w-max" @click="openDrawer(msg.webUrls)">
                 <div class="bg-blue-50 hover:bg-blue-100 text-gray-700 border border-gray-200 px-3 py-1.5 rounded-full flex items-center gap-2 transition-colors shadow-sm inline-flex">
                   <i class="pi pi-search text-xs"></i>
                   <span class="text-sm font-medium">Read {{ msg.webUrls.length }} web pages</span>
@@ -70,7 +70,7 @@
                     </span>
                   </div>
                 </div>
-              </div>
+              </button>
 
               <!-- Render Message with Charts -->
               <GenerativeUiRenderer :content="msg.content" />
@@ -93,10 +93,10 @@
                 </div>
                 <div v-if="msg.hitlError" class="text-sm text-red-700 mb-3" role="alert">{{ msg.hitlError }}</div>
                 <div class="flex gap-2" v-if="!msg.hitlResolved">
-                  <button @click="approveTask(msg)" :disabled="msg.hitlBusy" class="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
+                  <button @click="approveTask(msg)" :disabled="msg.hitlBusy" class="flex-1 min-h-11 px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
                     Phê duyệt
                   </button>
-                  <button @click="rejectTask(msg)" :disabled="msg.hitlBusy" class="flex-1 px-4 py-2 bg-white hover:bg-gray-50 disabled:opacity-50 text-gray-700 border border-gray-300 text-sm font-medium rounded-lg transition-colors">
+                  <button @click="rejectTask(msg)" :disabled="msg.hitlBusy" class="flex-1 min-h-11 px-4 py-2 bg-white hover:bg-gray-50 disabled:opacity-50 text-gray-700 border border-gray-300 text-sm font-medium rounded-lg transition-colors">
                     Từ chối
                   </button>
                 </div>
@@ -107,7 +107,7 @@
 
               <!-- Assistant Action -->
               <div v-if="!msg.isTyping" class="flex items-center gap-2 mt-3 text-gray-500">
-                <button @click="copyMessage(msg.content)" class="p-1.5 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" title="Sao chép"><i class="pi pi-copy text-sm"></i></button>
+                <button @click="copyMessage(msg.content)" class="w-11 h-11 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" aria-label="Sao chép câu trả lời"><i class="pi pi-copy text-sm"></i></button>
               </div>
             </div>
           </div>
@@ -131,7 +131,7 @@
               <i :class="getFileIconForInput(file.name)" class="text-xs"></i>
               <span class="max-w-[120px] truncate text-blue-700">{{ file.name }}</span>
               <span class="text-[10px] text-blue-400">({{ formatFileSize(file.size) }})</span>
-              <button @click="removeFile(index)" class="ml-1 text-gray-400 hover:text-red-500 transition-colors">
+              <button @click="removeFile(index)" class="ml-1 w-11 h-11 text-gray-500 hover:text-red-600 transition-colors" :aria-label="`Bỏ file ${file.name}`">
                 <i class="pi pi-times text-xs"></i>
               </button>
             </div>
@@ -146,9 +146,10 @@
             <Textarea 
               v-model="inputMessage" 
               @keydown.enter.prevent="sendMessage"
-              class="w-full max-h-48 !bg-transparent !border-0 focus:!ring-0 resize-none !outline-none !shadow-none text-gray-800 text-base" 
+              class="w-full max-h-48 !bg-transparent !border-0 resize-none !shadow-none text-gray-800 text-base"
               rows="1"
               autoResize
+              aria-label="Tin nhắn"
               placeholder="Nhắn tin cho Trợ lý AI..." />
           </div>
           
@@ -156,16 +157,17 @@
           <div class="flex items-center justify-between mt-2 px-1 pb-1">
             <!-- Right Actions -->
             <div class="flex items-center gap-1.5">
-              <button @click="triggerFileInput" class="w-9 h-9 flex items-center justify-center text-gray-600 hover:text-gray-900 transition-colors rounded-full hover:bg-gray-100" title="Đính kèm file">
+              <button @click="triggerFileInput" class="w-11 h-11 flex items-center justify-center text-gray-600 hover:text-gray-900 transition-colors rounded-full hover:bg-gray-100" aria-label="Đính kèm file">
                 <i class="pi pi-paperclip text-lg"></i>
               </button>
               <Button 
                 icon="pi pi-arrow-up" 
+                aria-label="Gửi tin nhắn"
                 @click="sendMessage"
                 :disabled="(!inputMessage.trim() && attachedFiles.length === 0) || isGenerating"
                 severity="info"
                 rounded
-                class="!w-9 !h-9"
+                class="!w-11 !h-11"
               />
             </div>
           </div>
