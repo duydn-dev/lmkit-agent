@@ -83,5 +83,5 @@ Operational rollout and rollback procedures are in [the deployment runbook](LmKi
 ## Current boundaries
 
 - The `/widget/chat` route requires an authenticated application session until a dedicated origin-bound widget credential flow is implemented.
-- MCP configuration is tenant-admin scoped and secrets are encrypted, while transport currently targets the project's REST MCP adapter (`/mcp/tools`, `/mcp/invoke`).
+- MCP configuration is tenant-admin scoped and secrets are encrypted. Remote tools use the official Model Context Protocol C# SDK over Streamable HTTP, negotiate the stateless `2026-07-28` protocol and fall back to initialize/session revisions for older servers.
 - Real model-quality gates require licensed/configured model artifacts and are separate from deterministic unit and API smoke tests.

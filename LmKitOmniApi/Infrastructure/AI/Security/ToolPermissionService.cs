@@ -86,14 +86,10 @@ public class ToolPermissionService : IToolPermissionService
         // Check 2b: Dynamic MCP Tool names
         if (toolName.StartsWith("MCP:", StringComparison.OrdinalIgnoreCase))
         {
-            var mcpToolName = toolName.Substring(4).ToLowerInvariant();
-            string[] mutationVerbs =
-            [
-                "write", "delete", "remove", "create", "update", "edit",
-                "execute", "run", "send", "post", "put", "patch", "publish",
-                "approve", "invite", "upload", "move", "rename"
-            ];
-            if (mutationVerbs.Any(mcpToolName.Contains))
+            // MCP annotations are untrusted hints. TRUSTED_READ is emitted only when a tenant
+            // admin explicitly trusts that server's read-only annotations; every other tool
+            // fails safe to human approval regardless of a benign-looking name.
+            if (!toolName.StartsWith("MCP:TRUSTED_READ:", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogInformation("⚠️ MCP Tool '{Tool}' requires human approval (User: {User})", toolName, userId);
                 return Task.FromResult(ToolPermissionResult.NeedApproval());

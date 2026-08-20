@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using System.Text;
 using LMKit.Agents.Tools;
 using LmKitOmniApi.Infrastructure.AI.Mcp;
 
@@ -22,7 +24,9 @@ public sealed class McpProxyTool : ITool
         Description = string.IsNullOrWhiteSpace(definition.Description)
             ? $"Invoke MCP tool '{definition.Name}'."
             : definition.Description;
-        InputSchema = BuildSchema(definition.Parameters);
+        InputSchema = string.IsNullOrWhiteSpace(definition.InputSchema)
+            ? BuildSchema(definition.Parameters)
+            : definition.InputSchema;
         _invoke = invoke;
     }
 
@@ -57,7 +61,9 @@ public sealed class McpProxyTool : ITool
     private static string NormalizeName(string value)
     {
         var normalized = Regex.Replace(value.ToLowerInvariant(), "[^a-z0-9_]+", "_").Trim('_');
-        return normalized.Length <= 64 ? normalized : normalized[..64];
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..8].ToLowerInvariant();
+        var prefix = normalized.Length <= 55 ? normalized : normalized[..55];
+        return $"{prefix}_{hash}";
     }
 
     private static string BuildSchema(IReadOnlyList<McpToolParameter> parameters)
@@ -99,7 +105,7 @@ public sealed class McpProxyTool : ITool
         JsonValueKind.Number => value.GetDouble(),
         JsonValueKind.True => true,
         JsonValueKind.False => false,
-        JsonValueKind.Null => string.Empty,
-        _ => value.GetRawText(),
+        JsonValueKind.Null => null!,
+        _ => value.Clone(),
     };
 }

@@ -266,7 +266,16 @@ builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Resilience.AgentRes
 // ============================================================
 // 🔗 MCP Integration (Phase 7)
 // ============================================================
-builder.Services.AddHttpClient("MCP");
+builder.Services.AddHttpClient("MCP", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.MaxResponseContentBufferSize = 1_048_576;
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    // Redirect targets have not passed the MCP URL/DNS sandbox checks.
+    AllowAutoRedirect = false
+});
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.IMcpProtocolClient, LmKitOmniApi.Infrastructure.AI.Mcp.McpProtocolClient>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.McpClientService>();
 
 // ============================================================

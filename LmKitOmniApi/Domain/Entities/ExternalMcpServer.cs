@@ -21,6 +21,12 @@ public sealed class ExternalMcpServer
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>
+    /// Allows readOnlyHint=true to skip HITL only when a tenant administrator has
+    /// explicitly established an out-of-band trust relationship with this server.
+    /// </summary>
+    public bool TrustReadOnlyAnnotations { get; set; }
+
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;

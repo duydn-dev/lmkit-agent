@@ -44,7 +44,7 @@ public sealed class McpServersController : ControllerBase
             .OrderBy(server => server.Name)
             .Select(server => new
             {
-                server.Id, server.Name, server.Url, server.IsActive,
+                server.Id, server.Name, server.Url, server.IsActive, server.TrustReadOnlyAnnotations,
                 HasHeaders = server.HeadersJson != null,
                 server.CreatedAtUtc, server.UpdatedAtUtc
             })
@@ -62,15 +62,16 @@ public sealed class McpServersController : ControllerBase
         var server = new ExternalMcpServer
         {
             TenantId = tenantId,
-            Name = request.Name.Trim(),
+            Name = request.Name.Trim().ToLowerInvariant(),
             Url = request.Url.TrimEnd('/'),
             HeadersJson = ProtectHeaders(request.Headers),
-            IsActive = request.IsActive
+            IsActive = request.IsActive,
+            TrustReadOnlyAnnotations = request.TrustReadOnlyAnnotations
         };
         _db.ExternalMcpServers.Add(server);
         await _db.SaveChangesAsync(ct);
         await _mcp.InvalidateTenantCacheAsync(tenantId, ct);
-        return CreatedAtAction(nameof(List), new { id = server.Id }, new { server.Id, server.Name, server.Url, server.IsActive });
+        return CreatedAtAction(nameof(List), new { id = server.Id }, new { server.Id, server.Name, server.Url, server.IsActive, server.TrustReadOnlyAnnotations });
     }
 
     [HttpPut("{id:guid}")]
@@ -82,9 +83,10 @@ public sealed class McpServersController : ControllerBase
         var validation = await ValidateRequestAsync(tenantId, id, request, ct);
         if (validation is not null) return validation;
 
-        server.Name = request.Name.Trim();
+        server.Name = request.Name.Trim().ToLowerInvariant();
         server.Url = request.Url.TrimEnd('/');
         server.IsActive = request.IsActive;
+        server.TrustReadOnlyAnnotations = request.TrustReadOnlyAnnotations;
         if (request.ReplaceHeaders) server.HeadersJson = ProtectHeaders(request.Headers);
         server.UpdatedAtUtc = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
@@ -112,7 +114,8 @@ public sealed class McpServersController : ControllerBase
         if (!Uri.TryCreate(request.Url, UriKind.Absolute, out _)) return BadRequest("A valid absolute URL is required.");
         var url = await _sandbox.ValidateUrlAsync(request.Url, ct);
         if (!url.IsAllowed) return BadRequest(url.DenialReason);
-        if (await _db.ExternalMcpServers.AnyAsync(server => server.TenantId == tenantId && server.Name == normalizedName && server.Id != id, ct))
+        var comparableName = normalizedName.ToLower();
+        if (await _db.ExternalMcpServers.AnyAsync(server => server.TenantId == tenantId && server.Name.ToLower() == comparableName && server.Id != id, ct))
             return Conflict("An MCP server with this name already exists.");
         if (request.Headers?.Count > 20 || request.Headers?.Any(header => BlockedHeaders.Contains(header.Key) || header.Key.Length > 100 || header.Value is null || header.Value.Length > 2_000) == true)
             return BadRequest("MCP headers exceeded the allowed limits or contained a blocked header.");
@@ -136,4 +139,5 @@ public sealed class SaveMcpServerRequest
     public Dictionary<string, string>? Headers { get; set; }
     public bool ReplaceHeaders { get; set; }
     public bool IsActive { get; set; } = true;
+    public bool TrustReadOnlyAnnotations { get; set; }
 }

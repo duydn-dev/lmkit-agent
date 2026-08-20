@@ -119,7 +119,7 @@
           <div class="flex-1 overflow-y-auto p-6 text-gray-700">
             <div v-if="activeTab === 'mcp'" class="animate-fade-in">
               <h3 class="text-xl font-medium text-gray-900 mb-2">Máy chủ Model Context Protocol (MCP)</h3>
-              <p class="text-sm text-gray-600 mb-6">Kết nối REST MCP adapter theo tenant. Header bí mật được mã hóa và không bao giờ trả lại giao diện.</p>
+              <p class="text-sm text-gray-600 mb-6">Kết nối MCP Streamable HTTP theo tenant. Header bí mật được mã hóa và không bao giờ trả lại giao diện.</p>
               <div v-if="!isAdmin" class="p-5 border border-amber-200 rounded-xl bg-amber-50 text-amber-700 text-sm">Chỉ Tenant Admin được quản lý máy chủ MCP.</div>
               <template v-else>
                 <form @submit.prevent="createMcpServer" class="grid gap-3 p-4 bg-white border border-gray-200 rounded-xl mb-5">
@@ -129,6 +129,10 @@
                   </div>
                   <label for="mcp-headers" class="text-sm font-medium">Header JSON tùy chọn</label>
                   <Textarea id="mcp-headers" v-model="mcpForm.headersJson" rows="3" placeholder='Ví dụ {"Authorization":"Bearer ..."}' />
+                  <label for="mcp-trust-readonly" class="flex items-start gap-2 text-sm text-amber-800 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <Checkbox inputId="mcp-trust-readonly" v-model="mcpForm.trustReadOnlyAnnotations" binary />
+                    <span>Tin cậy khai báo <code>readOnlyHint</code> của máy chủ này. Chỉ bật khi đã xác minh nhà cung cấp; nếu tắt, mọi MCP tool đều cần phê duyệt.</span>
+                  </label>
                   <div class="flex items-center justify-between gap-3">
                     <label for="mcp-active" class="flex items-center gap-2 text-sm"><Checkbox inputId="mcp-active" v-model="mcpForm.isActive" binary /> Kích hoạt</label>
                     <Button type="submit" label="Thêm máy chủ" icon="pi pi-plus" :loading="mcpSaving" class="!min-h-11 !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
@@ -143,7 +147,7 @@
                   <div class="min-w-0">
                     <div class="font-medium truncate">{{ server.name }}</div>
                     <div class="text-xs text-gray-500 truncate">{{ server.url }}</div>
-                    <div class="text-xs mt-1" :class="server.isActive ? 'text-green-600' : 'text-gray-400'">{{ server.isActive ? 'Đang hoạt động' : 'Đã tắt' }} · {{ server.hasHeaders ? 'Có header bảo mật' : 'Không có header' }}</div>
+                    <div class="text-xs mt-1" :class="server.isActive ? 'text-green-600' : 'text-gray-400'">{{ server.isActive ? 'Đang hoạt động' : 'Đã tắt' }} · {{ server.hasHeaders ? 'Có header bảo mật' : 'Không có header' }} · {{ server.trustReadOnlyAnnotations ? 'Tin cậy read-only' : 'Mọi tool cần duyệt' }}</div>
                   </div>
                   <Button icon="pi pi-trash" severity="danger" text rounded aria-label="Xóa máy chủ MCP" class="!w-11 !h-11" @click="deleteMcpServer(server.id)" />
                 </div>
@@ -181,12 +185,12 @@ const isAdmin = computed(() => userRole.value === 'Admin');
 
 const showSettingsModal = ref(false);
 const activeTab = ref('mcp');
-interface McpServer { id: string; name: string; url: string; isActive: boolean; hasHeaders: boolean }
+interface McpServer { id: string; name: string; url: string; isActive: boolean; hasHeaders: boolean; trustReadOnlyAnnotations: boolean }
 const mcpServers = ref<McpServer[]>([]);
 const mcpSaving = ref(false);
 const mcpError = ref('');
 const appError = ref('');
-const mcpForm = ref({ name: '', url: '', headersJson: '', isActive: true });
+const mcpForm = ref({ name: '', url: '', headersJson: '', isActive: true, trustReadOnlyAnnotations: false });
 
 const chatSessions = ref<ChatSession[]>([]);
 const mobileNavOpen = ref(false);
@@ -233,13 +237,14 @@ const createMcpServer = async () => {
       url: mcpForm.value.url,
       headers,
       replaceHeaders: true,
-      isActive: mcpForm.value.isActive
+      isActive: mcpForm.value.isActive,
+      trustReadOnlyAnnotations: mcpForm.value.trustReadOnlyAnnotations
     });
     if (!response.ok) {
       mcpError.value = await readApiError(response, 'Không thể thêm máy chủ MCP');
       return;
     }
-    mcpForm.value = { name: '', url: '', headersJson: '', isActive: true };
+    mcpForm.value = { name: '', url: '', headersJson: '', isActive: true, trustReadOnlyAnnotations: false };
     await loadMcpServers();
   } catch (cause) {
     mcpError.value = errorMessage(cause, 'Không thể thêm máy chủ MCP.');

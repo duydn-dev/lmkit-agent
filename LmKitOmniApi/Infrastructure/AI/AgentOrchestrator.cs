@@ -388,7 +388,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                 tools.Add(new McpProxyTool(
                     definition,
                     (parameters, toolCt) => invoke(
-                        $"MCP:{definition.Name}",
+                        $"MCP:{(definition.AllowAutomaticExecution ? "TRUSTED_READ:" : string.Empty)}{definition.ServerName}:{definition.Name}",
                         System.Text.Json.JsonSerializer.Serialize(parameters),
                         toolCt)));
             }
@@ -559,7 +559,14 @@ public class AgentOrchestrator : IAgentOrchestrator
 
             // ── MCP External Tool (H5 Fix: query-based tool selection) ──
             case var mcpAction when mcpAction.StartsWith("MCP:", StringComparison.OrdinalIgnoreCase):
-                var exactToolName = mcpAction[4..];
+                var target = mcpAction[4..];
+                if (target.StartsWith("TRUSTED_READ:", StringComparison.OrdinalIgnoreCase))
+                    target = target[13..];
+                var separator = target.IndexOf(':');
+                if (separator <= 0 || separator == target.Length - 1)
+                    return "[MCP error: invalid server-qualified tool name]";
+                var exactServerName = target[..separator];
+                var exactToolName = target[(separator + 1)..];
                 Dictionary<string, object>? parameters;
                 try
                 {
@@ -572,6 +579,7 @@ public class AgentOrchestrator : IAgentOrchestrator
 
                 var exactMcpResult = await _mcpClient.InvokeToolAsync(
                     tenantId,
+                    exactServerName,
                     exactToolName,
                     parameters ?? new Dictionary<string, object>(),
                     ct);

@@ -33,7 +33,7 @@ Các thao tác ứng dụng sau đi qua permission, sandbox, timeout, output cap
 - web search;
 - multi-agent delegation;
 - summarization;
-- MCP REST-adapter tools được tenant admin cấu hình.
+- MCP Streamable HTTP tools được tenant admin cấu hình và gọi qua official MCP C# SDK.
 
 Không có hàng trăm tool Office/PDF/Image tự sinh. Các source placeholder từng ném `NotImplementedException` đã bị xóa; muốn bổ sung tool mới phải có implementation, ownership policy và test riêng.
 
@@ -61,7 +61,7 @@ Không có hàng trăm tool Office/PDF/Image tự sinh. Các source placeholder 
 
 ## MCP
 
-Hệ thống hiện có REST adapter với discovery `/mcp/tools` và invocation `/mcp/invoke`, tenant-scoped CRUD, SSRF guard và encrypted headers. Đây **không phải** MCP standard transport/capability negotiation. Không dùng tên “MCP chuẩn” cho đến khi có integration test với standard server/client.
+Hệ thống dùng official MCP C# SDK và Streamable HTTP. Client ưu tiên protocol stateless `2026-07-28` (`server/discover`, `tools/list`, `tools/call`, `Mcp-Method`/`Mcp-Name`/`Mcp-Param-*`) và tự fallback sang initialize/session cho server cũ. CRUD cấu hình vẫn tenant-scoped; DNS/private-network/redirect bị chặn và header bí mật được mã hóa. Input schema được giữ nguyên, invocation gắn rõ server để không gọi nhầm khi trùng tên. Vì MCP annotations chỉ là hint không đáng tin mặc định, mọi tool cần HITL; `readOnlyHint=true` chỉ được tự chạy nếu Tenant Admin đã bật trust policy cho đúng server. Trước production vẫn cần upstream conformance suite, OAuth authorization flow và E2E với MCP server đích thật.
 
 ## Web client
 

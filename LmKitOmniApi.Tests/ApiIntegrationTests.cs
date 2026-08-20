@@ -4,6 +4,7 @@ using System.Text.Json;
 using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Infrastructure.Data.Interceptors;
+using LmKitOmniApi.Infrastructure.AI.Mcp;
 using LmKitOmniApi.Infrastructure.Workers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -29,6 +30,27 @@ public sealed class ApiIntegrationTests : IClassFixture<LmKitApiFactory>
     {
         _factory = factory;
         _factory.EnsureSeeded();
+    }
+
+    [Fact]
+    public async Task McpInvocation_IsBoundToTheDiscoveredServerWhenToolNamesCollide()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var mcp = scope.ServiceProvider.GetRequiredService<McpClientService>();
+        await mcp.InvalidateTenantCacheAsync(LmKitApiFactory.TenantId);
+
+        var discovered = await mcp.DiscoverToolsAsync(LmKitApiFactory.TenantId);
+        var result = await mcp.InvokeToolAsync(
+            LmKitApiFactory.TenantId,
+            "mcp-beta",
+            "lookup",
+            new Dictionary<string, object> { ["query"] = "tenant-safe" });
+
+        Assert.Equal(2, discovered.Count(tool => tool.Name == "lookup"));
+        Assert.Contains(discovered, tool => tool.ServerName == "mcp-alpha" && !tool.AllowAutomaticExecution);
+        Assert.Contains(discovered, tool => tool.ServerName == "mcp-beta" && tool.AllowAutomaticExecution);
+        Assert.True(result.Success);
+        Assert.Equal("mcp-beta:lookup", result.Content);
     }
 
     [Fact]
@@ -279,6 +301,8 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
                 options.UseSqlite(_connection)
                     .UseInternalServiceProvider(_sqliteProvider)
                     .AddInterceptors(provider.GetRequiredService<AuditSaveChangesInterceptor>()));
+            services.RemoveAll<IMcpProtocolClient>();
+            services.AddSingleton<IMcpProtocolClient, TestMcpProtocolClient>();
         });
     }
 
@@ -362,6 +386,20 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
                     ActionName = "TEST_ACTION",
                     ParametersJson = "unused"
                 });
+            db.ExternalMcpServers.AddRange(
+                new ExternalMcpServer
+                {
+                    TenantId = TenantId,
+                    Name = "mcp-alpha",
+                    Url = "https://203.0.113.10/mcp-alpha"
+                },
+                new ExternalMcpServer
+                {
+                    TenantId = TenantId,
+                    Name = "mcp-beta",
+                    Url = "https://203.0.113.10/mcp-beta",
+                    TrustReadOnlyAnnotations = true
+                });
             db.SaveChanges();
             _seeded = true;
         }
@@ -376,4 +414,30 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
             _sqliteProvider.Dispose();
         }
     }
+}
+
+public sealed class TestMcpProtocolClient : IMcpProtocolClient
+{
+    private static readonly JsonElement InputSchema = JsonSerializer.SerializeToElement(new
+    {
+        type = "object",
+        properties = new { query = new { type = "string" } },
+        required = new[] { "query" },
+        additionalProperties = false
+    });
+
+    public Task<IReadOnlyList<McpProtocolTool>> ListToolsAsync(
+        Uri endpoint,
+        string serverName,
+        IReadOnlyDictionary<string, string> headers,
+        CancellationToken ct) => Task.FromResult<IReadOnlyList<McpProtocolTool>>(
+            [new McpProtocolTool("lookup", "Lookup", InputSchema, IsReadOnly: true)]);
+
+    public Task<McpProtocolCallResult> CallToolAsync(
+        Uri endpoint,
+        string serverName,
+        IReadOnlyDictionary<string, string> headers,
+        string toolName,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken ct) => Task.FromResult(new McpProtocolCallResult(false, $"{serverName}:{toolName}"));
 }

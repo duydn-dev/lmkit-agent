@@ -10,12 +10,16 @@ public class ToolSecurityPolicyTests
     {
         var permissions = new ToolPermissionService(NullLogger<ToolPermissionService>.Instance);
 
-        var read = await permissions.CanInvokeToolAsync(Guid.NewGuid(), Guid.NewGuid(), "Admin", "MCP:read_issues");
-        var delete = await permissions.CanInvokeToolAsync(Guid.NewGuid(), Guid.NewGuid(), "Admin", "MCP:delete_issue");
-        var send = await permissions.CanInvokeToolAsync(Guid.NewGuid(), Guid.NewGuid(), "Admin", "MCP:send_email");
-        var user = await permissions.CanInvokeToolAsync(Guid.NewGuid(), Guid.NewGuid(), "User", "MCP:read_issues");
+        var read = await permissions.CanInvokeToolAsync(Guid.NewGuid(), Guid.NewGuid(), "Admin", "MCP:TRUSTED_READ:issues:read_issues");
+        var ambiguous = await permissions.CanInvokeToolAsync(Guid.NewGuid(), Guid.NewGuid(), "Admin", "MCP:issues:manage");
+        var delete = await permissions.CanInvokeToolAsync(Guid.NewGuid(), Guid.NewGuid(), "Admin", "MCP:issues:delete_issue");
+        var send = await permissions.CanInvokeToolAsync(Guid.NewGuid(), Guid.NewGuid(), "Admin", "MCP:mail:send_email");
+        var untrustedRead = await permissions.CanInvokeToolAsync(Guid.NewGuid(), Guid.NewGuid(), "Admin", "MCP:issues:read_issues");
+        var user = await permissions.CanInvokeToolAsync(Guid.NewGuid(), Guid.NewGuid(), "User", "MCP:TRUSTED_READ:issues:read_issues");
 
         Assert.True(read.IsAllowed);
+        Assert.True(untrustedRead.RequiresApproval);
+        Assert.True(ambiguous.RequiresApproval);
         Assert.True(delete.RequiresApproval);
         Assert.True(send.RequiresApproval);
         Assert.False(user.IsAllowed);
