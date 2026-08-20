@@ -77,8 +77,8 @@ public class RagPipelineService : IRagPipelineService
 
     public async Task<string> QueryKnowledgeBaseAsync(Guid tenantId, string query, int topK = 3)
     {
-        _logger.LogInformation("🔍 Hybrid search starting for query: '{Query}'", 
-            query.Length > 80 ? query.Substring(0, 80) + "..." : query);
+        _logger.LogInformation("Hybrid search starting for tenant {TenantId}; query length {QueryLength}",
+            tenantId, query.Length);
 
         var embeddingModel = await _modelManager.GetEmbeddingModelAsync();
         var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
@@ -109,17 +109,21 @@ public class RagPipelineService : IRagPipelineService
         foreach (var expandedQuery in expandedQueries)
         {
             var queryVector = embedder.GetEmbeddings(expandedQuery);
-            var searchResults = await _vectorStore.SearchSimilarAsync(_collectionName, queryVector, initialTopK);
-            
-            var tenantResults = searchResults
-                .Where(r => r.Payload.ContainsKey("TenantId") && r.Payload["TenantId"] == tenantId.ToString())
-                .ToList();
+            var tenantResults = await _vectorStore.SearchSimilarWithAnyPayloadAsync(
+                _collectionName,
+                queryVector,
+                "TenantId",
+                new[] { tenantId.ToString() },
+                initialTopK);
 
             foreach (var r in tenantResults)
             {
                 if (r.Payload.ContainsKey("Content"))
                 {
-                    allDenseResults.Add((r.Payload["Content"], r.Score, "dense"));
+                    var source = r.Payload.TryGetValue("FileName", out var fileName)
+                        ? fileName
+                        : "knowledge-base";
+                    allDenseResults.Add((r.Payload["Content"], r.Score, source));
                 }
             }
         }
@@ -137,6 +141,9 @@ public class RagPipelineService : IRagPipelineService
         }
 
         var candidateTexts = fusedResults.Select(r => r.Content).Distinct().ToList();
+        var sourceByText = fusedResults
+            .GroupBy(result => result.Content)
+            .ToDictionary(group => group.Key, group => group.First().Source);
 
         if (!candidateTexts.Any()) return "Tài liệu bị rỗng nội dung.";
 
@@ -147,7 +154,12 @@ public class RagPipelineService : IRagPipelineService
         var rankedScores = ranker.GetScore(query, candidateTexts.ToArray());
 
         var topResults = rankedScores
-            .Select((score, index) => new { Score = score, Text = candidateTexts[index] })
+            .Select((score, index) => new
+            {
+                Score = score,
+                Text = candidateTexts[index],
+                Source = sourceByText[candidateTexts[index]]
+            })
             .OrderByDescending(x => x.Score)
             .Take(topK)
             .ToList();
@@ -155,6 +167,7 @@ public class RagPipelineService : IRagPipelineService
         var contextBuilder = new System.Text.StringBuilder();
         foreach (var res in topResults)
         {
+            contextBuilder.AppendLine($"[Source: {res.Source}]");
             contextBuilder.AppendLine(res.Text);
             contextBuilder.AppendLine("---");
         }
@@ -193,7 +206,10 @@ public class RagPipelineService : IRagPipelineService
             foreach (var r in payloadResults)
             {
                 if (!r.Payload.ContainsKey("Content")) continue;
-                results.Add((r.Payload["Content"], r.Score, "sparse"));
+                var source = r.Payload.TryGetValue("FileName", out var fileName)
+                    ? fileName
+                    : "knowledge-base";
+                results.Add((r.Payload["Content"], r.Score, source));
             }
 
             _logger.LogInformation("H3 Sparse search: {Count} results from payload filter for {Keywords} keywords",
@@ -224,10 +240,12 @@ public class RagPipelineService : IRagPipelineService
         var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
         var queryVector = embedder.GetEmbeddings(query);
         
-        var broadResults = await _vectorStore.SearchSimilarAsync(_collectionName, queryVector, 50);
-        var tenantResults = broadResults
-            .Where(r => r.Payload.ContainsKey("TenantId") && r.Payload["TenantId"] == tenantId.ToString())
-            .ToList();
+        var tenantResults = await _vectorStore.SearchSimilarWithAnyPayloadAsync(
+            _collectionName,
+            queryVector,
+            "TenantId",
+            new[] { tenantId.ToString() },
+            50);
 
         foreach (var r in tenantResults)
         {
@@ -241,7 +259,10 @@ public class RagPipelineService : IRagPipelineService
             if (matchCount > 0)
             {
                 var bm25Score = (float)matchCount / keywords.Count();
-                results.Add((r.Payload["Content"], bm25Score, "sparse"));
+                var source = r.Payload.TryGetValue("FileName", out var fileName)
+                    ? fileName
+                    : "knowledge-base";
+                results.Add((r.Payload["Content"], bm25Score, source));
             }
         }
 
@@ -252,13 +273,16 @@ public class RagPipelineService : IRagPipelineService
     /// Reciprocal Rank Fusion (RRF) — merges dense and sparse results.
     /// RRF score = Σ 1/(k + rank_i) for each retrieval system.
     /// </summary>
-    private List<(string Content, double FusedScore)> ReciprocalRankFusion(
+    private List<(string Content, double FusedScore, string Source)> ReciprocalRankFusion(
         List<(string Content, float Score, string Source)> denseResults,
         List<(string Content, float Score, string Source)> sparseResults,
         int topK)
     {
         const int k = 60; // RRF constant
         var scoreMap = new Dictionary<string, double>();
+        var sourceMap = denseResults.Concat(sparseResults)
+            .GroupBy(result => result.Content)
+            .ToDictionary(group => group.Key, group => group.First().Source);
 
         // Score from dense retrieval
         var denseRanked = denseResults
@@ -291,7 +315,7 @@ public class RagPipelineService : IRagPipelineService
         return scoreMap
             .OrderByDescending(kv => kv.Value)
             .Take(topK)
-            .Select(kv => (kv.Key, kv.Value))
+            .Select(kv => (kv.Key, kv.Value, sourceMap[kv.Key]))
             .ToList();
     }
 

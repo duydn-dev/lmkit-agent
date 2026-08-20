@@ -137,6 +137,10 @@
                 <i class="pi pi-times text-xs"></i>
               </button>
             </div>
+            <label class="flex items-center gap-2 px-2 text-xs text-gray-600 cursor-pointer">
+              <input v-model="saveAttachmentsToKnowledge" type="checkbox" class="accent-blue-600" />
+              Lưu nội dung file vào kho tri thức
+            </label>
           </div>
           
           <!-- Text Area -->
@@ -212,12 +216,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch, onMounted } from 'vue';
+import { defineAsyncComponent, ref, nextTick, watch, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import GenerativeUiRenderer from '@/components/chat/GenerativeUiRenderer.vue';
-import VoiceWebRtcModule from '@/components/voice/VoiceWebRtcModule.vue';
+const VoiceWebRtcModule = defineAsyncComponent(
+  () => import('@/components/voice/VoiceWebRtcModule.vue')
+);
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -236,6 +242,7 @@ const isGenerating = ref(false);
 const chatContainer = ref<HTMLElement | null>(null);
 const currentSessionId = ref<string | null>(null);
 const attachedFiles = ref<File[]>([]);
+const saveAttachmentsToKnowledge = ref(false);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 
 const loadMessages = async () => {
@@ -393,10 +400,12 @@ const sendMessage = async () => {
       const formData = new FormData();
       formData.append('sessionId', currentSessionId.value || '00000000-0000-0000-0000-000000000000');
       formData.append('message', content || 'Hãy phân tích nội dung file đính kèm.');
+      formData.append('saveToKnowledge', String(saveAttachmentsToKnowledge.value));
       for (const file of attachedFiles.value) {
         formData.append('files', file);
       }
       attachedFiles.value = []; // Clear after sending
+      saveAttachmentsToKnowledge.value = false;
       response = await http.post(ApiFactory.CHAT.STREAM_WITH_FILES, formData);
     } else {
       // JSON: text only

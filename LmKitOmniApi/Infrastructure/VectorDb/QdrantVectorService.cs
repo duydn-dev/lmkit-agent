@@ -53,13 +53,22 @@ public class QdrantVectorService : IVectorStoreService
                 else if (kvp.Value is float f) point.Payload.Add(kvp.Key, f);
                 else if (kvp.Value is double d) point.Payload.Add(kvp.Key, d);
                 else if (kvp.Value is bool b) point.Payload.Add(kvp.Key, b);
-                else if (kvp.Value != null) point.Payload.Add(kvp.Key, kvp.Value.ToString());
+                else if (kvp.Value is not null) point.Payload.Add(kvp.Key, kvp.Value.ToString()!);
             }
         }
 
         var points = new List<PointStruct> { point };
 
         await _client.UpsertAsync(collectionName, points);
+    }
+
+    public async Task DeleteVectorsAsync(
+        string collectionName,
+        IReadOnlyList<Guid> ids,
+        CancellationToken ct = default)
+    {
+        if (ids.Count == 0) return;
+        await _client.DeleteAsync(collectionName, ids, cancellationToken: ct);
     }
 
     public async Task<List<VectorSearchResult>> SearchSimilarAsync(string collectionName, float[] queryVector, int topK)
@@ -82,9 +91,9 @@ public class QdrantVectorService : IVectorStoreService
             var cachedResult = JsonSerializer.Deserialize<List<VectorSearchResult>>(cachedData);
             if (cachedResult != null) return cachedResult;
         }
-        var searchResult = await _client.SearchAsync(
+        var searchResult = await _client.QueryAsync(
             collectionName: collectionName,
-            vector: queryVector,
+            query: queryVector,
             limit: (ulong)topK,
             payloadSelector: true
         );
@@ -118,6 +127,49 @@ public class QdrantVectorService : IVectorStoreService
         });
 
         return results;
+    }
+
+    public async Task<List<VectorSearchResult>> SearchSimilarWithAnyPayloadAsync(
+        string collectionName,
+        float[] queryVector,
+        string payloadField,
+        IReadOnlyList<string> allowedValues,
+        int topK,
+        CancellationToken ct = default)
+    {
+        if (allowedValues.Count == 0) return new List<VectorSearchResult>();
+
+        var filter = new Filter();
+        filter.Should.AddRange(allowedValues.Select(value => new Condition
+        {
+            Field = new FieldCondition
+            {
+                Key = payloadField,
+                Match = new Match { Keyword = value }
+            }
+        }));
+
+        var queryResult = await _client.QueryAsync(
+            collectionName: collectionName,
+            query: queryVector,
+            filter: filter,
+            limit: (ulong)topK,
+            payloadSelector: true,
+            cancellationToken: ct);
+
+        return queryResult.Select(point => new VectorSearchResult
+        {
+            Id = Guid.Parse(point.Id.Uuid),
+            Score = point.Score,
+            Payload = point.Payload.ToDictionary(
+                item => item.Key,
+                item => item.Value.KindCase switch
+                {
+                    Value.KindOneofCase.StringValue => item.Value.StringValue,
+                    Value.KindOneofCase.IntegerValue => item.Value.IntegerValue.ToString(),
+                    _ => item.Value.ToString()
+                })
+        }).ToList();
     }
 
     /// <summary>

@@ -16,9 +16,9 @@ public class OfficeDocumentToolService : IOfficeDocumentToolService
                 var doc = new Document(filePath);
                 return doc.GetText();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return $"[Error reading Word document: {ex.Message}]";
+                return "[Unable to read Word document.]";
             }
         });
     }
@@ -48,9 +48,9 @@ public class OfficeDocumentToolService : IOfficeDocumentToolService
                 }
                 return sb.ToString();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return $"[Error reading Excel document: {ex.Message}]";
+                return "[Unable to read Excel document.]";
             }
         });
     }

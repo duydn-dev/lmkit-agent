@@ -166,6 +166,7 @@ public class PromptGuardService : IPromptGuardService
         {
             (@"(?i)(system\s+prompt|my\s+instructions?\s+are|i\s+was\s+told\s+to|my\s+guidelines?\s+(say|are))", "SystemPromptLeakage"),
             (@"(?i)(API[-_\s]?KEY|SECRET[-_\s]?KEY|PASSWORD|TOKEN)\s*[:=]\s*\S+", "CredentialLeakage"),
+            (@"(?i)\bBEARER\s+\S+", "CredentialLeakage"),
             (@"\b(?:\d{3}[-.\s]?\d{2}[-.\s]?\d{4})\b", "PIILeakage"), // SSN pattern
             (@"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "PIILeakage"), // Email pattern
         };

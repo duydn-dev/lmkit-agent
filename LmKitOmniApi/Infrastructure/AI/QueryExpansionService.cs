@@ -60,8 +60,8 @@ Tối ưu hóa query và index database";
 
             expansions.AddRange(lines);
             
-            _logger.LogInformation("🔍 Query expanded: '{Original}' → {Count} variations", 
-                query.Length > 50 ? query.Substring(0, 50) + "..." : query, expansions.Count);
+            _logger.LogInformation("Query length {QueryLength} expanded to {Count} variations",
+                query.Length, expansions.Count);
         }
         catch (Exception ex)
         {
@@ -87,8 +87,7 @@ Chỉ viết nội dung, không thêm tiêu đề hay giải thích.";
 
             var result = chat.Submit(query);
             
-            _logger.LogInformation("📄 HyDE generated for: '{Query}'", 
-                query.Length > 50 ? query.Substring(0, 50) + "..." : query);
+            _logger.LogInformation("HyDE generated for query length {QueryLength}", query.Length);
             
             return result.Completion.Trim();
         }

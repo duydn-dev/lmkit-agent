@@ -73,7 +73,7 @@ public class OutputGuardrailFilter : IAgentFilter
                     // Redact anything that looks like credentials
                     redacted = System.Text.RegularExpressions.Regex.Replace(
                         redacted,
-                        @"(?i)(API[-_\s]?KEY|SECRET[-_\s]?KEY|PASSWORD|TOKEN)\s*[:=]\s*\S+",
+                        @"(?i)(API[-_\s]?KEY|SECRET[-_\s]?KEY|PASSWORD|TOKEN|BEARER)\s*[:=]?\s*\S+",
                         "$1: [REDACTED]");
                     break;
                     
@@ -83,6 +83,10 @@ public class OutputGuardrailFilter : IAgentFilter
                         redacted,
                         @"\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b",
                         "[SSN REDACTED]");
+                    redacted = System.Text.RegularExpressions.Regex.Replace(
+                        redacted,
+                        @"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+                        "[EMAIL REDACTED]");
                     break;
                     
                 case "SystemPromptLeakage":

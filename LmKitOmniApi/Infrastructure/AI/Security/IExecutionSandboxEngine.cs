@@ -47,7 +47,7 @@ public class ExecutionSandboxEngine : IExecutionSandboxEngine
         catch (Exception ex)
         {
             _logger.LogWarning("❌ Lỗi Sandbox: {Error}", ex.Message);
-            return $"[Sandbox Error] {ex.Message}";
+            return "[Sandbox Error] JavaScript execution failed or exceeded its resource limits.";
         }
     }
 }

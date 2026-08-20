@@ -87,9 +87,13 @@ public class ToolPermissionService : IToolPermissionService
         if (toolName.StartsWith("MCP:", StringComparison.OrdinalIgnoreCase))
         {
             var mcpToolName = toolName.Substring(4).ToLowerInvariant();
-            if (mcpToolName.Contains("write") || mcpToolName.Contains("delete") || 
-                mcpToolName.Contains("create") || mcpToolName.Contains("update") || 
-                mcpToolName.Contains("execute"))
+            string[] mutationVerbs =
+            [
+                "write", "delete", "remove", "create", "update", "edit",
+                "execute", "run", "send", "post", "put", "patch", "publish",
+                "approve", "invite", "upload", "move", "rename"
+            ];
+            if (mutationVerbs.Any(mcpToolName.Contains))
             {
                 _logger.LogInformation("⚠️ MCP Tool '{Tool}' requires human approval (User: {User})", toolName, userId);
                 return Task.FromResult(ToolPermissionResult.NeedApproval());
@@ -116,10 +120,12 @@ public class ToolPermissionService : IToolPermissionService
             _ => new List<DateTime> { DateTime.UtcNow },
             (_, list) =>
             {
-                // Clean old entries and add new
-                var cutoff = DateTime.UtcNow.AddMinutes(-RateLimitWindowMinutes);
-                list.RemoveAll(t => t < cutoff);
-                list.Add(DateTime.UtcNow);
+                lock (list)
+                {
+                    var cutoff = DateTime.UtcNow.AddMinutes(-RateLimitWindowMinutes);
+                    list.RemoveAll(t => t < cutoff);
+                    list.Add(DateTime.UtcNow);
+                }
                 return list;
             });
 
@@ -144,7 +150,9 @@ public class ToolPermissionService : IToolPermissionService
     {
         if (RoleToolPermissions.TryGetValue(role, out var allowedTools))
         {
-            return allowedTools.Contains(toolName);
+            return allowedTools.Contains(toolName)
+                || (toolName.StartsWith("MCP:", StringComparison.OrdinalIgnoreCase)
+                    && allowedTools.Contains("MCP"));
         }
         return false; // Unknown role = deny all
     }
@@ -155,7 +163,12 @@ public class ToolPermissionService : IToolPermissionService
             return false;
 
         var cutoff = DateTime.UtcNow.AddMinutes(-RateLimitWindowMinutes);
-        var recentCount = invocations.Count(t => t >= cutoff);
+        int recentCount;
+        lock (invocations)
+        {
+            invocations.RemoveAll(t => t < cutoff);
+            recentCount = invocations.Count;
+        }
         
         var limit = ToolRateLimits.TryGetValue(toolName, out var specificLimit)
             ? specificLimit

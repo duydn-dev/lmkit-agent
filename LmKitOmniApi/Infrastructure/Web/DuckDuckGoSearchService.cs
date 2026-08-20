@@ -8,10 +8,14 @@ namespace LmKitOmniApi.Infrastructure.Web;
 public class DuckDuckGoSearchService : IWebSearchService
 {
     private readonly HttpClient _httpClient;
+    private readonly ILogger<DuckDuckGoSearchService> _logger;
 
-    public DuckDuckGoSearchService(IHttpClientFactory httpClientFactory)
+    public DuckDuckGoSearchService(
+        IHttpClientFactory httpClientFactory,
+        ILogger<DuckDuckGoSearchService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
+        _logger = logger;
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     }
 
@@ -47,7 +51,8 @@ public class DuckDuckGoSearchService : IWebSearchService
         }
         catch (Exception ex)
         {
-            return $"[Web Search Error: {ex.Message}]";
+            _logger.LogWarning(ex, "Web search failed.");
+            return "[Web search is temporarily unavailable.]";
         }
     }
 }

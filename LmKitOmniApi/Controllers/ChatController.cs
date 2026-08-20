@@ -12,6 +12,14 @@ namespace LmKitOmniApi.Controllers;
 [Route("api/[controller]")]
 public class ChatController : ControllerBase
 {
+    private const long MaxAttachmentBytes = 20 * 1024 * 1024;
+    private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif", ".tiff",
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".txt", ".md", ".csv", ".json", ".xml"
+    };
+
     private readonly IMediator _mediator;
     private readonly OCRKnowledgeIngestionService _ocrIngestion;
 
@@ -72,37 +80,61 @@ public class ChatController : ControllerBase
         [FromForm] string message,
         [FromForm] string? modelId,
         [FromForm] List<IFormFile>? files,
+        [FromForm] bool saveToKnowledge,
         CancellationToken cancellationToken)
     {
         Response.Headers.Append("Content-Type", "text/event-stream");
         Response.Headers.Append("Cache-Control", "no-cache");
         Response.Headers.Append("Connection", "keep-alive");
 
+        var userIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier || c.Type == "sub")?.Value;
+        var tenantIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "TenantId")?.Value;
+        if (!Guid.TryParse(userIdString, out var currentUserId) || !Guid.TryParse(tenantIdString, out var tenantId))
+        {
+            Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await WriteSseAsync("[ERROR: Unauthorized]", cancellationToken);
+            return;
+        }
+
+        if (!Guid.TryParse(sessionId, out var parsedSessionId))
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await WriteSseAsync("[ERROR: Invalid session id]", cancellationToken);
+            return;
+        }
+
         // Step 1: Process file attachments
         var fileContextParts = new List<string>();
         if (files != null && files.Count > 0)
         {
-            // Get tenantId from session
-            var userIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier || c.Type == "sub")?.Value;
-            var tenantIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "TenantId")?.Value;
-
-            if (!Guid.TryParse(userIdString, out var currentUserId) || !Guid.TryParse(tenantIdString, out var tenantId))
-            {
-                Response.StatusCode = 401;
-                await Response.WriteAsync("data: [ERROR: Unauthorized]\n\n");
-                return;
-            }
-
-            var uploadDir = Path.Combine(Directory.GetCurrentDirectory(), "Uploads", "ChatAttachments");
+            var uploadDir = Path.Combine(
+                Directory.GetCurrentDirectory(),
+                "Uploads",
+                tenantId.ToString("N"),
+                currentUserId.ToString("N"),
+                "ChatAttachments");
             Directory.CreateDirectory(uploadDir);
 
             foreach (var file in files)
             {
                 if (file.Length == 0) continue;
+                if (file.Length > MaxAttachmentBytes)
+                {
+                    await WriteSseAsync($"[THINKING]: ⚠️ Bỏ qua file quá 20 MB: {Path.GetFileName(file.FileName)}\\n", cancellationToken);
+                    continue;
+                }
+
+                var safeFileName = Path.GetFileName(file.FileName);
+                var extension = Path.GetExtension(safeFileName);
+                if (string.IsNullOrWhiteSpace(safeFileName) || !AllowedAttachmentExtensions.Contains(extension))
+                {
+                    await WriteSseAsync($"[THINKING]: ⚠️ Loại file không được hỗ trợ: {safeFileName}\\n", cancellationToken);
+                    continue;
+                }
 
                 // Save file to disk
-                var savedPath = Path.Combine(uploadDir, $"{Guid.NewGuid()}_{file.FileName}");
-                using (var stream = new FileStream(savedPath, FileMode.Create))
+                var savedPath = Path.Combine(uploadDir, $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}");
+                await using (var stream = new FileStream(savedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
                     await file.CopyToAsync(stream, cancellationToken);
                 }
@@ -111,7 +143,12 @@ public class ChatController : ControllerBase
                 await WriteSseAsync($"[THINKING]: Đang xử lý file đính kèm: {file.FileName}...\\n", cancellationToken);
 
                 // Process file (OCR/convert + auto-save to Qdrant)
-                var result = await _ocrIngestion.ProcessFileForChatAsync(tenantId, savedPath, file.FileName, cancellationToken);
+                var result = await _ocrIngestion.ProcessFileForChatAsync(
+                    tenantId,
+                    savedPath,
+                    safeFileName,
+                    saveToKnowledge,
+                    cancellationToken);
                 
                 if (result.Success)
                 {
@@ -120,7 +157,8 @@ public class ChatController : ControllerBase
                         : result.ExtractedText;
                     fileContextParts.Add($"[File: {result.FileName} ({result.FileType})]: {truncated}");
                     
-                    await WriteSseAsync($"[THINKING]: ✅ Đã xử lý {file.FileName} ({result.FileType}) và lưu vào kho tri thức\\n", cancellationToken);
+                    var persistenceMessage = saveToKnowledge ? " và lưu vào kho tri thức" : string.Empty;
+                    await WriteSseAsync($"[THINKING]: ✅ Đã xử lý {safeFileName} ({result.FileType}){persistenceMessage}\\n", cancellationToken);
                 }
                 else
                 {
@@ -136,17 +174,11 @@ public class ChatController : ControllerBase
             augmentedMessage = message + "\n\n--- Nội dung file đính kèm ---\n" + string.Join("\n\n", fileContextParts);
         }
 
-        // Get UserId and TenantId for the command
-        var finalUserIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier || c.Type == "sub")?.Value;
-        var finalTenantIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "TenantId")?.Value;
-        Guid.TryParse(finalUserIdString, out var commandUserId);
-        Guid.TryParse(finalTenantIdString, out var commandTenantId);
-
         var command = new StreamChatCommand
         {
-            SessionId = Guid.TryParse(sessionId, out var sid) ? sid : Guid.Empty,
-            UserId = commandUserId,
-            TenantId = commandTenantId,
+            SessionId = parsedSessionId,
+            UserId = currentUserId,
+            TenantId = tenantId,
             Message = augmentedMessage,
             ModelId = modelId ?? "qwen3.5:2b"
         };

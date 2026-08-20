@@ -33,8 +33,12 @@ public class AgentMemoryService : IAgentMemoryService
     }
 
     public async Task<Guid> StoreMemoryAsync(Guid tenantId, Guid? userId, string memoryType, string key, string value,
-        string? sourceContext = null, float confidence = 0.5f, DateTime? expiresAt = null, CancellationToken ct = default)
+        string? sourceContext = null, float confidence = 0.5f, DateTime? expiresAt = null,
+        bool isConfirmed = false, CancellationToken ct = default)
     {
+        var now = DateTime.UtcNow;
+        expiresAt ??= MemoryRetentionPolicy.GetDefaultExpiration(memoryType, now);
+
         // Check if a memory with the same key exists for this user/tenant
         var existing = await _dbContext.AgentMemories
             .FirstOrDefaultAsync(m => m.TenantId == tenantId 
@@ -44,20 +48,21 @@ public class AgentMemoryService : IAgentMemoryService
 
         if (existing != null)
         {
-            // Update existing memory with higher confidence
+            // The same scoped key represents the latest asserted value. This also
+            // handles explicit contradictions such as a changed preference.
             existing.MemoryValue = value;
-            existing.Confidence = Math.Max(existing.Confidence, confidence);
+            existing.Confidence = confidence;
+            existing.IsConfirmed = isConfirmed;
             existing.SourceContext = sourceContext ?? existing.SourceContext;
-            existing.UpdatedAtUtc = DateTime.UtcNow;
+            existing.UpdatedAtUtc = now;
             existing.ExpiresAtUtc = expiresAt;
             
             await _dbContext.SaveChangesAsync(ct);
 
-            var cacheKeyExisting = $"AgentMemories:{tenantId}:{userId}";
-            await _cache.RemoveAsync(cacheKeyExisting, ct);
+            await InvalidateMemoryCachesAsync(tenantId, userId, ct);
 
-            _logger.LogInformation("🧠 Updated memory: [{Type}] {Key} = {Value}", memoryType, key, 
-                value.Length > 50 ? value.Substring(0, 50) + "..." : value);
+            _logger.LogInformation("Memory updated: Type={Type}, KeyLength={KeyLength}, ValueLength={ValueLength}",
+                memoryType, key.Length, value.Length);
             return existing.Id;
         }
 
@@ -71,19 +76,19 @@ public class AgentMemoryService : IAgentMemoryService
             MemoryValue = value,
             SourceContext = sourceContext,
             Confidence = confidence,
+            IsConfirmed = isConfirmed,
             ExpiresAtUtc = expiresAt,
-            CreatedAtUtc = DateTime.UtcNow,
-            UpdatedAtUtc = DateTime.UtcNow
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
         };
 
         _dbContext.AgentMemories.Add(memory);
         await _dbContext.SaveChangesAsync(ct);
 
-        var cacheKey = $"AgentMemories:{tenantId}:{userId}";
-        await _cache.RemoveAsync(cacheKey, ct);
+        await InvalidateMemoryCachesAsync(tenantId, userId, ct);
 
-        _logger.LogInformation("🧠 Stored new memory: [{Type}] {Key} = {Value}", memoryType, key,
-            value.Length > 50 ? value.Substring(0, 50) + "..." : value);
+        _logger.LogInformation("Memory stored: Type={Type}, KeyLength={KeyLength}, ValueLength={ValueLength}",
+            memoryType, key.Length, value.Length);
         return memory.Id;
     }
 
@@ -94,7 +99,7 @@ public class AgentMemoryService : IAgentMemoryService
     /// </summary>
     public async Task<List<MemoryRecallResult>> RecallMemoriesAsync(Guid tenantId, Guid? userId, string query, int maxResults = 5, CancellationToken ct = default)
     {
-        var cacheKey = $"AgentMemories:{tenantId}:{userId}";
+        var cacheKey = GetTenantCacheKey(tenantId);
         List<AgentMemory>? candidates = null;
         var cachedMemories = await _cache.GetStringAsync(cacheKey, ct);
         
@@ -114,10 +119,9 @@ public class AgentMemoryService : IAgentMemoryService
         {
             candidates = await _dbContext.AgentMemories
                 .Where(m => m.TenantId == tenantId
-                    && (m.UserId == null || m.UserId == userId)
                     && (m.ExpiresAtUtc == null || m.ExpiresAtUtc > DateTime.UtcNow))
                 .OrderByDescending(m => m.UpdatedAtUtc)
-                .Take(200)
+                .Take(1000)
                 .ToListAsync(ct);
                 
             try
@@ -139,26 +143,37 @@ public class AgentMemoryService : IAgentMemoryService
             candidates = candidates.Where(m => m.ExpiresAtUtc == null || m.ExpiresAtUtc > DateTime.UtcNow).ToList();
         }
 
+        // Always filter after the shared tenant cache is loaded. A cache hit must
+        // never broaden the caller's memory scope.
+        candidates = candidates
+            .Where(memory => MemoryScopePolicy.CanRecall(memory.UserId, userId))
+            .ToList();
+
         if (!candidates.Any()) return new List<MemoryRecallResult>();
 
         var queryWords = query.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Where(w => w.Length > 2).ToHashSet();
 
-        // H2 Fix: Semantic scoring via embeddings
+        // Semantic scores come from stored Qdrant vectors. Do not re-embed every
+        // candidate on every recall request.
         Dictionary<string, float>? semanticScores = null;
         try
         {
             var embeddingModel = await _modelManager.GetEmbeddingModelAsync();
             var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
             var queryEmbedding = embedder.GetEmbeddings(query);
-
-            semanticScores = new Dictionary<string, float>();
-            foreach (var m in candidates)
-            {
-                var memoryText = $"{m.MemoryKey} {m.MemoryValue}";
-                var memoryEmbedding = embedder.GetEmbeddings(memoryText);
-                semanticScores[m.Id.ToString()] = CosineSimilarity(queryEmbedding, memoryEmbedding);
-            }
+            var expectedUserId = userId?.ToString() ?? "Anonymous";
+            var scopes = expectedUserId == "Anonymous"
+                ? new[] { "Anonymous" }
+                : new[] { "Anonymous", expectedUserId };
+            var vectorMatches = await _vectorStore.SearchSimilarWithAnyPayloadAsync(
+                $"graph_memory_{tenantId:N}",
+                queryEmbedding,
+                "UserId",
+                scopes,
+                Math.Max(maxResults * 4, 20),
+                ct);
+            semanticScores = vectorMatches.ToDictionary(match => match.Id.ToString(), match => match.Score);
         }
         catch (Exception ex)
         {
@@ -198,25 +213,10 @@ public class AgentMemoryService : IAgentMemoryService
         .Take(maxResults)
         .ToList();
 
-        _logger.LogInformation("Recalled {Count} memories (hybrid) for: '{Query}'", scored.Count,
-            query.Length > 50 ? query.Substring(0, 50) + "..." : query);
+        _logger.LogInformation("Recalled {Count} memories (hybrid) for query length {QueryLength}",
+            scored.Count, query.Length);
 
         return scored;
-    }
-
-    /// <summary>Cosine similarity between two embedding vectors.</summary>
-    private static float CosineSimilarity(float[] a, float[] b)
-    {
-        if (a.Length != b.Length) return 0f;
-        float dot = 0, normA = 0, normB = 0;
-        for (int i = 0; i < a.Length; i++)
-        {
-            dot += a[i] * b[i];
-            normA += a[i] * a[i];
-            normB += b[i] * b[i];
-        }
-        var denom = MathF.Sqrt(normA) * MathF.Sqrt(normB);
-        return denom > 0 ? dot / denom : 0f;
     }
 
     public async Task ExtractAndStoreFactsAsync(Guid tenantId, Guid? userId, string userMessage, string assistantResponse, CancellationToken ct = default)
@@ -226,18 +226,20 @@ public class AgentMemoryService : IAgentMemoryService
         
         foreach (var (key, value, type) in facts)
         {
-            await StoreMemoryAsync(tenantId, userId, type, key, value, 
+            var memoryId = await StoreMemoryAsync(tenantId, userId, type, key, value,
                 sourceContext: userMessage.Length > 200 ? userMessage.Substring(0, 200) : userMessage,
-                confidence: 0.6f, ct: ct);
+                confidence: 0.9f,
+                isConfirmed: true,
+                ct: ct);
             
             // Phase 3: Graph Memory Vector Storage
             // Cập nhật Qdrant: Lưu fact dưới dạng string relationship để semantic search tốt hơn
             try
             {
                 var collectionName = $"graph_memory_{tenantId:N}";
-                await _vectorStore.EnsureCollectionExistsAsync(collectionName, 384);
-                
                 var embeddingModel = await _modelManager.GetEmbeddingModelAsync();
+                await _vectorStore.EnsureCollectionExistsAsync(collectionName, (ulong)embeddingModel.EmbeddingSize);
+
                 var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
                 var factString = $"User {userId} ({type}) {key}: {value}";
                 var vector = embedder.GetEmbeddings(factString);
@@ -251,7 +253,9 @@ public class AgentMemoryService : IAgentMemoryService
                     { "Fact", factString }
                 };
 
-                await _vectorStore.UpsertVectorAsync(collectionName, Guid.NewGuid(), vector, payload);
+                // Reuse the relational memory ID so updates replace the existing vector
+                // instead of accumulating stale duplicates.
+                await _vectorStore.UpsertVectorAsync(collectionName, memoryId, vector, payload);
             }
             catch (Exception ex)
             {
@@ -272,28 +276,6 @@ public class AgentMemoryService : IAgentMemoryService
             builder.AppendLine($"• [{m.MemoryType}] {m.Key}: {m.Value}");
         }
         
-        // Phase 3: Semantic recall from Graph Memory
-        try
-        {
-            var collectionName = $"graph_memory_{tenantId:N}";
-            var embeddingModel = await _modelManager.GetEmbeddingModelAsync();
-            var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
-            var queryVector = embedder.GetEmbeddings(currentQuery);
-            var graphResults = await _vectorStore.SearchSimilarAsync(collectionName, queryVector, 3);
-            
-            foreach (var res in graphResults.Where(r => r.Score > 0.6f))
-            {
-                if (res.Payload != null && res.Payload.TryGetValue("Fact", out var factVal))
-                {
-                    builder.AppendLine($"• [Graph Fact] {factVal}");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Graph memory collection might not exist yet.");
-        }
-        
         builder.AppendLine("--- End Memory ---");
         return builder.ToString();
     }
@@ -306,11 +288,79 @@ public class AgentMemoryService : IAgentMemoryService
 
         if (expired.Any())
         {
+            var affectedScopes = expired
+                .Select(memory => (memory.TenantId, memory.UserId))
+                .Distinct()
+                .ToList();
+            var expiredByTenant = expired.GroupBy(memory => memory.TenantId).ToList();
+
             _dbContext.AgentMemories.RemoveRange(expired);
             await _dbContext.SaveChangesAsync(ct);
+
+            foreach (var scope in affectedScopes)
+                await InvalidateMemoryCachesAsync(scope.TenantId, scope.UserId, ct);
+
+            foreach (var tenantGroup in expiredByTenant)
+            {
+                try
+                {
+                    await _vectorStore.DeleteVectorsAsync(
+                        $"graph_memory_{tenantGroup.Key:N}",
+                        tenantGroup.Select(memory => memory.Id).ToList(),
+                        ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to remove expired memory vectors for tenant {TenantId}.", tenantGroup.Key);
+                }
+            }
+
             _logger.LogInformation("🧠 Cleaned up {Count} expired memories", expired.Count);
         }
     }
+
+    public async Task<bool> DeleteMemoryAsync(
+        Guid tenantId,
+        Guid? userId,
+        Guid memoryId,
+        CancellationToken ct = default)
+    {
+        var memory = await _dbContext.AgentMemories.FirstOrDefaultAsync(
+            item => item.Id == memoryId
+                && item.TenantId == tenantId
+                && item.UserId == userId,
+            ct);
+
+        if (memory is null) return false;
+
+        _dbContext.AgentMemories.Remove(memory);
+        await _dbContext.SaveChangesAsync(ct);
+        await InvalidateMemoryCachesAsync(tenantId, userId, ct);
+
+        try
+        {
+            await _vectorStore.DeleteVectorsAsync(
+                $"graph_memory_{tenantId:N}",
+                new[] { memoryId },
+                ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to remove vector for deleted memory {MemoryId}.", memoryId);
+        }
+
+        return true;
+    }
+
+    private async Task InvalidateMemoryCachesAsync(
+        Guid tenantId,
+        Guid? userId,
+        CancellationToken ct)
+    {
+        await _cache.RemoveAsync(GetTenantCacheKey(tenantId), ct);
+    }
+
+    private static string GetTenantCacheKey(Guid tenantId) => $"AgentMemories:{tenantId}:v2";
 
     /// <summary>
     /// Simple heuristic fact extraction from user messages.

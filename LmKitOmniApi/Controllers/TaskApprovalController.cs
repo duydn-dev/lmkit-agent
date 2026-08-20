@@ -4,6 +4,7 @@ using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Application.Abstractions;
+using LmKitOmniApi.Infrastructure.Security;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -15,14 +16,17 @@ public class TaskApprovalController : ControllerBase
     private readonly HermesDbContext _dbContext;
     private readonly IAgentOrchestrator _agentOrchestrator;
     private readonly ILogger<TaskApprovalController> _logger;
+    private readonly TaskApprovalPayloadProtector _payloadProtector;
 
     public TaskApprovalController(
         HermesDbContext dbContext,
         IAgentOrchestrator agentOrchestrator,
+        TaskApprovalPayloadProtector payloadProtector,
         ILogger<TaskApprovalController> logger)
     {
         _dbContext = dbContext;
         _agentOrchestrator = agentOrchestrator;
+        _payloadProtector = payloadProtector;
         _logger = logger;
     }
 
@@ -38,7 +42,7 @@ public class TaskApprovalController : ControllerBase
         var pending = await _dbContext.TaskApprovals
             .Where(t => t.TenantId == tenantId && t.UserId == userId && t.Status == "Pending")
             .OrderByDescending(t => t.CreatedAtUtc)
-            .Select(t => new { t.Id, t.ActionName, t.ParametersJson, t.CreatedAtUtc })
+            .Select(t => new { t.Id, t.ActionName, t.CreatedAtUtc })
             .ToListAsync();
 
         return Ok(pending);
@@ -53,26 +57,59 @@ public class TaskApprovalController : ControllerBase
         if (!Guid.TryParse(tenantIdStr, out var tenantId) || !Guid.TryParse(userIdStr, out var userId))
             return Unauthorized();
 
-        var task = await _dbContext.TaskApprovals.FirstOrDefaultAsync(t => t.Id == id && t.TenantId == tenantId);
+        var task = await _dbContext.TaskApprovals
+            .AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == id && t.TenantId == tenantId && t.UserId == userId);
         if (task == null) return NotFound("Task not found.");
-        if (task.Status != "Pending") return BadRequest($"Task is already {task.Status}.");
 
-        task.Status = "Approved";
-        task.ResolvedAtUtc = DateTime.UtcNow;
+        // Atomically claim the task. Two concurrent approval requests must never
+        // execute the same side-effecting tool twice.
+        var claimed = await _dbContext.TaskApprovals
+            .Where(t => t.Id == id
+                && t.TenantId == tenantId
+                && t.UserId == userId
+                && t.Status == "Pending")
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(t => t.Status, "Executing")
+                .SetProperty(t => t.ResolvedAtUtc, DateTime.UtcNow),
+                HttpContext.RequestAborted);
+
+        if (claimed == 0)
+            return Conflict("Task is no longer pending.");
         
         // Execute tool directly
         string result;
         try
         {
-            result = await _agentOrchestrator.ExecuteDirectActionAsync(tenantId, userId, task.ActionName, task.ParametersJson);
+            var parameters = _payloadProtector.Unprotect(task.ParametersJson);
+            result = await _agentOrchestrator.ExecuteDirectActionAsync(
+                tenantId,
+                userId,
+                task.ActionName,
+                parameters,
+                id,
+                HttpContext.RequestAborted);
+
+            await _dbContext.TaskApprovals
+                .Where(t => t.Id == id && t.Status == "Executing")
+                .ExecuteUpdateAsync(
+                    setters => setters.SetProperty(t => t.Status, "Completed"),
+                    HttpContext.RequestAborted);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error executing approved task.");
-            result = $"[Error executing task: {ex.Message}]";
+            await _dbContext.TaskApprovals
+                .Where(t => t.Id == id && t.Status == "Executing")
+                .ExecuteUpdateAsync(
+                    setters => setters.SetProperty(t => t.Status, "Failed"),
+                    HttpContext.RequestAborted);
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                Success = false,
+                Error = "Approved task execution failed. See server logs for details."
+            });
         }
-
-        await _dbContext.SaveChangesAsync();
 
         return Ok(new { Success = true, Result = result });
     }
@@ -81,17 +118,22 @@ public class TaskApprovalController : ControllerBase
     public async Task<IActionResult> RejectTask(Guid id, [FromBody] RejectTaskRequest request)
     {
         var tenantIdStr = User.FindFirst("TenantId")?.Value;
-        if (!Guid.TryParse(tenantIdStr, out var tenantId)) return Unauthorized();
+        var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!Guid.TryParse(tenantIdStr, out var tenantId) || !Guid.TryParse(userIdStr, out var userId))
+            return Unauthorized();
 
-        var task = await _dbContext.TaskApprovals.FirstOrDefaultAsync(t => t.Id == id && t.TenantId == tenantId);
-        if (task == null) return NotFound("Task not found.");
-        if (task.Status != "Pending") return BadRequest($"Task is already {task.Status}.");
+        var rejected = await _dbContext.TaskApprovals
+            .Where(t => t.Id == id
+                && t.TenantId == tenantId
+                && t.UserId == userId
+                && t.Status == "Pending")
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(t => t.Status, "Rejected")
+                .SetProperty(t => t.ResolvedAtUtc, DateTime.UtcNow)
+                .SetProperty(t => t.RejectionComment, request.Comment),
+                HttpContext.RequestAborted);
 
-        task.Status = "Rejected";
-        task.ResolvedAtUtc = DateTime.UtcNow;
-        task.RejectionComment = request.Comment;
-
-        await _dbContext.SaveChangesAsync();
+        if (rejected == 0) return NotFound("Pending task not found.");
 
         return Ok(new { Success = true, Message = "Task rejected." });
     }

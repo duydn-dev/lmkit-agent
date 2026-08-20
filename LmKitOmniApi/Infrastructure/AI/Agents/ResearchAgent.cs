@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using LmKitOmniApi.Application.Abstractions;
 using Microsoft.Extensions.Logging;
+using LmKitOmniApi.Infrastructure.AI.Tools;
 
 namespace LmKitOmniApi.Infrastructure.AI.Agents;
 
@@ -12,16 +13,22 @@ public class ResearchAgent : ISpecializedAgent
 {
     private readonly IRagPipelineService _ragService;
     private readonly IWebSearchService _webSearch;
+    private readonly AgentToolGateway _toolGateway;
     private readonly ILogger<ResearchAgent> _logger;
 
     public string AgentName => "ResearchAgent";
     public string Description => "Chuyên tìm kiếm thông tin từ web và kho tri thức nội bộ (RAG).";
     public IReadOnlyList<string> SupportedCategories => new[] { "rag", "search", "research", "knowledge" };
 
-    public ResearchAgent(IRagPipelineService ragService, IWebSearchService webSearch, ILogger<ResearchAgent> logger)
+    public ResearchAgent(
+        IRagPipelineService ragService,
+        IWebSearchService webSearch,
+        AgentToolGateway toolGateway,
+        ILogger<ResearchAgent> logger)
     {
         _ragService = ragService;
         _webSearch = webSearch;
+        _toolGateway = toolGateway;
         _logger = logger;
     }
 
@@ -45,20 +52,33 @@ public class ResearchAgent : ISpecializedAgent
         {
             // Step 1: RAG Knowledge Base
             _logger.LogInformation("🔬 [{Agent}] Searching knowledge base...", AgentName);
-            var ragResult = await _ragService.QueryKnowledgeBaseAsync(tenantId, query, topK: 3);
-            if (!string.IsNullOrWhiteSpace(ragResult) && !ragResult.Contains("Không tìm thấy"))
+            var ragExecution = await _toolGateway.ExecuteReadOnlyAsync(
+                tenantId, userId, "User", "QueryKnowledgeBase", query,
+                token => _ragService.QueryKnowledgeBaseAsync(tenantId, query, topK: 3), ct);
+            if (ragExecution.IsSuccess
+                && !string.IsNullOrWhiteSpace(ragExecution.Output)
+                && !ragExecution.Output.Contains("Không tìm thấy"))
             {
-                results.AppendLine("[RAG Knowledge]: " + ragResult);
+                results.AppendLine("[RAG Knowledge]: " + ragExecution.Output);
                 tools.Add("QueryKnowledgeBase");
             }
 
             // Step 2: Web Search
             _logger.LogInformation("🔬 [{Agent}] Searching the web...", AgentName);
-            var webResult = await _webSearch.SearchWebAsync(query, count: 3);
-            if (!string.IsNullOrWhiteSpace(webResult))
+            var webExecution = await _toolGateway.ExecuteReadOnlyAsync(
+                tenantId, userId, "User", "SearchWeb", query,
+                token => _webSearch.SearchWebAsync(query, count: 3), ct);
+            if (webExecution.IsSuccess && !string.IsNullOrWhiteSpace(webExecution.Output))
             {
-                results.AppendLine("[Web Search]: " + webResult);
+                results.AppendLine("[Web Search]: " + webExecution.Output);
                 tools.Add("SearchWeb");
+            }
+
+            if (!ragExecution.IsSuccess && !webExecution.IsSuccess)
+            {
+                return AgentExecutionResult.Fail(
+                    AgentName,
+                    ragExecution.ErrorMessage ?? webExecution.ErrorMessage ?? "Research tools were unavailable.");
             }
 
             sw.Stop();

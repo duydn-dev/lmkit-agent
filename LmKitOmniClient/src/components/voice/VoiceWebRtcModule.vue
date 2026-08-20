@@ -34,11 +34,14 @@ let room: Room | null = null;
 const connectLiveKit = async () => {
   try {
     // Replace with real backend call when Voice WebRTC is fully hooked up.
-    const url = import.meta.env.VITE_LIVEKIT_URL || 'ws://localhost:7880';
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = import.meta.env.VITE_LIVEKIT_URL || `${wsProtocol}//${window.location.hostname}:7880`;
     
     // Fetch token from backend
-    const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5240';
-    const response = await fetch(`${apiBase}/api/Speech/token?room=omni-room&participant=user-123`);
+    const apiBase = import.meta.env.VITE_API_URL || '';
+    const response = await fetch(`${apiBase}/api/Speech/token?room=omni-room`, {
+      credentials: 'include',
+    });
     if (!response.ok) {
       throw new Error('Failed to fetch LiveKit token');
     }

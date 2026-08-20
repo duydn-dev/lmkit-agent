@@ -2,11 +2,13 @@ using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using LmKitOmniApi.Application.TextAnalysis.Commands;
 using LmKitOmniApi.Models;
+using Microsoft.AspNetCore.Authorization;
 
 namespace LmKitOmniApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class TextAnalysisController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -39,9 +41,9 @@ public class TextAnalysisController : ControllerBase
                 RedactedText = result.RedactedText
             });
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return StatusCode(500, $"Internal server error: {ex.Message}");
+            return Problem(statusCode: 500, title: "Text analysis failed.");
         }
     }
 
@@ -67,9 +69,9 @@ public class TextAnalysisController : ControllerBase
                 Confidence = result.Confidence
             });
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return StatusCode(500, $"Internal server error: {ex.Message}");
+            return Problem(statusCode: 500, title: "Text classification failed.");
         }
     }
 
@@ -86,9 +88,9 @@ public class TextAnalysisController : ControllerBase
 
             return Ok(new DetectLanguageResponse { Language = result.Language });
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return StatusCode(500, $"Internal server error: {ex.Message}");
+            return Problem(statusCode: 500, title: "Language detection failed.");
         }
     }
 
@@ -109,9 +111,9 @@ public class TextAnalysisController : ControllerBase
                 Confidence = result.Confidence
             });
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return StatusCode(500, $"Internal server error: {ex.Message}");
+            return Problem(statusCode: 500, title: "Keyword extraction failed.");
         }
     }
 
@@ -128,9 +130,9 @@ public class TextAnalysisController : ControllerBase
 
             return Ok(new GenerateEmbeddingsResponse { Embeddings = result.Embeddings });
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return StatusCode(500, $"Internal server error: {ex.Message}");
+            return Problem(statusCode: 500, title: "Embedding generation failed.");
         }
     }
 }

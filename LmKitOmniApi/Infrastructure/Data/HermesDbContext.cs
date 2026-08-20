@@ -84,6 +84,8 @@ public class HermesDbContext : DbContext
 
         modelBuilder.Entity<AuditLog>()
             .HasOne(a => a.ActorUser).WithMany().HasForeignKey(a => a.ActorUserId).OnDelete(DeleteBehavior.SetNull);
+        modelBuilder.Entity<AuditLog>()
+            .HasIndex(a => new { a.TenantId, a.CreatedAtUtc });
 
         modelBuilder.Entity<ExternalMcpServer>()
             .HasOne(e => e.Tenant).WithMany().HasForeignKey(e => e.TenantId).OnDelete(DeleteBehavior.Cascade);

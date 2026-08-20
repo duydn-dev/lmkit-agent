@@ -124,9 +124,14 @@ namespace LmKitOmniApi.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ActorUserId");
+
+                    b.HasIndex("TenantId", "CreatedAtUtc");
 
                     b.ToTable("audit_logs");
                 });

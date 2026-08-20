@@ -20,6 +20,7 @@ public class LmModelManager : IDisposable
     private readonly SemaphoreSlim _speechLock;
     private readonly SemaphoreSlim _rerankerLock;
     private readonly SemaphoreSlim _segmentationLock;
+    private readonly SemaphoreSlim _chatInferenceGate;
 
     public string DefaultChatModelId { get; set; }
     public string DefaultVisionModelId { get; set; }
@@ -40,18 +41,14 @@ public class LmModelManager : IDisposable
 
         var limits = configuration.GetSection("SemaphoreLimits");
         int chatLimit = limits.GetValue<int>("Chat", 1);
-        int visionLimit = limits.GetValue<int>("Vision", 1);
-        int embeddingLimit = limits.GetValue<int>("Embedding", 1);
-        int speechLimit = limits.GetValue<int>("Speech", 1);
-        int rerankerLimit = limits.GetValue<int>("Reranker", 1);
-        int segmentationLimit = limits.GetValue<int>("Segmentation", 1);
-
-        _chatLock = new SemaphoreSlim(chatLimit, chatLimit);
-        _visionLock = new SemaphoreSlim(visionLimit, visionLimit);
-        _embeddingLock = new SemaphoreSlim(embeddingLimit, embeddingLimit);
-        _speechLock = new SemaphoreSlim(speechLimit, speechLimit);
-        _rerankerLock = new SemaphoreSlim(rerankerLimit, rerankerLimit);
-        _segmentationLock = new SemaphoreSlim(segmentationLimit, segmentationLimit);
+        if (chatLimit <= 0) throw new InvalidOperationException("SemaphoreLimits:Chat must be greater than zero.");
+        _chatLock = new SemaphoreSlim(1, 1);
+        _visionLock = new SemaphoreSlim(1, 1);
+        _embeddingLock = new SemaphoreSlim(1, 1);
+        _speechLock = new SemaphoreSlim(1, 1);
+        _rerankerLock = new SemaphoreSlim(1, 1);
+        _segmentationLock = new SemaphoreSlim(1, 1);
+        _chatInferenceGate = new SemaphoreSlim(chatLimit, chatLimit);
     }
     private async Task<LM> LoadModelWithProgressAsync(string id)
     {
@@ -136,6 +133,12 @@ public class LmModelManager : IDisposable
         {
             _chatLock.Release();
         }
+    }
+
+    public async ValueTask<IAsyncDisposable> AcquireChatInferenceAsync(CancellationToken ct = default)
+    {
+        await _chatInferenceGate.WaitAsync(ct);
+        return new SemaphoreLease(_chatInferenceGate);
     }
 
     public async Task<LM> GetVisionModelAsync(string? modelId = null)
@@ -247,5 +250,18 @@ public class LmModelManager : IDisposable
         _speechLock.Dispose();
         _rerankerLock.Dispose();
         _segmentationLock.Dispose();
+        _chatInferenceGate.Dispose();
+    }
+
+    private sealed class SemaphoreLease : IAsyncDisposable
+    {
+        private SemaphoreSlim? _semaphore;
+        public SemaphoreLease(SemaphoreSlim semaphore) => _semaphore = semaphore;
+
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Exchange(ref _semaphore, null)?.Release();
+            return ValueTask.CompletedTask;
+        }
     }
 }

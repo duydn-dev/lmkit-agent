@@ -8,7 +8,7 @@ using LmKitOmniApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
-using System.Security.Cryptography;
+using System.Security.Claims;
 using System.Threading.RateLimiting;
 using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.AI;
@@ -24,6 +24,9 @@ using Microsoft.Extensions.Caching.Distributed;
 using LmKitOmniApi.Infrastructure.Notifications;
 using LmKitOmniApi.Application.Jobs;
 using LmKitOmniApi.Application.Chat;
+using LmKitOmniApi.Infrastructure.AI.Tools;
+using LmKitOmniApi.Infrastructure.Security;
+using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,7 +35,9 @@ builder.Host.UseSerilog((context, configuration) =>
                  .WriteTo.Console());
 
 // Khởi tạo LM-Kit.NET License
-LMKit.Licensing.LicenseManager.SetLicenseKey("");
+var lmKitLicenseKey = builder.Configuration["LMKit:LicenseKey"];
+if (!string.IsNullOrWhiteSpace(lmKitLicenseKey))
+    LMKit.Licensing.LicenseManager.SetLicenseKey(lmKitLicenseKey);
 
 // Cấu hình giới hạn kích thước upload lớn
 builder.WebHost.ConfigureKestrel(options =>
@@ -48,6 +53,14 @@ builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<LmKitOmniApi.Infrastructure.Exceptions.GlobalExceptionHandler>();
 
 builder.Services.AddControllers();
+
+var dataProtectionKeyPath = builder.Configuration["DataProtection:KeyPath"]
+    ?? Path.Combine(builder.Environment.ContentRootPath, "App_Data", "DataProtectionKeys");
+Directory.CreateDirectory(dataProtectionKeyPath);
+builder.Services.AddDataProtection()
+    .SetApplicationName("LmKitOmniApi")
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyPath));
+builder.Services.AddSingleton<TaskApprovalPayloadProtector>();
 
 // Đăng ký CORS (đọc origins từ cấu hình, không hardcode)
 builder.Services.AddCors(options =>
@@ -87,6 +100,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         var jwtSettings = builder.Configuration.GetSection("JwtSettings");
+        var jwtSecret = jwtSettings["SecretKey"];
+        if (string.IsNullOrWhiteSpace(jwtSecret) || Encoding.UTF8.GetByteCount(jwtSecret) < 32)
+            throw new InvalidOperationException("JwtSettings:SecretKey must be configured with at least 32 bytes.");
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -95,7 +112,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             ValidIssuer = jwtSettings["Issuer"],
             ValidAudience = jwtSettings["Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["SecretKey"]!))
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+            NameClaimType = ClaimTypes.NameIdentifier,
+            RoleClaimType = "Role"
         };
         options.Events = new JwtBearerEvents
         {
@@ -147,10 +166,6 @@ builder.Services.AddHangfire(configuration => configuration
 builder.Services.AddHangfireServer();
 
 // Đăng ký Neo4j Driver
-var neo4jUri = builder.Configuration["GraphDb:Uri"] ?? "bolt://localhost:7687";
-var neo4jUser = builder.Configuration["GraphDb:Username"] ?? "neo4j";
-var neo4jPassword = builder.Configuration["GraphDb:Password"] ?? "neo4j";
-builder.Services.AddSingleton(Neo4j.Driver.GraphDatabase.Driver(neo4jUri, Neo4j.Driver.AuthTokens.Basic(neo4jUser, neo4jPassword)));
 
 // Đăng ký Telegram Proactive Agent
 builder.Services.Configure<TelegramSettings>(builder.Configuration.GetSection("TelegramSettings"));
@@ -160,9 +175,12 @@ builder.Services.AddScoped<ITelegramNotificationService, TelegramNotificationSer
 // 🛡️ AI Safety & Security Services (Phase 1)
 // ============================================================
 builder.Services.AddScoped<IPromptGuardService, PromptGuardService>();
-builder.Services.AddScoped<IToolPermissionService, ToolPermissionService>();
+// The rate window must survive individual HTTP request scopes.
+builder.Services.AddSingleton<IToolPermissionService, ToolPermissionService>();
 builder.Services.AddScoped<ToolSandboxService>();
+builder.Services.AddScoped<UserResourceAccessService>();
 builder.Services.AddScoped<IExecutionSandboxEngine, ExecutionSandboxEngine>();
+builder.Services.AddScoped<AgentToolGateway>();
 
 // Filter Pipeline (ordered execution)
 builder.Services.AddScoped<IAgentFilter, InputSanitizationFilter>();
@@ -174,7 +192,6 @@ builder.Services.AddScoped<AgentFilterPipeline>();
 // ============================================================
 builder.Services.AddScoped<IAgentMemoryService, AgentMemoryService>();
 builder.Services.AddScoped<ITokenManagementService, TokenManagementService>();
-builder.Services.AddScoped<IGraphKnowledgeService, GraphKnowledgeService>();
 builder.Services.AddScoped<ISentimentAnalyzerService, SentimentAnalyzerService>();
 
 // ============================================================
@@ -196,7 +213,6 @@ builder.Services.AddScoped<ISpecializedAgent, LmKitOmniApi.Infrastructure.AI.Age
 builder.Services.AddScoped<ISpecializedAgent, LmKitOmniApi.Infrastructure.AI.Agents.AnalysisAgent>();
 builder.Services.AddScoped<ISpecializedAgent, LmKitOmniApi.Infrastructure.AI.Agents.VisionAgent>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Agents.MultiAgentOrchestrator>();
-builder.Services.AddScoped<DagWorkflowOrchestrator>();
 
 // ============================================================
 // 📎 Chat + File Attachment (Phase 5)
@@ -223,32 +239,40 @@ else
 }
 
 // 2. Cấu hình OpenTelemetry
+var otlpEnabled = !string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource.AddService("LmKitOmniApi"))
-    .WithMetrics(metrics => metrics
-        .AddAspNetCoreInstrumentation()
-        .AddHttpClientInstrumentation()
-        .AddMeter("LmKitOmniApi.AgentMetrics")
-        .AddPrometheusExporter())
-    .WithTracing(tracing => tracing
-        .AddAspNetCoreInstrumentation()
-        .AddHttpClientInstrumentation()
-        .AddSource("LmKitOmniApi.Agent"));
+    .WithMetrics(metrics =>
+    {
+        metrics.AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddMeter("LmKitOmniApi.AgentMetrics")
+            .AddPrometheusExporter();
+        if (otlpEnabled) metrics.AddOtlpExporter();
+    })
+    .WithTracing(tracing =>
+    {
+        tracing.AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddSource("LmKitOmniApi.Agent");
+        if (otlpEnabled) tracing.AddOtlpExporter();
+    });
 
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Observability.AgentTelemetryService>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Observability.AgentToolAuditService>();
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Resilience.AgentResiliencePolicy>();
 
 // ============================================================
 // 🔗 MCP Integration (Phase 7)
 // ============================================================
 builder.Services.AddHttpClient("MCP");
-builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Mcp.McpClientService>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.McpClientService>();
 
 // ============================================================
 // 📋 Skill Registry & Prompt Templates
 // ============================================================
-builder.Services.AddScoped<AgentSkillRegistry>();
 builder.Services.AddSingleton<PromptTemplateEngine>();
+builder.Services.AddSingleton<LmKitDefaultToolCatalog>();
 
 // Đăng ký Agent Orchestrator (FULLY INTEGRATED — all services wired)
 builder.Services.AddScoped<IAgentOrchestrator, AgentOrchestrator>();
@@ -260,7 +284,9 @@ builder.Services.AddScoped<IOfficeDocumentToolService, LmKitOmniApi.Infrastructu
 // ============================================================
 // 🏥 Health Checks
 // ============================================================
-builder.Services.AddHealthChecks();
+builder.Services.AddHealthChecks()
+    .AddCheck<LmKitOmniApi.Infrastructure.Health.PostgresHealthCheck>("postgres", tags: ["ready"])
+    .AddCheck<LmKitOmniApi.Infrastructure.Health.QdrantHealthCheck>("qdrant", tags: ["ready"]);
 
 // ============================================================
 // 🚦 Rate Limiting (bảo vệ tài nguyên LLM đắt đỏ)
@@ -296,12 +322,17 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
-// Database Migration - Bỏ Migrate() tự động trong code API để tránh lock table trên cluster
-// Hãy chạy dotnet ef database update trong CI/CD hoặc Init Container
-using (var scope = app.Services.CreateScope())
+// Bootstrap is explicit. Production must provision the first administrator via
+// secret-backed configuration or an external identity workflow.
+if (builder.Configuration.GetValue<bool>("BootstrapAdmin:Enabled"))
 {
+    var bootstrapEmail = builder.Configuration["BootstrapAdmin:Email"];
+    var bootstrapPassword = builder.Configuration["BootstrapAdmin:Password"];
+    if (string.IsNullOrWhiteSpace(bootstrapEmail) || string.IsNullOrWhiteSpace(bootstrapPassword))
+        throw new InvalidOperationException("BootstrapAdmin is enabled but Email/Password is missing.");
+
+    using var scope = app.Services.CreateScope();
     var dbContext = scope.ServiceProvider.GetRequiredService<LmKitOmniApi.Infrastructure.Data.HermesDbContext>();
-    // Data Seeding — tạo tài khoản admin với mật khẩu ngẫu nhiên an toàn
     if (!dbContext.Tenants.Any())
     {
         var tenant = new Tenant { Name = "Default Tenant" };
@@ -310,49 +341,26 @@ using (var scope = app.Services.CreateScope())
 
         if (!dbContext.Users.Any())
         {
-            // Sinh mật khẩu ngẫu nhiên 16 ký tự thay vì dùng "admin"
-            var randomPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(12));
             var adminUser = new User
             {
                 Username = "admin",
-                Email = "admin@lmkit.net",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword(randomPassword),
+                Email = bootstrapEmail,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(bootstrapPassword),
                 FullName = "Admin User",
                 Role = "Admin",
                 TenantId = tenant.Id
             };
             dbContext.Users.Add(adminUser);
             dbContext.SaveChanges();
-
-            // In mật khẩu ra console để admin biết — chỉ hiển thị 1 lần duy nhất
-            Console.WriteLine("============================================");
-            Console.WriteLine($"  ADMIN ACCOUNT CREATED");
-            Console.WriteLine($"  Username: admin");
-            Console.WriteLine($"  Password: {randomPassword}");
-            Console.WriteLine($"  ⚠️  PLEASE CHANGE THIS PASSWORD IMMEDIATELY");
-            Console.WriteLine("============================================");
+            app.Logger.LogWarning("Bootstrap administrator {Email} was created; disable BootstrapAdmin immediately.", bootstrapEmail);
         }
     }
 }
 
-// Cấu hình Hangfire Recurring Jobs (Proactive Agent & Model Distillation)
-RecurringJob.AddOrUpdate<ProactiveMonitorJob>(
-    "proactive-monitor-job",
-    job => job.RunMonitorAsync(CancellationToken.None),
-    "*/30 * * * *" // Chạy định kỳ mỗi 30 phút
-);
-
-RecurringJob.AddOrUpdate<ContinuousFineTuningJob>(
-    "nightly-lora-finetuning-job",
-    job => job.RunNightlyFineTuningAsync(CancellationToken.None),
-    "0 2 * * *" // Chạy vào lúc 2:00 AM mỗi ngày
-);
-
-RecurringJob.AddOrUpdate<ReflexionJob>(
-    "nightly-reflexion-job",
-    job => job.RunReflexionAsync(CancellationToken.None),
-    "30 2 * * *" // Chạy vào lúc 2:30 AM mỗi ngày
-);
+if (builder.Configuration.GetValue<bool>("AgentJobs:ProactiveMonitorEnabled"))
+    RecurringJob.AddOrUpdate<ProactiveMonitorJob>("proactive-monitor-job", job => job.RunMonitorAsync(CancellationToken.None), "*/30 * * * *");
+else
+    RecurringJob.RemoveIfExists("proactive-monitor-job");
 
 if (app.Environment.IsDevelopment())
 {
@@ -382,6 +390,17 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 });
 
 // Kích hoạt Prometheus Scrape Endpoint cho OpenTelemetry
+app.UseWhen(
+    context => context.Request.Path.Equals("/metrics", StringComparison.OrdinalIgnoreCase),
+    metricsApp => metricsApp.Use(async (context, next) =>
+    {
+        if (context.User.Identity?.IsAuthenticated != true || !context.User.IsInRole("Admin"))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
+        await next(context);
+    }));
 app.UseOpenTelemetryPrometheusScrapingEndpoint();
 
 app.MapControllers();

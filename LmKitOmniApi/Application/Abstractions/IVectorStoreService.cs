@@ -11,7 +11,15 @@ public interface IVectorStoreService
 {
     Task UpsertVectorAsync(string collectionName, Guid id, float[] vector, Dictionary<string, object>? payload = null);
     Task<List<VectorSearchResult>> SearchSimilarAsync(string collectionName, float[] queryVector, int topK);
+    Task<List<VectorSearchResult>> SearchSimilarWithAnyPayloadAsync(
+        string collectionName,
+        float[] queryVector,
+        string payloadField,
+        IReadOnlyList<string> allowedValues,
+        int topK,
+        CancellationToken ct = default);
     Task EnsureCollectionExistsAsync(string collectionName, ulong vectorSize);
+    Task DeleteVectorsAsync(string collectionName, IReadOnlyList<Guid> ids, CancellationToken ct = default);
 
     /// <summary>
     /// H3 Fix: Search by payload keyword filter — independent of vector similarity.

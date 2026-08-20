@@ -9,7 +9,8 @@ public interface IAgentMemoryService
 {
     /// <summary>Store a new memory or update an existing one.</summary>
     Task<Guid> StoreMemoryAsync(Guid tenantId, Guid? userId, string memoryType, string key, string value, 
-        string? sourceContext = null, float confidence = 0.5f, DateTime? expiresAt = null, CancellationToken ct = default);
+        string? sourceContext = null, float confidence = 0.5f, DateTime? expiresAt = null,
+        bool isConfirmed = false, CancellationToken ct = default);
 
     /// <summary>Recall relevant memories for a given query.</summary>
     Task<List<MemoryRecallResult>> RecallMemoriesAsync(Guid tenantId, Guid? userId, string query, int maxResults = 5, CancellationToken ct = default);
@@ -22,6 +23,9 @@ public interface IAgentMemoryService
     
     /// <summary>Clean up expired memories.</summary>
     Task CleanupExpiredMemoriesAsync(CancellationToken ct = default);
+
+    /// <summary>Delete one memory owned by the tenant/user and its vector representation.</summary>
+    Task<bool> DeleteMemoryAsync(Guid tenantId, Guid? userId, Guid memoryId, CancellationToken ct = default);
 }
 
 public class MemoryRecallResult

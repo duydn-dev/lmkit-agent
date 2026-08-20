@@ -1,4 +1,4 @@
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5032';
+const BASE_URL = import.meta.env.VITE_API_URL || '';
 
 class Http {
   private prepareHeaders(headers: HeadersInit = {}, isFormData: boolean = false): HeadersInit {

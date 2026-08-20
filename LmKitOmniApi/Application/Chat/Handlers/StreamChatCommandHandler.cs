@@ -45,9 +45,19 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         var model = await _modelManager.GetChatModelAsync(request.ModelId);
         
         var session = await _dbContext.ChatSessions
-            .FirstOrDefaultAsync(s => s.Id == request.SessionId && s.TenantId == request.TenantId, cancellationToken);
+            .FirstOrDefaultAsync(s => s.Id == request.SessionId
+                && s.TenantId == request.TenantId
+                && s.UserId == request.UserId,
+                cancellationToken);
         
         if (session == null) throw new UnauthorizedAccessException("Chat Session not found or access denied.");
+
+        var storedRole = await _dbContext.Users
+            .Where(user => user.Id == request.UserId && user.TenantId == request.TenantId && user.IsActive)
+            .Select(user => user.Role)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (storedRole is null) throw new UnauthorizedAccessException("User is inactive or access was revoked.");
+        var agentRole = storedRole.Equals("Admin", StringComparison.OrdinalIgnoreCase) ? "Admin" : "User";
 
         var cacheKey = $"ChatHistory:{request.SessionId}";
         List<HistoryMessage>? historyMessages = null;
@@ -121,7 +131,7 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
 
         var fullResponseBuilder = new System.Text.StringBuilder();
 
-        await foreach (var text in _orchestrator.StreamProcessQueryAsync(session.TenantId, session.Id, request.UserId, request.Message, history, cancellationToken))
+        await foreach (var text in _orchestrator.StreamProcessQueryAsync(session.TenantId, session.Id, request.UserId, agentRole, request.Message, history, cancellationToken))
         {
             fullResponseBuilder.Append(text);
             yield return text;

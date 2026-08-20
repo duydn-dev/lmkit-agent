@@ -2,28 +2,36 @@ using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using LmKitOmniApi.Application.Speech.Commands;
 using LmKitOmniApi.Models;
+using LmKitOmniApi.Infrastructure.AI.Security;
+using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
 
 namespace LmKitOmniApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class SpeechController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly UserResourceAccessService _resources;
 
-    public SpeechController(IMediator mediator)
+    public SpeechController(IMediator mediator, UserResourceAccessService resources)
     {
         _mediator = mediator;
+        _resources = resources;
     }
 
     [HttpPost("transcribe")]
     public async Task<IActionResult> TranscribeAudio([FromBody] SpeechTranscriptionRequest request)
     {
+        var path = ValidateOwnedPath(request.AudioPath);
+        if (!path.IsAllowed) return BadRequest(path.DenialReason);
         try
         {
             var command = new TranscribeAudioCommand
             {
-                AudioPath = request.AudioPath,
+                AudioPath = path.SanitizedPath,
                 EnableVad = request.EnableVad
             };
 
@@ -35,13 +43,13 @@ public class SpeechController : ControllerBase
                 Duration = result.DurationSeconds
             });
         }
-        catch (FileNotFoundException ex)
+        catch (FileNotFoundException)
         {
-            return BadRequest(ex.Message);
+            return BadRequest("The requested audio file was not found.");
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return StatusCode(500, $"Internal server error: {ex.Message}");
+            return Problem(statusCode: 500, title: "Audio transcription failed.");
         }
     }
 
@@ -50,10 +58,12 @@ public class SpeechController : ControllerBase
     {
         if (string.IsNullOrEmpty(request.AudioPath))
             return BadRequest("AudioPath cannot be empty.");
+        var path = ValidateOwnedPath(request.AudioPath);
+        if (!path.IsAllowed) return BadRequest(path.DenialReason);
 
         try
         {
-            var command = new DetectAudioLanguageCommand { AudioPath = request.AudioPath };
+            var command = new DetectAudioLanguageCommand { AudioPath = path.SanitizedPath };
             var result = await _mediator.Send(command);
 
             return Ok(new AudioLanguageDetectionResponse 
@@ -62,19 +72,26 @@ public class SpeechController : ControllerBase
                 Confidence = result.Confidence
             });
         }
-        catch (FileNotFoundException ex)
+        catch (FileNotFoundException)
         {
-            return NotFound(ex.Message);
+            return NotFound("The requested audio file was not found.");
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return StatusCode(500, $"Internal server error: {ex.Message}");
+            return Problem(statusCode: 500, title: "Audio language detection failed.");
         }
     }
 
     [HttpGet("token")]
-    public IActionResult GetLiveKitToken([FromServices] IConfiguration config, [FromQuery] string room = "omni-room", [FromQuery] string participant = "user-123")
+    public IActionResult GetLiveKitToken([FromServices] IConfiguration config, [FromQuery] string room = "omni-room")
     {
+        if (string.IsNullOrWhiteSpace(room) || room.Length > 100)
+            return BadRequest("Room must contain between 1 and 100 characters.");
+
+        if (!Guid.TryParse(User.FindFirst("TenantId")?.Value, out var tenantId)
+            || !Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+            return Unauthorized();
+
         var apiKey = config["LiveKit:ApiKey"];
         var apiSecret = config["LiveKit:ApiSecret"];
 
@@ -93,12 +110,17 @@ public class SpeechController : ControllerBase
             expires: DateTime.UtcNow.AddHours(2)
         );
 
-        payload.AddClaim(new System.Security.Claims.Claim(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub, participant));
+        var safeRoom = System.Text.RegularExpressions.Regex.Replace(room, "[^a-zA-Z0-9_-]+", "-").Trim('-');
+        if (safeRoom.Length == 0) return BadRequest("Room contains no supported characters.");
+        var scopedRoom = $"{tenantId:N}-{safeRoom}";
+        payload.AddClaim(new System.Security.Claims.Claim(
+            System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub,
+            userId.ToString("N")));
         
         var videoClaim = new Dictionary<string, object>
         {
             { "roomJoin", true },
-            { "room", room }
+            { "room", scopedRoom }
         };
         payload.Add("video", videoClaim);
 
@@ -106,5 +128,13 @@ public class SpeechController : ControllerBase
         var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
         
         return Ok(new { token = tokenHandler.WriteToken(token) });
+    }
+
+    private PathValidationResult ValidateOwnedPath(string path)
+    {
+        if (!Guid.TryParse(User.FindFirst("TenantId")?.Value, out var tenantId)
+            || !Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+            return PathValidationResult.Deny("Authenticated tenant/user identity is missing.");
+        return _resources.ValidateOwnedPath(tenantId, userId, path);
     }
 }

@@ -11,6 +11,8 @@ public sealed class AuditLog
 
     public Guid? ActorUserId { get; set; }
 
+    public Guid? TenantId { get; set; }
+
     [MaxLength(50)]
     public string ActorType { get; set; } = "system";
 

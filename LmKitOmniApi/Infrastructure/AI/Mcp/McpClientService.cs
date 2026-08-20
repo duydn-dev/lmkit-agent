@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Domain.Entities;
+using LmKitOmniApi.Infrastructure.AI.Security;
 
 namespace LmKitOmniApi.Infrastructure.AI.Mcp;
 
@@ -17,6 +18,7 @@ public class McpClientService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<McpClientService> _logger;
+    private readonly ToolSandboxService _sandbox;
 
     // Cache discovered tools from MCP servers per Tenant
     private readonly Dictionary<Guid, Dictionary<string, List<McpToolDefinition>>> _cachedTools = new();
@@ -27,10 +29,12 @@ public class McpClientService
     public McpClientService(
         IHttpClientFactory httpClientFactory,
         IServiceScopeFactory scopeFactory,
+        ToolSandboxService sandbox,
         ILogger<McpClientService> logger)
     {
         _httpClientFactory = httpClientFactory;
         _scopeFactory = scopeFactory;
+        _sandbox = sandbox;
         _logger = logger;
     }
 
@@ -133,6 +137,10 @@ public class McpClientService
 
         try
         {
+            var urlValidation = await _sandbox.ValidateUrlAsync(server.Url, ct);
+            if (!urlValidation.IsAllowed)
+                return McpInvocationResult.Fail(urlValidation.DenialReason ?? "MCP server URL was blocked.");
+
             var client = _httpClientFactory.CreateClient("MCP");
             client.BaseAddress = new Uri(server.Url);
             client.Timeout = TimeSpan.FromSeconds(30);
@@ -155,15 +163,14 @@ public class McpClientService
             }
             else
             {
-                var errorBody = await response.Content.ReadAsStringAsync(ct);
-                _logger.LogWarning("🔗 [MCP] Tool '{Tool}' invocation failed: {Status} {Body}", toolName, response.StatusCode, errorBody);
-                return McpInvocationResult.Fail($"HTTP {response.StatusCode}: {errorBody}");
+                _logger.LogWarning("🔗 [MCP] Tool '{Tool}' invocation failed with HTTP {Status}", toolName, response.StatusCode);
+                return McpInvocationResult.Fail($"MCP server returned HTTP {(int)response.StatusCode}.");
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "🔗 [MCP] Error invoking tool '{Tool}'", toolName);
-            return McpInvocationResult.Fail(ex.Message);
+            return McpInvocationResult.Fail("MCP invocation failed.");
         }
     }
 
@@ -191,6 +198,10 @@ public class McpClientService
 
     private async Task<List<McpToolDefinition>> DiscoverToolsFromServerAsync(ExternalMcpServer server, CancellationToken ct)
     {
+        var urlValidation = await _sandbox.ValidateUrlAsync(server.Url, ct);
+        if (!urlValidation.IsAllowed)
+            throw new InvalidOperationException(urlValidation.DenialReason ?? "MCP server URL was blocked.");
+
         var client = _httpClientFactory.CreateClient("MCP");
         client.BaseAddress = new Uri(server.Url);
         client.Timeout = TimeSpan.FromSeconds(10);

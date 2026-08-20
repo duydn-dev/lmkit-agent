@@ -7,16 +7,18 @@ services:
       - "5032:5000"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - PostgreSql=Server=postgres;Port=5432;Database=LmKitAgent;Username=postgres;Password=${POSTGRES_PASSWORD};
+      - PostgreSql=Server=postgres;Port=5432;Database=LmKitAgent;Username=postgres;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD};
       - VectorStore__BaseUrl=http://qdrant:6334
-      - JwtSettings__SecretKey=${JWT_SECRET_KEY}
+      - JwtSettings__SecretKey=${JWT_SECRET_KEY:?Set JWT_SECRET_KEY}
       - Cors__AllowedOrigins__0=${CORS_ORIGIN:-http://localhost:5173}
       - ConnectionStrings__Redis=${REDIS_CONNECTION_STRING:-redis:6379}
-      - TelegramSettings__BotToken=${TELEGRAM_BOT_TOKEN}
-      - TelegramSettings__ChatId=${TELEGRAM_CHAT_ID}
-      - GraphDb__Uri=bolt://neo4j:7687
-      - GraphDb__Username=neo4j
-      - GraphDb__Password=${POSTGRES_PASSWORD}
+      - TelegramSettings__BotToken=${TELEGRAM_BOT_TOKEN:-}
+      - TelegramSettings__ChatId=${TELEGRAM_CHAT_ID:-}
+      - LMKit__LicenseKey=${LMKIT_LICENSE_KEY:-}
+      - LiveKit__ApiKey=${LIVEKIT_API_KEY:-}
+      - LiveKit__ApiSecret=${LIVEKIT_API_SECRET:-}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - DataProtection__KeyPath=/var/lib/lmkit/keys
     depends_on:
       postgres:
         condition: service_healthy
@@ -25,16 +27,18 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
-          cpus: "2.0"
+          memory: 12G
+          cpus: "4.0"
     restart: unless-stopped
+    volumes:
+      - dataprotectionkeys:/var/lib/lmkit/keys
 
   postgres:
     image: postgres:17-alpine
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
       - POSTGRES_DB=LmKitAgent
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -60,20 +64,10 @@ services:
       - "6379:6379"
     restart: unless-stopped
 
-  neo4j:
-    image: neo4j:5.20.0
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    environment:
-      - NEO4J_AUTH=neo4j/${POSTGRES_PASSWORD}
-    volumes:
-      - neo4jdata:/data
-    restart: unless-stopped
-
   livekit:
     image: livekit/livekit-server:latest
-    command: --dev
+    profiles: ["development"]
+    command: --dev --bind 0.0.0.0
     ports:
       - "7880:7880"
       - "7881:7881"
@@ -93,4 +87,4 @@ services:
 volumes:
   pgdata:
   qdrantdata:
-  neo4jdata:
+  dataprotectionkeys:

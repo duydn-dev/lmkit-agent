@@ -107,6 +107,55 @@ public class AgentResiliencePolicy
         return result;
     }
 
+    /// <summary>
+    /// Execute a required operation. Unlike the fallback overload, this method
+    /// throws after retries or when the circuit is open so callers cannot mark a
+    /// failed side effect as completed.
+    /// </summary>
+    public async Task<T> ExecuteRequiredWithResilienceAsync<T>(
+        string toolName,
+        Func<CancellationToken, Task<T>> action,
+        CancellationToken ct = default)
+    {
+        if (await IsCircuitOpenAsync(toolName, ct))
+            throw new InvalidOperationException($"Circuit breaker is open for tool '{toolName}'.");
+
+        Exception? lastException = null;
+        for (var attempt = 1; attempt <= MaxRetries; attempt++)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(DefaultToolTimeout);
+                var result = await action(cts.Token);
+                await RecordSuccessAsync(toolName, ct);
+                return result;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                lastException = new TimeoutException(
+                    $"Tool '{toolName}' timed out after {DefaultToolTimeout.TotalSeconds}s.");
+                await RecordFailureAsync(toolName, ct);
+            }
+            catch (Exception ex)
+            {
+                lastException = ex;
+                await RecordFailureAsync(toolName, ct);
+            }
+
+            if (attempt < MaxRetries)
+            {
+                var delay = TimeSpan.FromMilliseconds(
+                    InitialRetryDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
+                await Task.Delay(delay, ct);
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Tool '{toolName}' failed after {MaxRetries} attempts.",
+            lastException);
+    }
+
     private async Task<bool> IsCircuitOpenAsync(string toolName, CancellationToken ct)
     {
         var cacheKey = $"cb_state:{toolName}";

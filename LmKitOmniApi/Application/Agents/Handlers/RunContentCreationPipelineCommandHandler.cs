@@ -3,16 +3,28 @@ using LMKit.Agents;
 using LMKit.Agents.Orchestration;
 using LmKitOmniApi.Application.Agents.Commands;
 using LmKitOmniApi.Services;
+using LmKitOmniApi.Application.Abstractions;
+using LmKitOmniApi.Infrastructure.AI.Tools;
 
 namespace LmKitOmniApi.Application.Agents.Handlers;
 
 public class RunContentCreationPipelineCommandHandler : IRequestHandler<RunContentCreationPipelineCommand, RunContentCreationPipelineResult>
 {
     private readonly LmModelManager _modelManager;
+    private readonly IRagPipelineService _ragService;
+    private readonly IWebSearchService _webSearch;
+    private readonly AgentToolGateway _toolGateway;
 
-    public RunContentCreationPipelineCommandHandler(LmModelManager modelManager)
+    public RunContentCreationPipelineCommandHandler(
+        LmModelManager modelManager,
+        IRagPipelineService ragService,
+        IWebSearchService webSearch,
+        AgentToolGateway toolGateway)
     {
         _modelManager = modelManager;
+        _ragService = ragService;
+        _webSearch = webSearch;
+        _toolGateway = toolGateway;
     }
 
     public async Task<RunContentCreationPipelineResult> Handle(RunContentCreationPipelineCommand request, CancellationToken cancellationToken)
@@ -36,8 +48,44 @@ Include: A compelling title, Introduction, 3-5 main sections, Key points, Conclu
             .Build();
 
         var factCheckerAgent = Agent.CreateBuilder(model)
-            .WithPersona(@"FactChecker - You are a Fact-Checker. Review content for accuracy, add qualifiers or disclaimers if needed. Output final content.")
-            .WithPlanning(PlanningStrategy.None)
+            .WithPersona(@"FactChecker - Verify factual claims against the supplied internal knowledge and current web evidence. Cite the evidence returned by tools, clearly label uncertainty, and never invent a source. Output final content.")
+            .WithPlanning(PlanningStrategy.ReAct)
+            .WithTools(tools =>
+            {
+                tools.Register(new DelegatedActionTool(
+                    "query_internal_knowledge",
+                    "Retrieve tenant-scoped internal evidence for fact checking.",
+                    async (query, ct) =>
+                    {
+                        var execution = await _toolGateway.ExecuteReadOnlyAsync(
+                            request.TenantId,
+                            request.UserId,
+                            request.UserRole,
+                            "QueryKnowledgeBase",
+                            query,
+                            _ => _ragService.QueryKnowledgeBaseAsync(request.TenantId, query, topK: 5),
+                            ct);
+                        if (!execution.IsSuccess) throw new InvalidOperationException(execution.ErrorMessage);
+                        return execution.Output;
+                    }));
+                tools.Register(new DelegatedActionTool(
+                    "search_current_web",
+                    "Search current web evidence and return source URLs.",
+                    async (query, ct) =>
+                    {
+                        var execution = await _toolGateway.ExecuteReadOnlyAsync(
+                            request.TenantId,
+                            request.UserId,
+                            request.UserRole,
+                            "SearchWeb",
+                            query,
+                            _ => _webSearch.SearchWebAsync(query, count: 5),
+                            ct);
+                        if (!execution.IsSuccess) throw new InvalidOperationException(execution.ErrorMessage);
+                        return execution.Output;
+                    }));
+            })
+            .WithMaxIterations(6)
             .Build();
 
         var pipeline = new PipelineOrchestrator()

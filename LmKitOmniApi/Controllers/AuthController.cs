@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using LmKitOmniApi.Infrastructure.Data;
+using LmKitOmniApi.Infrastructure.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -104,8 +105,8 @@ public class AuthController : ControllerBase
         _logger.LogInformation("Successful login for {Email} from IP {IP}", request.Email, ipAddress);
 
         var token = GenerateJwtToken(user);
-        var refreshToken = GenerateRefreshToken();
-        user.RefreshToken = refreshToken;
+        var refreshToken = RefreshTokenProtector.Generate();
+        user.RefreshToken = RefreshTokenProtector.Hash(refreshToken);
         user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
         await _dbContext.SaveChangesAsync();
 
@@ -165,16 +166,17 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Không tìm thấy Refresh Token." });
         }
 
-        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.RefreshToken == refreshToken);
+        var refreshTokenHash = RefreshTokenProtector.Hash(refreshToken);
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.RefreshToken == refreshTokenHash);
         if (user == null || user.RefreshTokenExpiryTime <= DateTime.UtcNow || !user.IsActive)
         {
             return Unauthorized(new { message = "Refresh Token không hợp lệ hoặc đã hết hạn." });
         }
 
         var newJwtToken = GenerateJwtToken(user);
-        var newRefreshToken = GenerateRefreshToken();
+        var newRefreshToken = RefreshTokenProtector.Generate();
 
-        user.RefreshToken = newRefreshToken;
+        user.RefreshToken = RefreshTokenProtector.Hash(newRefreshToken);
         user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
         await _dbContext.SaveChangesAsync();
 
@@ -248,13 +250,6 @@ public class AuthController : ControllerBase
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
-    private string GenerateRefreshToken()
-    {
-        var randomNumber = new byte[32];
-        using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
-        rng.GetBytes(randomNumber);
-        return Convert.ToBase64String(randomNumber);
-    }
 }
 
 public class LoginRequest

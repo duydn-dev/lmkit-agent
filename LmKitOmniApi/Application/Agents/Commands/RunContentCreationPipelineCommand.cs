@@ -5,6 +5,9 @@ namespace LmKitOmniApi.Application.Agents.Commands;
 public class RunContentCreationPipelineCommand : IRequest<RunContentCreationPipelineResult>
 {
     public string Topic { get; set; } = string.Empty;
+    public Guid TenantId { get; set; }
+    public Guid UserId { get; set; }
+    public string UserRole { get; set; } = "User";
 }
 
 public class RunContentCreationPipelineResult
