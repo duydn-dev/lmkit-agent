@@ -21,6 +21,8 @@ public sealed class ApiIntegrationTests : IClassFixture<LmKitApiFactory>
 {
     private static readonly Guid OwnMemoryId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
     private static readonly Guid OtherMemoryId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+    private static readonly Guid OwnApprovalId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+    private static readonly Guid OtherApprovalId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
     private readonly LmKitApiFactory _factory;
 
     public ApiIntegrationTests(LmKitApiFactory factory)
@@ -84,6 +86,35 @@ public sealed class ApiIntegrationTests : IClassFixture<LmKitApiFactory>
         Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
         Assert.True(limited.Headers.TryGetValues("Retry-After", out var retryAfter));
         Assert.True(int.TryParse(Assert.Single(retryAfter), out var seconds) && seconds > 0);
+    }
+
+    [Fact]
+    public async Task RejectApproval_IsOwnerScopedAndCanResolveOnlyOnce()
+    {
+        using var client = await CreateAuthenticatedClientAsync();
+        var rejection = new { comment = "Integration rejection" };
+
+        var crossTenant = await client.PostAsJsonAsync(
+            $"/api/TaskApproval/{OtherApprovalId}/reject",
+            rejection);
+        var own = await client.PostAsJsonAsync(
+            $"/api/TaskApproval/{OwnApprovalId}/reject",
+            rejection);
+        var repeated = await client.PostAsJsonAsync(
+            $"/api/TaskApproval/{OwnApprovalId}/reject",
+            rejection);
+        var body = await own.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(HttpStatusCode.NotFound, crossTenant.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, own.StatusCode);
+        Assert.True(body.GetProperty("success").GetBoolean());
+        Assert.Equal(HttpStatusCode.NotFound, repeated.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
+        var approval = await db.TaskApprovals.AsNoTracking().SingleAsync(item => item.Id == OwnApprovalId);
+        Assert.Equal("Rejected", approval.Status);
+        Assert.Equal("Integration rejection", approval.RejectionComment);
     }
 
     private async Task<HttpClient> CreateAuthenticatedClientAsync()
@@ -199,6 +230,11 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
                     Role = "Admin",
                     PasswordHash = BCrypt.Net.BCrypt.HashPassword("Other-2026!")
                 });
+            var ownSessionId = Guid.Parse("55555555-5555-5555-5555-555555555555");
+            var otherSessionId = Guid.Parse("66666666-6666-6666-6666-666666666666");
+            db.ChatSessions.AddRange(
+                new ChatSession { Id = ownSessionId, TenantId = TenantId, UserId = UserId, Title = "Own session" },
+                new ChatSession { Id = otherSessionId, TenantId = otherTenantId, UserId = otherUserId, Title = "Other session" });
             db.AgentMemories.AddRange(
                 new AgentMemory
                 {
@@ -219,6 +255,25 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
                     MemoryKey = "other",
                     MemoryValue = "Other tenant memory",
                     IsConfirmed = false
+                });
+            db.TaskApprovals.AddRange(
+                new TaskApproval
+                {
+                    Id = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                    TenantId = TenantId,
+                    UserId = UserId,
+                    ChatSessionId = ownSessionId,
+                    ActionName = "TEST_ACTION",
+                    ParametersJson = "unused"
+                },
+                new TaskApproval
+                {
+                    Id = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+                    TenantId = otherTenantId,
+                    UserId = otherUserId,
+                    ChatSessionId = otherSessionId,
+                    ActionName = "TEST_ACTION",
+                    ParametersJson = "unused"
                 });
             db.SaveChanges();
             _seeded = true;

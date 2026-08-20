@@ -71,11 +71,12 @@
                 <div class="text-xs text-orange-700 mb-3 leading-snug">
                   Agent cần sự cho phép của bạn để tiếp tục.
                 </div>
+                <div v-if="msg.hitlError" class="text-xs text-red-700 mb-2" role="alert">{{ msg.hitlError }}</div>
                 <div class="flex gap-2" v-if="!msg.hitlResolved">
-                  <button @click="approveTask(msg)" class="flex-1 px-2 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium rounded transition-colors">
+                  <button @click="approveTask(msg)" :disabled="msg.hitlBusy" class="flex-1 px-2 py-1.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-xs font-medium rounded transition-colors">
                     Phê duyệt
                   </button>
-                  <button @click="rejectTask(msg)" class="flex-1 px-2 py-1.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs font-medium rounded transition-colors">
+                  <button @click="rejectTask(msg)" :disabled="msg.hitlBusy" class="flex-1 px-2 py-1.5 bg-white hover:bg-gray-50 disabled:opacity-50 text-gray-700 border border-gray-300 text-xs font-medium rounded transition-colors">
                     Từ chối
                   </button>
                 </div>
@@ -130,6 +131,8 @@ interface Message {
   thinkingSteps?: string[];
   hitlTaskId?: string;
   hitlResolved?: string;
+  hitlBusy?: boolean;
+  hitlError?: string;
 }
 
 const inputMessage = ref('');
@@ -274,33 +277,42 @@ onMounted(() => {
 });
 
 const approveTask = async (msg: any) => {
+  msg.hitlBusy = true;
+  msg.hitlError = undefined;
   try {
-    msg.hitlResolved = 'Approved';
     const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/approve`);
-    if (res.ok) {
-      const result = await res.json();
-      messages.value.push({
-        role: 'system',
-        content: `Đã phê duyệt. Kết quả: ${result.Result}`
-      });
-      inputMessage.value = `Tôi đã phê duyệt hành động trên. Kết quả thực thi là: ${result.Result}. Vui lòng tiếp tục.`;
-      await sendMessage();
-    }
+    if (!res.ok) throw new Error(`Phê duyệt thất bại (${res.status}).`);
+    const response = await res.json();
+    const result = typeof response.result === 'string' ? response.result : '';
+    msg.hitlResolved = 'Approved';
+    messages.value.push({
+      role: 'system',
+      content: `Đã phê duyệt. Kết quả: ${result}`
+    });
+    inputMessage.value = `Tôi đã phê duyệt hành động trên. Kết quả thực thi là: ${result}. Vui lòng tiếp tục.`;
+    await sendMessage();
   } catch (error) {
-    console.error('Failed to approve task', error);
+    msg.hitlError = error instanceof Error ? error.message : 'Không thể phê duyệt thao tác.';
+  } finally {
+    msg.hitlBusy = false;
   }
 };
 
 const rejectTask = async (msg: any) => {
+  msg.hitlBusy = true;
+  msg.hitlError = undefined;
   try {
+    const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/reject`, { Comment: "User rejected" });
+    if (!res.ok) throw new Error(`Từ chối thất bại (${res.status}).`);
     msg.hitlResolved = 'Rejected';
-    await http.post(`/api/TaskApproval/${msg.hitlTaskId}/reject`, { Comment: "User rejected" });
     messages.value.push({
       role: 'system',
       content: `Đã từ chối hành động.`
     });
   } catch (error) {
-    console.error('Failed to reject task', error);
+    msg.hitlError = error instanceof Error ? error.message : 'Không thể từ chối thao tác.';
+  } finally {
+    msg.hitlBusy = false;
   }
 };
 </script>

@@ -26,10 +26,9 @@
               <div class="bg-white text-gray-900 px-5 py-3 rounded-3xl rounded-tr-sm shadow-sm">
                 <div class="text-base font-medium whitespace-pre-wrap break-words">{{ getCleanUserContent(msg.content) }}</div>
               </div>
-              <!-- User Action Buttons -->
+              <!-- User Action -->
               <div class="flex items-center gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-500">
-                <button class="p-1 hover:text-gray-900 transition-colors" title="Copy"><i class="pi pi-copy text-sm"></i></button>
-                <button class="p-1 hover:text-gray-900 transition-colors" title="Edit"><i class="pi pi-pencil text-sm"></i></button>
+                <button @click="copyMessage(getCleanUserContent(msg.content))" class="p-1 hover:text-gray-900 transition-colors" title="Sao chép"><i class="pi pi-copy text-sm"></i></button>
               </div>
             </div>
           </div>
@@ -92,11 +91,12 @@
                 <div class="text-sm text-orange-700 mb-4">
                   Agent đang cố gắng thực thi một công cụ nhạy cảm. Hệ thống đã tạm dừng để chờ bạn phê duyệt.
                 </div>
+                <div v-if="msg.hitlError" class="text-sm text-red-700 mb-3" role="alert">{{ msg.hitlError }}</div>
                 <div class="flex gap-2" v-if="!msg.hitlResolved">
-                  <button @click="approveTask(msg)" class="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm font-medium rounded-lg transition-colors">
+                  <button @click="approveTask(msg)" :disabled="msg.hitlBusy" class="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
                     Phê duyệt
                   </button>
-                  <button @click="rejectTask(msg)" class="flex-1 px-4 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-sm font-medium rounded-lg transition-colors">
+                  <button @click="rejectTask(msg)" :disabled="msg.hitlBusy" class="flex-1 px-4 py-2 bg-white hover:bg-gray-50 disabled:opacity-50 text-gray-700 border border-gray-300 text-sm font-medium rounded-lg transition-colors">
                     Từ chối
                   </button>
                 </div>
@@ -105,13 +105,9 @@
                 </div>
               </div>
 
-              <!-- Assistant Action Buttons -->
+              <!-- Assistant Action -->
               <div v-if="!msg.isTyping" class="flex items-center gap-2 mt-3 text-gray-500">
-                <button class="p-1.5 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" title="Copy"><i class="pi pi-copy text-sm"></i></button>
-                <button class="p-1.5 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" title="Retry"><i class="pi pi-refresh text-sm"></i></button>
-                <button class="p-1.5 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" title="Good response"><i class="pi pi-thumbs-up text-sm"></i></button>
-                <button class="p-1.5 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" title="Bad response"><i class="pi pi-thumbs-down text-sm"></i></button>
-                <button class="p-1.5 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" title="Share"><i class="pi pi-share-alt text-sm"></i></button>
+                <button @click="copyMessage(msg.content)" class="p-1.5 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" title="Sao chép"><i class="pi pi-copy text-sm"></i></button>
               </div>
             </div>
           </div>
@@ -227,6 +223,8 @@ interface Message {
   attachedFiles?: string[];
   hitlTaskId?: string;
   hitlResolved?: string;
+  hitlBusy?: boolean;
+  hitlError?: string;
 }
 
 const inputMessage = ref('');
@@ -366,6 +364,14 @@ const getCleanUserContent = (content: string) => {
   return content.replace(/\n\n--- Nội dung file đính kèm ---[\s\S]*/g, '').trim();
 };
 
+const copyMessage = async (content: string) => {
+  try {
+    await navigator.clipboard.writeText(content);
+  } catch (error) {
+    console.error('Failed to copy message', error);
+  }
+};
+
 const sendMessage = async () => {
   const content = inputMessage.value.trim();
   const hasFiles = attachedFiles.value.length > 0;
@@ -485,34 +491,42 @@ const sendMessage = async () => {
 };
 
 const approveTask = async (msg: any) => {
+  msg.hitlBusy = true;
+  msg.hitlError = undefined;
   try {
-    msg.hitlResolved = 'Approved';
     const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/approve`);
-    if (res.ok) {
-      const result = await res.json();
-      messages.value.push({
-        role: 'system',
-        content: `Đã phê duyệt. Kết quả thực thi tool: ${result.Result}`
-      });
-      // Optionally trigger agent to continue by sending a hidden prompt
-      inputMessage.value = `Tôi đã phê duyệt hành động trên. Kết quả thực thi là: ${result.Result}. Vui lòng tiếp tục.`;
-      await sendMessage();
-    }
+    if (!res.ok) throw new Error(`Phê duyệt thất bại (${res.status}).`);
+    const response = await res.json();
+    const result = typeof response.result === 'string' ? response.result : '';
+    msg.hitlResolved = 'Approved';
+    messages.value.push({
+      role: 'system',
+      content: `Đã phê duyệt. Kết quả thực thi tool: ${result}`
+    });
+    inputMessage.value = `Tôi đã phê duyệt hành động trên. Kết quả thực thi là: ${result}. Vui lòng tiếp tục.`;
+    await sendMessage();
   } catch (error) {
-    console.error('Failed to approve task', error);
+    msg.hitlError = error instanceof Error ? error.message : 'Không thể phê duyệt thao tác.';
+  } finally {
+    msg.hitlBusy = false;
   }
 };
 
 const rejectTask = async (msg: any) => {
+  msg.hitlBusy = true;
+  msg.hitlError = undefined;
   try {
+    const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/reject`, { Comment: "User rejected" });
+    if (!res.ok) throw new Error(`Từ chối thất bại (${res.status}).`);
     msg.hitlResolved = 'Rejected';
-    await http.post(`/api/TaskApproval/${msg.hitlTaskId}/reject`, { Comment: "User rejected" });
     messages.value.push({
       role: 'system',
       content: `Đã từ chối hành động.`
     });
   } catch (error) {
-    console.error('Failed to reject task', error);
+    msg.hitlError = error instanceof Error ? error.message : 'Không thể từ chối thao tác.';
+  } finally {
+    msg.hitlBusy = false;
   }
 };
 </script>

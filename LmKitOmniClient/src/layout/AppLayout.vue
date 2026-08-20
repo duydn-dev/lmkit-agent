@@ -29,7 +29,7 @@
       <div class="flex-1 overflow-y-auto p-3 mt-2 flex flex-col">
         <div class="text-xs text-gray-500 font-semibold mb-2 px-3 uppercase tracking-wider flex items-center justify-between">
           <span>Lịch sử trò chuyện</span>
-          <button @click="router.push('/chat?new=' + Date.now())" class="hover:text-gray-900 transition-colors rounded-md hover:bg-gray-200 w-6 h-6 flex items-center justify-center" title="Tạo phiên chat mới">
+          <button @click="newChat" class="hover:text-gray-900 transition-colors rounded-md hover:bg-gray-200 w-6 h-6 flex items-center justify-center" title="Tạo phiên chat mới">
             <i class="pi pi-plus"></i>
           </button>
         </div>
@@ -70,10 +70,19 @@
       
       <!-- Header (Mobile Toggle) -->
       <header class="md:hidden flex items-center justify-between p-4 border-b border-gray-200 bg-gray-100">
-        <button><i class="pi pi-bars text-xl"></i></button>
+        <button @click="mobileNavOpen = !mobileNavOpen" :aria-expanded="mobileNavOpen" aria-label="Mở menu điều hướng"><i class="pi pi-bars text-xl"></i></button>
         <span class="font-medium">Nền tảng Trợ lý AI</span>
-        <button><i class="pi pi-plus text-xl"></i></button>
+        <button @click="newChat" aria-label="Tạo phiên chat mới"><i class="pi pi-plus text-xl"></i></button>
       </header>
+
+      <nav v-if="mobileNavOpen" class="md:hidden bg-gray-100 border-b border-gray-200 p-3 grid gap-1" aria-label="Điều hướng di động">
+        <router-link to="/chat" @click="mobileNavOpen = false" class="px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-sparkles mr-2"></i>Trợ lý AI</router-link>
+        <router-link to="/documents" @click="mobileNavOpen = false" class="px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-file-pdf mr-2"></i>Kho tài liệu</router-link>
+        <router-link to="/memory" @click="mobileNavOpen = false" class="px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-history mr-2"></i>Bộ nhớ trợ lý</router-link>
+        <router-link v-if="isAdmin" to="/admin/users" @click="mobileNavOpen = false" class="px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-users mr-2"></i>Quản lý User</router-link>
+        <button @click="openMobileSettings" class="text-left px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-cog mr-2"></i>Cấu hình</button>
+        <button @click="logout" class="text-left px-3 py-2 rounded text-red-500 hover:bg-red-50"><i class="pi pi-sign-out mr-2"></i>Đăng xuất</button>
+      </nav>
 
       <!-- Router View -->
       <router-view v-slot="{ Component }">
@@ -173,10 +182,21 @@ const mcpError = ref('');
 const mcpForm = ref({ name: '', url: '', headersJson: '', isActive: true });
 
 const chatSessions = ref<ChatSession[]>([]);
+const mobileNavOpen = ref(false);
 
 const openSettings = async () => {
   showSettingsModal.value = true;
   if (isAdmin.value) await loadMcpServers();
+};
+
+const openMobileSettings = async () => {
+  mobileNavOpen.value = false;
+  await openSettings();
+};
+
+const newChat = async () => {
+  mobileNavOpen.value = false;
+  await router.push('/chat?new=' + Date.now());
 };
 
 const loadMcpServers = async () => {
