@@ -8,6 +8,7 @@
     "build": "vue-tsc -b && vite build",
     "test:unit": "vitest run src",
     "test:e2e": "npm run build && playwright test",
+    "test:e2e:fullstack": "playwright test --config playwright.fullstack.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {

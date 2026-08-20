@@ -318,7 +318,7 @@ public class ChatController : ControllerBase
 
         var query = new GetChatMessagesQuery { SessionId = id, UserId = currentUserId };
         var result = await _mediator.Send(query, cancellationToken);
-        return Ok(result);
+        return result is null ? NotFound() : Ok(result);
     }
 
     [Authorize]

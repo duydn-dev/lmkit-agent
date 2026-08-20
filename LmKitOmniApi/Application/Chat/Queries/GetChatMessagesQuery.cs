@@ -4,7 +4,7 @@ using System.Collections.Generic;
 
 namespace LmKitOmniApi.Application.Chat.Queries
 {
-    public class GetChatMessagesQuery : IRequest<List<ChatMessageDto>>
+    public class GetChatMessagesQuery : IRequest<List<ChatMessageDto>?>
     {
         public Guid SessionId { get; set; }
         public Guid UserId { get; set; }

@@ -29,6 +29,16 @@ docker compose config --quiet
 docker compose build api client
 ```
 
+Run the isolated real-stack browser gate (uses port `18080` and a separate Compose project/volumes):
+
+```powershell
+docker compose --env-file .env.example -p lmkit-fullstack-e2e -f docker-compose.yml -f docker-compose.e2e.yml up -d --build --wait --wait-timeout 180
+Set-Location .\LmKitOmniClient
+npm run test:e2e:fullstack
+Set-Location ..
+docker compose --env-file .env.example -p lmkit-fullstack-e2e -f docker-compose.yml -f docker-compose.e2e.yml down -v --remove-orphans
+```
+
 Review the generated migration before rollout:
 
 ```powershell

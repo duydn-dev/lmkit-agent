@@ -55,6 +55,22 @@ public sealed class ApiIntegrationTests : IClassFixture<LmKitApiFactory>
     }
 
     [Fact]
+    public async Task ChatMessages_DistinguishesOwnedEmptySessionFromMissingOrCrossTenantSession()
+    {
+        using var client = await CreateAuthenticatedClientAsync();
+
+        var owned = await client.GetAsync("/api/chat/sessions/55555555-5555-5555-5555-555555555555/messages");
+        var otherTenant = await client.GetAsync("/api/chat/sessions/66666666-6666-6666-6666-666666666666/messages");
+        var missing = await client.GetAsync($"/api/chat/sessions/{Guid.NewGuid()}/messages");
+        var ownedBody = await owned.Content.ReadFromJsonAsync<JsonElement[]>();
+
+        Assert.Equal(HttpStatusCode.OK, owned.StatusCode);
+        Assert.Empty(ownedBody!);
+        Assert.Equal(HttpStatusCode.NotFound, otherTenant.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+    }
+
+    [Fact]
     public async Task MemoryConfirmation_IsOwnerScopedAndUpdatesConsentState()
     {
         using var client = await CreateAuthenticatedClientAsync();

@@ -55,6 +55,16 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
+Full-stack browser verification (isolated Docker project, real API and data services):
+
+```powershell
+docker compose --env-file .env.example -p lmkit-fullstack-e2e -f docker-compose.yml -f docker-compose.e2e.yml up -d --build --wait --wait-timeout 180
+Set-Location .\LmKitOmniClient
+npm run test:e2e:fullstack
+Set-Location ..
+docker compose --env-file .env.example -p lmkit-fullstack-e2e -f docker-compose.yml -f docker-compose.e2e.yml down -v --remove-orphans
+```
+
 Important configuration:
 
 | Setting | Purpose |

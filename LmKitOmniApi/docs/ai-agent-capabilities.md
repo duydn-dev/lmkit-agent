@@ -82,4 +82,4 @@ Xem:
 - [ADR AI runtime](adr/ADR-001-ai-runtime-upgrade.md)
 - [Runbook triển khai](runbooks/deployment.md)
 
-Trước production vẫn phải chạy model/license smoke trên artifact thật, AI golden evaluation, browser full-stack E2E với API/model thật, load test và backup/rollback drill. Browser contract E2E trên production frontend artifact và axe WCAG scan đã chạy trong CI.
+Trước production vẫn phải chạy model/license smoke trên artifact thật, AI golden evaluation, browser E2E có inference model thật, load test và backup/rollback drill. Browser contract E2E/axe và full-stack E2E qua Nginx/API/PostgreSQL/Redis/Qdrant đã chạy trong CI; full-stack hiện chưa gọi model hoặc MCP server thật.

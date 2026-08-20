@@ -1,0 +1,28 @@
+services:
+  api:
+    ports: !reset []
+    environment:
+      BootstrapAdmin__Enabled: "true"
+      BootstrapAdmin__Email: ${E2E_ADMIN_EMAIL:-e2e-admin@example.test}
+      BootstrapAdmin__Password: ${E2E_ADMIN_PASSWORD:-E2e-Admin-2026!}
+    restart: "no"
+
+  client:
+    ports: !override
+      - "127.0.0.1:18080:80"
+    restart: "no"
+
+  postgres:
+    ports: !reset []
+    restart: "no"
+
+  redis:
+    ports: !reset []
+    restart: "no"
+
+  qdrant:
+    ports: !reset []
+    restart: "no"
+
+  volume-init:
+    restart: "no"

@@ -50,3 +50,28 @@ jobs:
         env:
           POSTGRES_PASSWORD: ci-only-password
           JWT_SECRET_KEY: ci-only-jwt-secret-that-is-longer-than-32-bytes
+
+  fullstack-e2e:
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: e2e-postgres-password
+      JWT_SECRET_KEY: e2e-jwt-secret-that-is-longer-than-32-bytes
+      E2E_ADMIN_EMAIL: e2e-admin@example.test
+      E2E_ADMIN_PASSWORD: E2e-Admin-2026!
+      E2E_BASE_URL: http://127.0.0.1:18080
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: LmKitOmniClient/package-lock.json
+      - run: npm ci
+        working-directory: LmKitOmniClient
+      - run: npx playwright install --with-deps chromium
+        working-directory: LmKitOmniClient
+      - run: docker compose -p lmkit-fullstack-e2e -f docker-compose.yml -f docker-compose.e2e.yml up -d --build --wait --wait-timeout 180
+      - run: npm run test:e2e:fullstack
+        working-directory: LmKitOmniClient
+      - if: always()
+        run: docker compose -p lmkit-fullstack-e2e -f docker-compose.yml -f docker-compose.e2e.yml down -v --remove-orphans
