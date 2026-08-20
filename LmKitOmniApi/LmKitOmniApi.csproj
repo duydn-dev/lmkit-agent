@@ -7,15 +7,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspose.Cells" Version="20.10.0" />
-    <PackageReference Include="Aspose.PDF" Version="18.3.0" />
-    <PackageReference Include="Aspose.Slides.NET" Version="20.10.0" />
-    <PackageReference Include="Aspose.Words" Version="20.10.0" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
     <PackageReference Include="Jint" Version="4.15.3" />
     <PackageReference Include="LM-Kit.NET" Version="2026.8.2" />
-    <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.16.0" />
-    <PackageReference Include="Magick.NET.Core" Version="14.16.0" />
     <PackageReference Include="MediatR" Version="14.2.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
@@ -34,24 +28,14 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
     <PackageReference Include="Qdrant.Client" Version="1.19.0" />
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
-    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <PackageReference Include="StackExchange.Redis" Version="2.7.27" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
-    <PackageReference Include="System.Drawing.Common" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <PackageReference Include="LM-Kit.NET.Backend.Cuda13.Windows" Version="2026.8.2" />
-  </ItemGroup>
-
-  <!-- Generated legacy surfaces contain placeholder LMFunction methods that
-       throw NotImplementedException. Do not publish them as callable tools. -->
-  <ItemGroup>
-    <Compile Remove="Infrastructure\Tools\Office\**\*.cs" />
-    <Compile Remove="Infrastructure\Tools\Images\**\*.cs" />
-    <Compile Remove="Infrastructure\Tools\Pdf\**\*.cs" />
-    <Compile Remove="Infrastructure\AI\IGraphKnowledgeService.cs" />
   </ItemGroup>
 
 </Project>

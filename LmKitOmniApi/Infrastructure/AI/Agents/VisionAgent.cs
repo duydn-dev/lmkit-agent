@@ -104,6 +104,10 @@ public class VisionAgent : ISpecializedAgent
                 Elapsed = sw.Elapsed
             };
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             sw.Stop();

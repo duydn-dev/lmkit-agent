@@ -16,32 +16,40 @@ public class AnalyzeTextCommandHandler : IRequestHandler<AnalyzeTextCommand, Ana
 
     public async Task<AnalyzeTextResult> Handle(AnalyzeTextCommand request, CancellationToken cancellationToken)
     {
-        var chatModel = await _modelManager.GetChatModelAsync();
+        var chatModel = await _modelManager.GetChatModelAsync(ct: cancellationToken);
 
-        var sentimentEngine = new SentimentAnalysis(chatModel);
-        var nerEngine = new NamedEntityRecognition(chatModel);
-        var piiEngine = new PiiExtraction(chatModel);
-
-        var sentimentResult = sentimentEngine.GetSentimentCategory(request.Text);
-        var nerResult = nerEngine.Recognize(request.Text);
-        var piiResult = piiEngine.Extract(request.Text);
-
-        // Redact PII
-        string redactedText = request.Text;
-        var sortedPii = piiResult.SelectMany(e => e.Occurrences).OrderByDescending(o => o.StartIndex).ToList();
-        foreach (var pii in sortedPii)
+        AnalyzeTextResult ExecuteAnalysis()
         {
-            int length = pii.EndIndex - pii.StartIndex;
-            redactedText = redactedText.Remove(pii.StartIndex, length)
-                                       .Insert(pii.StartIndex, new string('*', length));
+            var sentimentEngine = new SentimentAnalysis(chatModel);
+            var nerEngine = new NamedEntityRecognition(chatModel);
+            var piiEngine = new PiiExtraction(chatModel);
+
+            var sentimentResult = sentimentEngine.GetSentimentCategory(request.Text);
+            var nerResult = nerEngine.Recognize(request.Text);
+            var piiResult = piiEngine.Extract(request.Text);
+
+            string redactedText = request.Text;
+            var sortedPii = piiResult.SelectMany(e => e.Occurrences).OrderByDescending(o => o.StartIndex).ToList();
+            foreach (var pii in sortedPii)
+            {
+                int length = pii.EndIndex - pii.StartIndex;
+                redactedText = redactedText.Remove(pii.StartIndex, length)
+                    .Insert(pii.StartIndex, new string('*', length));
+            }
+
+            return new AnalyzeTextResult
+            {
+                Sentiment = sentimentResult.ToString(),
+                SentimentConfidence = sentimentEngine.Confidence,
+                ExtractedEntities = nerResult.Select(e => $"{e.EntityDefinition.Label}: {e.Value}").ToList(),
+                RedactedText = redactedText
+            };
         }
 
-        return new AnalyzeTextResult
-        {
-            Sentiment = sentimentResult.ToString(),
-            SentimentConfidence = sentimentEngine.Confidence,
-            ExtractedEntities = nerResult.Select(e => $"{e.EntityDefinition.Label}: {e.Value}").ToList(),
-            RedactedText = redactedText
-        };
+        if (request.ChatInferenceLeaseAlreadyHeld)
+            return ExecuteAnalysis();
+
+        await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(cancellationToken);
+        return ExecuteAnalysis();
     }
 }

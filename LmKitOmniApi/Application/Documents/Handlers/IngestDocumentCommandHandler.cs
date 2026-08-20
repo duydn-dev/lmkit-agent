@@ -15,6 +15,11 @@ public class IngestDocumentCommandHandler : IRequestHandler<IngestDocumentComman
 
     public async Task<string> Handle(IngestDocumentCommand request, CancellationToken cancellationToken)
     {
-        return await _ragService.IngestDocumentAsync(request.TenantId, request.UserId, request.FileName, request.Content);
+        return await _ragService.IngestDocumentAsync(
+            request.TenantId,
+            request.UserId,
+            request.FileName,
+            request.Content,
+            cancellationToken);
     }
 }

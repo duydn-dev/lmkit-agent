@@ -143,7 +143,9 @@ public class DocumentController : ControllerBase
 
     [HttpPost("convert")]
     [EnableRateLimiting("ai-agent")]
-    public async Task<IActionResult> ConvertDocument([FromBody] DocumentConversionRequest request)
+    public async Task<IActionResult> ConvertDocument(
+        [FromBody] DocumentConversionRequest request,
+        CancellationToken cancellationToken)
     {
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
         var path = _resources.ValidateOwnedPath(tenantId, userId, request.FilePath);
@@ -153,10 +155,12 @@ public class DocumentController : ControllerBase
         try
         {
             DocumentToMarkdown converter;
+            IAsyncDisposable? inferenceLease = null;
 
             if (request.Strategy.ToLower() == "vlmocr" || request.Strategy.ToLower() == "hybrid")
             {
-                var ocrModel = await _modelManager.GetVisionModelAsync();
+                var ocrModel = await _modelManager.GetVisionModelAsync(ct: cancellationToken);
+                inferenceLease = await _modelManager.AcquireVisionInferenceAsync(cancellationToken);
                 converter = new DocumentToMarkdown(ocrModel);
             }
             else
@@ -170,14 +174,22 @@ public class DocumentController : ControllerBase
                 options.Strategy = strategy;
             }
             
-            var result = converter.Convert(path.SanitizedPath, options);
-
-            return Ok(new DocumentConversionResponse
+            try
             {
-                Markdown = result.Markdown,
-                TotalPages = result.Pages.Count,
-                Elapsed = result.Elapsed
-            });
+                var result = converter.Convert(path.SanitizedPath, options);
+
+                return Ok(new DocumentConversionResponse
+                {
+                    Markdown = result.Markdown,
+                    TotalPages = result.Pages.Count,
+                    Elapsed = result.Elapsed
+                });
+            }
+            finally
+            {
+                if (inferenceLease is not null)
+                    await inferenceLease.DisposeAsync();
+            }
         }
         catch (Exception)
         {

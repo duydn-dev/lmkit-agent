@@ -66,7 +66,9 @@
                   <i class="pi pi-search text-xs"></i>
                   <span class="text-sm font-medium">Read {{ msg.webUrls.length }} web pages</span>
                   <div class="flex -space-x-1.5 ml-1">
-                    <img v-for="(url, i) in msg.webUrls.slice(0, 3)" :key="i" :src="`https://www.google.com/s2/favicons?domain=${getHostname(url)}&sz=32`" class="w-5 h-5 rounded-full border border-[#202123] bg-white object-contain p-0.5" />
+                    <span v-for="(_, i) in msg.webUrls.slice(0, 3)" :key="i" class="w-5 h-5 rounded-full border border-gray-200 bg-white flex items-center justify-center">
+                      <i class="pi pi-globe text-[10px] text-sky-600"></i>
+                    </span>
                   </div>
                 </div>
               </div>
@@ -156,16 +158,6 @@
           
           <!-- Bottom Toolbar -->
           <div class="flex items-center justify-between mt-2 px-1 pb-1">
-            <!-- Left Toggles (DeepThink / Search) -->
-            <div class="flex items-center gap-2">
-              <button class="flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
-                <i class="pi pi-sparkles"></i> DeepThink
-              </button>
-              <button class="flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-sky-200 text-sm font-medium text-sky-600 bg-sky-50/50 hover:bg-sky-100 transition-colors">
-                <i class="pi pi-globe"></i> Search
-              </button>
-            </div>
-            
             <!-- Right Actions -->
             <div class="flex items-center gap-1.5">
               <button @click="triggerFileInput" class="w-9 h-9 flex items-center justify-center text-gray-600 hover:text-gray-900 transition-colors rounded-full hover:bg-gray-100" title="Đính kèm file">
@@ -196,10 +188,10 @@
         </h3>
       </template>
       <div class="flex flex-col gap-3 mt-2">
-        <a v-for="(url, index) in drawerUrls" :key="index" :href="url" target="_blank" class="block p-3 rounded-xl border border-gray-100 bg-gray-200/50 hover:bg-gray-200 hover:border-gray-300 transition-all group">
+        <a v-for="(url, index) in drawerUrls" :key="index" :href="url" target="_blank" rel="noopener noreferrer" class="block p-3 rounded-xl border border-gray-100 bg-gray-200/50 hover:bg-gray-200 hover:border-gray-300 transition-all group">
           <div class="flex items-start gap-3">
             <div class="w-8 h-8 rounded-lg bg-white shadow-sm flex-shrink-0 flex items-center justify-center overflow-hidden">
-                <img :src="`https://www.google.com/s2/favicons?domain=${getHostname(url)}&sz=32`" class="w-5 h-5 object-contain" />
+                <i class="pi pi-globe text-sky-600"></i>
             </div>
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium text-gray-800 truncate group-hover:text-cyan-400 transition-colors">{{ getCleanHostname(url) }}</div>
@@ -294,12 +286,17 @@ const isDrawerOpen = ref(false);
 const drawerUrls = ref<string[]>([]);
 
 const openDrawer = (urls: string[]) => {
-  drawerUrls.value = urls;
+  drawerUrls.value = urls.filter(isSafeWebUrl);
   isDrawerOpen.value = true;
 };
 
-const getHostname = (urlStr: string) => {
-    try { return new URL(urlStr).hostname; } catch { return ''; }
+const isSafeWebUrl = (urlStr: string) => {
+  try {
+    const url = new URL(urlStr);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
 };
 
 const getCleanHostname = (urlStr: string) => {
@@ -383,16 +380,17 @@ const sendMessage = async () => {
   const assistantMsg = messages.value[messages.value.length - 1];
   await scrollToBottom();
 
-  if (!currentSessionId.value) {
+  try {
+    if (!currentSessionId.value) {
       const sessionRes = await http.post(ApiFactory.CHAT.CREATE_SESSION);
       if (sessionRes.ok) {
           const newSession = await sessionRes.json();
           currentSessionId.value = newSession.id;
           window.dispatchEvent(new CustomEvent('chat-session-created'));
+      } else {
+          throw new Error('Không thể tạo phiên trò chuyện.');
       }
-  }
-
-  try {
+    }
     let response: Response;
 
     if (hasFiles) {
@@ -417,7 +415,16 @@ const sendMessage = async () => {
       response = await http.post(ApiFactory.CHAT.STREAM, payload);
     }
 
-    if (!response.body) throw new Error('ReadableStream not supported');
+    if (!response.ok) {
+      let message = `Yêu cầu thất bại (${response.status}).`;
+      try {
+        const error = await response.json();
+        if (typeof error?.message === 'string') message = error.message;
+        else if (typeof error?.title === 'string') message = error.title;
+      } catch { /* response is not JSON */ }
+      throw new Error(message);
+    }
+    if (!response.body) throw new Error('Trình duyệt không hỗ trợ streaming response.');
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
@@ -425,7 +432,8 @@ const sendMessage = async () => {
     assistantMsg.isTyping = false;
 
     let buffer = '';
-    while (true) {
+    let streamFinished = false;
+    while (!streamFinished) {
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -448,10 +456,16 @@ const sendMessage = async () => {
             data = rawData;
           }
 
-          if (data === '[DONE]') break;
+          if (data === '[DONE]') {
+              streamFinished = true;
+              break;
+          }
+          if (data.startsWith('[ERROR]:')) {
+              throw new Error(data.substring('[ERROR]:'.length).trim());
+          }
           
           if (data.startsWith('[WEB_SEARCH]:')) {
-              const urls = data.replace('[WEB_SEARCH]:', '').split('|').filter(u => u);
+              const urls = data.replace('[WEB_SEARCH]:', '').split('|').filter(isSafeWebUrl);
               assistantMsg.webUrls = urls;
               continue;
           }
@@ -468,6 +482,7 @@ const sendMessage = async () => {
               const taskId = data.replace('[HITL_APPROVAL_REQUIRED:', '').replace(']', '').trim();
               assistantMsg.hitlTaskId = taskId;
               await scrollToBottom();
+              streamFinished = true;
               break;
           }
           if (data.startsWith('[Agent invoked:')) continue; // Ẩn log thô của agent
@@ -477,6 +492,7 @@ const sendMessage = async () => {
         }
       }
     }
+    if (streamFinished) await reader.cancel();
   } catch (error) {
     assistantMsg.content = `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`;
     assistantMsg.isTyping = false;

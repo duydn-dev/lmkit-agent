@@ -24,6 +24,11 @@ public class LmModelManager : IDisposable
     private readonly SemaphoreSlim _rerankerLock;
     private readonly SemaphoreSlim _segmentationLock;
     private readonly SemaphoreSlim _chatInferenceGate;
+    private readonly SemaphoreSlim _visionInferenceGate;
+    private readonly SemaphoreSlim _embeddingInferenceGate;
+    private readonly SemaphoreSlim _speechInferenceGate;
+    private readonly SemaphoreSlim _rerankerInferenceGate;
+    private readonly SemaphoreSlim _segmentationInferenceGate;
     private readonly long _maxDownloadBytes;
     private readonly TimeSpan _downloadTimeout;
     private readonly ILogger<LmModelManager> _logger;
@@ -34,6 +39,8 @@ public class LmModelManager : IDisposable
     public string DefaultSpeechModelId { get; set; }
     public string DefaultRerankerModelId { get; set; }
     public string DefaultSegmentationModelId { get; set; }
+    public bool IsChatModelLoaded => _chatModel is not null;
+    public string? LastChatModelLoadError { get; private set; }
 
     public LmModelManager(
         Microsoft.Extensions.Configuration.IConfiguration configuration,
@@ -56,8 +63,12 @@ public class LmModelManager : IDisposable
         _downloadTimeout = TimeSpan.FromMinutes(timeoutMinutes);
 
         var limits = configuration.GetSection("SemaphoreLimits");
-        int chatLimit = limits.GetValue<int>("Chat", 1);
-        if (chatLimit <= 0) throw new InvalidOperationException("SemaphoreLimits:Chat must be greater than zero.");
+        var chatLimit = GetPositiveLimit(limits, "Chat", 1);
+        var visionLimit = GetPositiveLimit(limits, "Vision", 1);
+        var embeddingLimit = GetPositiveLimit(limits, "Embedding", 1);
+        var speechLimit = GetPositiveLimit(limits, "Speech", 1);
+        var rerankerLimit = GetPositiveLimit(limits, "Reranker", 1);
+        var segmentationLimit = GetPositiveLimit(limits, "Segmentation", 1);
         _chatLock = new SemaphoreSlim(1, 1);
         _visionLock = new SemaphoreSlim(1, 1);
         _embeddingLock = new SemaphoreSlim(1, 1);
@@ -65,8 +76,21 @@ public class LmModelManager : IDisposable
         _rerankerLock = new SemaphoreSlim(1, 1);
         _segmentationLock = new SemaphoreSlim(1, 1);
         _chatInferenceGate = new SemaphoreSlim(chatLimit, chatLimit);
+        _visionInferenceGate = new SemaphoreSlim(visionLimit, visionLimit);
+        _embeddingInferenceGate = new SemaphoreSlim(embeddingLimit, embeddingLimit);
+        _speechInferenceGate = new SemaphoreSlim(speechLimit, speechLimit);
+        _rerankerInferenceGate = new SemaphoreSlim(rerankerLimit, rerankerLimit);
+        _segmentationInferenceGate = new SemaphoreSlim(segmentationLimit, segmentationLimit);
     }
-    private async Task<LM> LoadModelWithProgressAsync(string id)
+
+    private static int GetPositiveLimit(IConfigurationSection section, string name, int fallback)
+    {
+        var value = section.GetValue<int>(name, fallback);
+        if (value <= 0)
+            throw new InvalidOperationException($"SemaphoreLimits:{name} must be greater than zero.");
+        return value;
+    }
+    private async Task<LM> LoadModelWithProgressAsync(string id, CancellationToken ct = default)
     {
         if (id.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || id.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
@@ -77,7 +101,7 @@ public class LmModelManager : IDisposable
             }
 
             var sourceUri = new Uri(id, UriKind.Absolute);
-            await ValidateRemoteModelUriAsync(sourceUri);
+            await ValidateRemoteModelUriAsync(sourceUri, ct);
             var fileName = Path.GetFileName(sourceUri.LocalPath);
             if (string.IsNullOrEmpty(fileName)) fileName = "model.gguf";
             fileName = string.Concat(fileName.Select(character =>
@@ -90,7 +114,8 @@ public class LmModelManager : IDisposable
             if (!File.Exists(localPath))
             {
                 _logger.LogInformation("Downloading configured model from {ModelUri}", sourceUri);
-                using var timeout = new CancellationTokenSource(_downloadTimeout);
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(_downloadTimeout);
                 using var handler = new SocketsHttpHandler { AllowAutoRedirect = false };
                 using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
                 using var response = await SendWithValidatedRedirectsAsync(client, sourceUri, timeout.Token);
@@ -150,7 +175,7 @@ public class LmModelManager : IDisposable
         }
 
         _logger.LogInformation("Loading model {ModelId}", id);
-        var model = await Task.Run(() => LM.LoadFromModelID(id));
+        var model = await Task.Run(() => LM.LoadFromModelID(id), ct);
         _logger.LogInformation("Model loaded successfully");
         return model;
     }
@@ -220,16 +245,25 @@ public class LmModelManager : IDisposable
             || address.Equals(IPAddress.IPv6Any);
     }
 
-    public async Task<LM> GetChatModelAsync(string? modelId = null)
+    public async Task<LM> GetChatModelAsync(string? modelId = null, CancellationToken ct = default)
     {
         if (_chatModel != null) return _chatModel;
-        await _chatLock.WaitAsync();
+        await _chatLock.WaitAsync(ct);
         try
         {
             if (_chatModel == null)
             {
                 var id = modelId ?? DefaultChatModelId;
-                _chatModel = await LoadModelWithProgressAsync(id);
+                try
+                {
+                    _chatModel = await LoadModelWithProgressAsync(id, ct);
+                    LastChatModelLoadError = null;
+                }
+                catch (Exception ex)
+                {
+                    LastChatModelLoadError = ex.GetType().Name;
+                    throw;
+                }
             }
             return _chatModel;
         }
@@ -240,21 +274,41 @@ public class LmModelManager : IDisposable
     }
 
     public async ValueTask<IAsyncDisposable> AcquireChatInferenceAsync(CancellationToken ct = default)
+        => await AcquireInferenceAsync(_chatInferenceGate, ct);
+
+    public async ValueTask<IAsyncDisposable> AcquireVisionInferenceAsync(CancellationToken ct = default)
+        => await AcquireInferenceAsync(_visionInferenceGate, ct);
+
+    public async ValueTask<IAsyncDisposable> AcquireEmbeddingInferenceAsync(CancellationToken ct = default)
+        => await AcquireInferenceAsync(_embeddingInferenceGate, ct);
+
+    public async ValueTask<IAsyncDisposable> AcquireSpeechInferenceAsync(CancellationToken ct = default)
+        => await AcquireInferenceAsync(_speechInferenceGate, ct);
+
+    public async ValueTask<IAsyncDisposable> AcquireRerankerInferenceAsync(CancellationToken ct = default)
+        => await AcquireInferenceAsync(_rerankerInferenceGate, ct);
+
+    public async ValueTask<IAsyncDisposable> AcquireSegmentationInferenceAsync(CancellationToken ct = default)
+        => await AcquireInferenceAsync(_segmentationInferenceGate, ct);
+
+    private static async ValueTask<IAsyncDisposable> AcquireInferenceAsync(
+        SemaphoreSlim gate,
+        CancellationToken ct)
     {
-        await _chatInferenceGate.WaitAsync(ct);
-        return new SemaphoreLease(_chatInferenceGate);
+        await gate.WaitAsync(ct);
+        return new SemaphoreLease(gate);
     }
 
-    public async Task<LM> GetVisionModelAsync(string? modelId = null)
+    public async Task<LM> GetVisionModelAsync(string? modelId = null, CancellationToken ct = default)
     {
         if (_visionModel != null) return _visionModel;
-        await _visionLock.WaitAsync();
+        await _visionLock.WaitAsync(ct);
         try
         {
             if (_visionModel == null)
             {
                 var id = modelId ?? DefaultVisionModelId;
-                _visionModel = await LoadModelWithProgressAsync(id);
+                _visionModel = await LoadModelWithProgressAsync(id, ct);
             }
             return _visionModel;
         }
@@ -264,16 +318,16 @@ public class LmModelManager : IDisposable
         }
     }
 
-    public async Task<LM> GetEmbeddingModelAsync(string? modelId = null)
+    public async Task<LM> GetEmbeddingModelAsync(string? modelId = null, CancellationToken ct = default)
     {
         if (_embeddingModel != null) return _embeddingModel;
-        await _embeddingLock.WaitAsync();
+        await _embeddingLock.WaitAsync(ct);
         try
         {
             if (_embeddingModel == null)
             {
                 var id = modelId ?? DefaultEmbeddingModelId;
-                _embeddingModel = await LoadModelWithProgressAsync(id);
+                _embeddingModel = await LoadModelWithProgressAsync(id, ct);
             }
             return _embeddingModel;
         }
@@ -283,16 +337,16 @@ public class LmModelManager : IDisposable
         }
     }
 
-    public async Task<LM> GetRerankerModelAsync(string? modelId = null)
+    public async Task<LM> GetRerankerModelAsync(string? modelId = null, CancellationToken ct = default)
     {
         if (_rerankerModel != null) return _rerankerModel;
-        await _rerankerLock.WaitAsync();
+        await _rerankerLock.WaitAsync(ct);
         try
         {
             if (_rerankerModel == null)
             {
                 var id = modelId ?? DefaultRerankerModelId;
-                _rerankerModel = await LoadModelWithProgressAsync(id);
+                _rerankerModel = await LoadModelWithProgressAsync(id, ct);
             }
             return _rerankerModel;
         }
@@ -302,16 +356,16 @@ public class LmModelManager : IDisposable
         }
     }
 
-    public async Task<LM> GetSpeechModelAsync(string? modelId = null)
+    public async Task<LM> GetSpeechModelAsync(string? modelId = null, CancellationToken ct = default)
     {
         if (_speechModel != null) return _speechModel;
-        await _speechLock.WaitAsync();
+        await _speechLock.WaitAsync(ct);
         try
         {
             if (_speechModel == null)
             {
                 var id = modelId ?? DefaultSpeechModelId;
-                _speechModel = await LoadModelWithProgressAsync(id);
+                _speechModel = await LoadModelWithProgressAsync(id, ct);
             }
             return _speechModel;
         }
@@ -321,16 +375,16 @@ public class LmModelManager : IDisposable
         }
     }
 
-    public async Task<LM> GetSegmentationModelAsync(string? modelId = null)
+    public async Task<LM> GetSegmentationModelAsync(string? modelId = null, CancellationToken ct = default)
     {
         if (_segmentationModel != null) return _segmentationModel;
-        await _segmentationLock.WaitAsync();
+        await _segmentationLock.WaitAsync(ct);
         try
         {
             if (_segmentationModel == null)
             {
                 var id = modelId ?? DefaultSegmentationModelId;
-                _segmentationModel = await LoadModelWithProgressAsync(id);
+                _segmentationModel = await LoadModelWithProgressAsync(id, ct);
             }
             return _segmentationModel;
         }
@@ -355,6 +409,11 @@ public class LmModelManager : IDisposable
         _rerankerLock.Dispose();
         _segmentationLock.Dispose();
         _chatInferenceGate.Dispose();
+        _visionInferenceGate.Dispose();
+        _embeddingInferenceGate.Dispose();
+        _speechInferenceGate.Dispose();
+        _rerankerInferenceGate.Dispose();
+        _segmentationInferenceGate.Dispose();
     }
 
     private sealed class SemaphoreLease : IAsyncDisposable

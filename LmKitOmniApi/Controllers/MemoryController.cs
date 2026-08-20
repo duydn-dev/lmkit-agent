@@ -57,6 +57,14 @@ public sealed class MemoryController : ControllerBase
         return deleted ? NoContent() : NotFound();
     }
 
+    [HttpPost("{id:guid}/confirm")]
+    public async Task<IActionResult> Confirm(Guid id, CancellationToken ct)
+    {
+        if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
+        var confirmed = await _memoryService.ConfirmMemoryAsync(tenantId, userId, id, ct);
+        return confirmed ? NoContent() : NotFound();
+    }
+
     private bool TryGetIdentity(out Guid tenantId, out Guid userId)
     {
         var tenantValid = Guid.TryParse(User.FindFirst("TenantId")?.Value, out tenantId);

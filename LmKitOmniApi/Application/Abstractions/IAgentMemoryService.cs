@@ -26,6 +26,9 @@ public interface IAgentMemoryService
 
     /// <summary>Delete one memory owned by the tenant/user and its vector representation.</summary>
     Task<bool> DeleteMemoryAsync(Guid tenantId, Guid? userId, Guid memoryId, CancellationToken ct = default);
+
+    /// <summary>Confirm an inferred memory before it may be recalled into prompts.</summary>
+    Task<bool> ConfirmMemoryAsync(Guid tenantId, Guid? userId, Guid memoryId, CancellationToken ct = default);
 }
 
 public class MemoryRecallResult

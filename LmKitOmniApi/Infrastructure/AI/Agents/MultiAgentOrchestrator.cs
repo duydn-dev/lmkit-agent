@@ -45,7 +45,7 @@ public sealed class MultiAgentOrchestrator
             return string.Empty;
         }
 
-        var model = await _modelManager.GetChatModelAsync();
+        var model = await _modelManager.GetChatModelAsync(ct: ct);
         var workers = _agents.Select(agent => CreateWorker(model, agent, tenantId, userId, userRole)).ToList();
 
         var workerDirectory = string.Join(

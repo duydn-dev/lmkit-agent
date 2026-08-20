@@ -198,7 +198,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         // ── Step 5: Generate Response with Template ──
         yield return "[THINKING]: ✍️ Đang tổng hợp và tạo câu trả lời...\\n";
 
-        var model = await _modelManager.GetChatModelAsync();
+        var model = await _modelManager.GetChatModelAsync(ct: cancellationToken);
         var chat = new MultiTurnConversation(model, history);
         chat.MaximumCompletionTokens = 2048;
         _defaultToolCatalog.RegisterSafeDefaults(chat);
@@ -226,9 +226,10 @@ public class AgentOrchestrator : IAgentOrchestrator
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during chat.Submit in streaming");
-                channel.Writer.TryWrite("\n[ERROR: response generation failed]\n");
+                channel.Writer.TryComplete(ex);
+                return;
             }
-            finally { channel.Writer.Complete(); }
+            channel.Writer.TryComplete();
         })
         {
             IsBackground = true,
@@ -259,6 +260,10 @@ public class AgentOrchestrator : IAgentOrchestrator
                 outputResult.ProcessedContent,
                 cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             // Memory is supplementary. A persistence failure must not discard a valid answer.
@@ -284,7 +289,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         string existingContext,
         CancellationToken ct)
     {
-        var model = await _modelManager.GetChatModelAsync();
+        var model = await _modelManager.GetChatModelAsync(ct: ct);
         Guid? pendingApprovalId = null;
 
         async Task<string> InvokeActionAsync(string action, string toolQuery, CancellationToken toolCt)
@@ -485,7 +490,13 @@ public class AgentOrchestrator : IAgentOrchestrator
         switch (action)
         {
             case "RAG":
-                var ragResult = await _ragService.QueryKnowledgeBaseAsync(tenantId, userId ?? Guid.Empty, query, topK: 3);
+                var ragResult = await _ragService.QueryKnowledgeBaseAsync(
+                    tenantId,
+                    userId ?? Guid.Empty,
+                    query,
+                    topK: 3,
+                    ct: ct,
+                    chatInferenceLeaseAlreadyHeld: true);
                 await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "QueryKnowledgeBase", query, ct);
                 return ragResult;
 
@@ -526,7 +537,11 @@ public class AgentOrchestrator : IAgentOrchestrator
                 return "No audio path found in query.";
 
             case "NLP":
-                var nlpResult = await _mediator.Send(new AnalyzeTextCommand { Text = query }, ct);
+                var nlpResult = await _mediator.Send(new AnalyzeTextCommand
+                {
+                    Text = query,
+                    ChatInferenceLeaseAlreadyHeld = true
+                }, ct);
                 await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "AnalyzeText", null, ct);
                 return $"Sentiment: {nlpResult.Sentiment}, Entities: {string.Join(", ", nlpResult.ExtractedEntities)}";
 
@@ -570,14 +585,14 @@ public class AgentOrchestrator : IAgentOrchestrator
             // ── NEW: Document Summarization ──
             case "SUMMARIZE":
                 _logger.LogInformation("📝 Summarizing content...");
-                var summaryModel = await _modelManager.GetChatModelAsync();
+                var summaryModel = await _modelManager.GetChatModelAsync(ct: ct);
                 var summaryChat = new MultiTurnConversation(summaryModel);
                 summaryChat.SystemPrompt = _promptTemplate.Render("summarize", new Dictionary<string, string>
                 {
                     ["agent_name"] = "Hermes",
                     ["context"] = query.Length > 3000 ? query.Substring(0, 3000) : query
                 });
-                var summaryResult = summaryChat.Submit("Hãy tóm tắt nội dung trên.");
+                var summaryResult = summaryChat.Submit("Hãy tóm tắt nội dung trên.", ct);
                 return summaryResult.Completion;
 
             default:

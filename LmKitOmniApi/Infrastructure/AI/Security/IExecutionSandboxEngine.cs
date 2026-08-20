@@ -29,6 +29,7 @@ public class ExecutionSandboxEngine : IExecutionSandboxEngine
 
         try
         {
+            ct.ThrowIfCancellationRequested();
             _logger.LogInformation("🚀 Bắt đầu thực thi JavaScript trong Sandbox...");
             
             // Thiết lập Sandbox an toàn tuyệt đối
@@ -40,9 +41,14 @@ public class ExecutionSandboxEngine : IExecutionSandboxEngine
 
             // Chạy script
             var result = engine.Evaluate(codeSnippet);
+            ct.ThrowIfCancellationRequested();
             
             _logger.LogInformation("✅ Sandbox thực thi thành công.");
             return await Task.FromResult(result.ToString());
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

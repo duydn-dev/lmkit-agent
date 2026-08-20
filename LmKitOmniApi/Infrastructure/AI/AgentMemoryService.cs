@@ -135,6 +135,10 @@ public class AgentMemoryService : IAgentMemoryService
                     AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24)
                 }, ct);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch { /* ignore cache set errors */ }
         }
         else
@@ -146,7 +150,8 @@ public class AgentMemoryService : IAgentMemoryService
         // Always filter after the shared tenant cache is loaded. A cache hit must
         // never broaden the caller's memory scope.
         candidates = candidates
-            .Where(memory => MemoryScopePolicy.CanRecall(memory.UserId, userId))
+            .Where(memory => memory.IsConfirmed
+                && MemoryScopePolicy.CanRecall(memory.UserId, userId))
             .ToList();
 
         if (!candidates.Any()) return new List<MemoryRecallResult>();
@@ -159,9 +164,11 @@ public class AgentMemoryService : IAgentMemoryService
         Dictionary<string, float>? semanticScores = null;
         try
         {
-            var embeddingModel = await _modelManager.GetEmbeddingModelAsync();
+            var embeddingModel = await _modelManager.GetEmbeddingModelAsync(ct: ct);
             var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
-            var queryEmbedding = embedder.GetEmbeddings(query);
+            float[] queryEmbedding;
+            await using (var inferenceLease = await _modelManager.AcquireEmbeddingInferenceAsync(ct))
+                queryEmbedding = embedder.GetEmbeddings(query);
             var expectedUserId = userId?.ToString() ?? "Anonymous";
             var scopes = expectedUserId == "Anonymous"
                 ? new[] { "Anonymous" }
@@ -174,6 +181,10 @@ public class AgentMemoryService : IAgentMemoryService
                 Math.Max(maxResults * 4, 20),
                 ct);
             semanticScores = vectorMatches.ToDictionary(match => match.Id.ToString(), match => match.Score);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -234,17 +245,18 @@ public class AgentMemoryService : IAgentMemoryService
                 isConfirmed: false,
                 ct: ct);
             
-            // Phase 3: Graph Memory Vector Storage
-            // Cập nhật Qdrant: Lưu fact dưới dạng string relationship để semantic search tốt hơn
+            // Store the relational memory as a semantic-search vector.
             try
             {
                 var collectionName = $"graph_memory_{tenantId:N}";
-                var embeddingModel = await _modelManager.GetEmbeddingModelAsync();
-                await _vectorStore.EnsureCollectionExistsAsync(collectionName, (ulong)embeddingModel.EmbeddingSize);
+                var embeddingModel = await _modelManager.GetEmbeddingModelAsync(ct: ct);
+                await _vectorStore.EnsureCollectionExistsAsync(collectionName, (ulong)embeddingModel.EmbeddingSize, ct);
 
                 var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
                 var factString = $"User {userId} ({type}) {key}: {value}";
-                var vector = embedder.GetEmbeddings(factString);
+                float[] vector;
+                await using (var inferenceLease = await _modelManager.AcquireEmbeddingInferenceAsync(ct))
+                    vector = embedder.GetEmbeddings(factString);
                 
                 var payload = new Dictionary<string, object>
                 {
@@ -257,7 +269,11 @@ public class AgentMemoryService : IAgentMemoryService
 
                 // Reuse the relational memory ID so updates replace the existing vector
                 // instead of accumulating stale duplicates.
-                await _vectorStore.UpsertVectorAsync(collectionName, memoryId, vector, payload);
+                await _vectorStore.UpsertVectorAsync(collectionName, memoryId, vector, payload, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -311,6 +327,10 @@ public class AgentMemoryService : IAgentMemoryService
                         tenantGroup.Select(memory => memory.Id).ToList(),
                         ct);
                 }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to remove expired memory vectors for tenant {TenantId}.", tenantGroup.Key);
@@ -346,11 +366,35 @@ public class AgentMemoryService : IAgentMemoryService
                 new[] { memoryId },
                 ct);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to remove vector for deleted memory {MemoryId}.", memoryId);
         }
 
+        return true;
+    }
+
+    public async Task<bool> ConfirmMemoryAsync(
+        Guid tenantId,
+        Guid? userId,
+        Guid memoryId,
+        CancellationToken ct = default)
+    {
+        var updated = await _dbContext.AgentMemories
+            .Where(memory => memory.Id == memoryId
+                && memory.TenantId == tenantId
+                && memory.UserId == userId)
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(memory => memory.IsConfirmed, true)
+                .SetProperty(memory => memory.Confidence, 0.95f)
+                .SetProperty(memory => memory.UpdatedAtUtc, DateTime.UtcNow), ct);
+
+        if (updated == 0) return false;
+        await InvalidateMemoryCachesAsync(tenantId, userId, ct);
         return true;
     }
 

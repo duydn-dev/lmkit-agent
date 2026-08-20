@@ -9,6 +9,9 @@ Use this runbook for Docker/VM rollout of LM-Kit Omni Agent.
 - JWT secret, PostgreSQL password, LM-Kit license and LiveKit credentials come from a secrets manager.
 - Persistent volumes exist for `/var/lib/lmkit/keys`, `/app/Models` and `/app/Uploads`.
 - Target host has enough RAM for the configured models; the default chat model is `qwen3.5:2b`.
+- Production sets `LMKIT_REQUIRE_LICENSE=true`, `AI_WARMUP_CHAT_MODEL=true` and
+  `AI_REQUIRE_CHAT_MODEL_READY=true`. This makes `/health/ready` fail until the
+  license is configured and the chat model has loaded successfully.
 
 ## Pre-deployment gates
 
@@ -33,12 +36,15 @@ dotnet ef migrations script --idempotent --project .\LmKitOmniApi\LmKitOmniApi.c
 ## Rollout
 
 1. Deploy one API instance with `Database:ApplyMigrations=true`.
-2. Wait for `/health` to return HTTP 200.
+2. Wait for `/health/ready` to return HTTP 200. With production model gates enabled,
+   this proves PostgreSQL, Qdrant, Redis, the LM-Kit license and chat model readiness.
 3. Verify login → `/api/auth/me` → refresh → logout; the old token must return 401.
 4. Verify a tenant admin cannot list or update a user from another tenant.
 5. Upload, list and delete a small document. The list response must not contain `FilePath`.
 6. Scale the API only after the migration and smoke checks pass.
-7. Monitor HTTP 5xx/429, model-load failures, document `Failed` status, Qdrant latency and PostgreSQL saturation.
+7. Send the configured number of AI requests from one smoke identity and verify the
+   next request returns 429 with `Retry-After`; confirm a `rate:ai:*` key exists in Redis.
+8. Monitor HTTP 5xx/429, model-load failures, document `Failed` status, Qdrant latency and PostgreSQL saturation.
 
 ## Rollback triggers
 

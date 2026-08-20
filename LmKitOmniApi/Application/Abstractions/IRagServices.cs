@@ -7,6 +7,17 @@ public interface ITextChunkingService
 
 public interface IRagPipelineService
 {
-    Task<string> IngestDocumentAsync(Guid tenantId, Guid userId, string fileName, string content);
-    Task<string> QueryKnowledgeBaseAsync(Guid tenantId, Guid userId, string query, int topK = 3);
+    Task<string> IngestDocumentAsync(
+        Guid tenantId,
+        Guid userId,
+        string fileName,
+        string content,
+        CancellationToken ct = default);
+    Task<string> QueryKnowledgeBaseAsync(
+        Guid tenantId,
+        Guid userId,
+        string query,
+        int topK = 3,
+        CancellationToken ct = default,
+        bool chatInferenceLeaseAlreadyHeld = false);
 }

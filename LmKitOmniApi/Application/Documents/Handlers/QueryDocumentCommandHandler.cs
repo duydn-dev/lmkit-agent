@@ -15,6 +15,11 @@ public class QueryDocumentCommandHandler : IRequestHandler<QueryDocumentCommand,
 
     public async Task<string> Handle(QueryDocumentCommand request, CancellationToken cancellationToken)
     {
-        return await _ragService.QueryKnowledgeBaseAsync(request.TenantId, request.UserId, request.Query, request.TopK);
+        return await _ragService.QueryKnowledgeBaseAsync(
+            request.TenantId,
+            request.UserId,
+            request.Query,
+            request.TopK,
+            cancellationToken);
     }
 }

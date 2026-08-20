@@ -20,7 +20,8 @@ public class RemoveBackgroundCommandHandler : IRequestHandler<RemoveBackgroundCo
         if (string.IsNullOrEmpty(request.ImagePath) || !System.IO.File.Exists(request.ImagePath))
             throw new FileNotFoundException("Image file not found.", request.ImagePath);
 
-        var segModel = await _modelManager.GetSegmentationModelAsync();
+        var segModel = await _modelManager.GetSegmentationModelAsync(ct: cancellationToken);
+        await using var inferenceLease = await _modelManager.AcquireSegmentationInferenceAsync(cancellationToken);
         var detector = new BackgroundDetection(segModel);
 
         using var sourceImage = ImageBuffer.LoadAsRGB(request.ImagePath);

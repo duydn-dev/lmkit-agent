@@ -49,12 +49,12 @@ public class DocumentVectorizationWorker : BackgroundService
                 var chunkingService = scope.ServiceProvider.GetRequiredService<ITextChunkingService>();
                 var modelManager = scope.ServiceProvider.GetRequiredService<LmModelManager>();
 
-                var embeddingModel = await modelManager.GetEmbeddingModelAsync();
+                var embeddingModel = await modelManager.GetEmbeddingModelAsync(ct: stoppingToken);
                 var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
                 var config = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
                 string collectionName = config["VectorStore:CollectionName"] ?? "lmkit_chunks";
 
-                await vectorStore.EnsureCollectionExistsAsync(collectionName, (ulong)embeddingModel.EmbeddingSize);
+                await vectorStore.EnsureCollectionExistsAsync(collectionName, (ulong)embeddingModel.EmbeddingSize, stoppingToken);
                 var converter = new DocumentToMarkdown();
 
                 foreach (var documentId in candidateIds)
@@ -102,7 +102,9 @@ public class DocumentVectorizationWorker : BackgroundService
                         {
                             var textChunk = chunks[chunkIndex];
                             var vectorId = CreateDeterministicVectorId(doc.Id, chunkIndex);
-                            var vector = embedder.GetEmbeddings(textChunk);
+                            float[] vector;
+                            await using (var inferenceLease = await modelManager.AcquireEmbeddingInferenceAsync(stoppingToken))
+                                vector = embedder.GetEmbeddings(textChunk);
                             var chunkEntity = new DocumentChunk
                             {
                                 DocumentId = doc.Id,
@@ -123,7 +125,7 @@ public class DocumentVectorizationWorker : BackgroundService
                                 { "ChunkIndex", chunkIndex },
                                 { "Content", textChunk }
                             };
-                            await vectorStore.UpsertVectorAsync(collectionName, vectorId, vector, payload);
+                            await vectorStore.UpsertVectorAsync(collectionName, vectorId, vector, payload, stoppingToken);
                         }
 
                         doc.IsVectorized = true;
@@ -132,6 +134,10 @@ public class DocumentVectorizationWorker : BackgroundService
                         doc.LastProcessingError = null;
                         await dbContext.SaveChangesAsync(stoppingToken);
                         _logger.LogInformation("Successfully vectorized {ChunkCount} chunks for document {DocumentId}", chunks.Count, doc.Id);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        throw;
                     }
                     catch (Exception ex)
                     {
@@ -142,6 +148,10 @@ public class DocumentVectorizationWorker : BackgroundService
                         _logger.LogError(ex, "Vectorization failed for document {DocumentId}", doc.Id);
                     }
                 }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {

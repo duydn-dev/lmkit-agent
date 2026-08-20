@@ -60,7 +60,7 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         // Validate ownership before loading an expensive model. Model selection
         // is server-controlled; accepting a URL/model id from a chat request
         // would enable SSRF and disk/RAM exhaustion.
-        var model = await _modelManager.GetChatModelAsync();
+        var model = await _modelManager.GetChatModelAsync(ct: cancellationToken);
 
         var cacheKey = $"ChatHistory:{request.SessionId}";
         List<HistoryMessage>? historyMessages = null;

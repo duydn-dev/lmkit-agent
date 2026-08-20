@@ -88,7 +88,12 @@ public class OCRKnowledgeIngestionService
             if (saveToKnowledge && !string.IsNullOrWhiteSpace(extractedText) && extractedText.Length > 10)
             {
                 _logger.LogInformation("💾 Auto-saving attachment content to knowledge base: {File}", fileName);
-                await _ragService.IngestDocumentAsync(tenantId, userId, $"ChatAttachment_{fileName}", extractedText);
+                await _ragService.IngestDocumentAsync(
+                    tenantId,
+                    userId,
+                    $"ChatAttachment_{fileName}",
+                    extractedText,
+                    ct);
             }
 
             return new FileProcessingResult
@@ -98,6 +103,10 @@ public class OCRKnowledgeIngestionService
                 ExtractedText = extractedText,
                 FileType = GetFileCategory(ext)
             };
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

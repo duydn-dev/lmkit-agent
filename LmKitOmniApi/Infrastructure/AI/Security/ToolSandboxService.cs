@@ -105,6 +105,10 @@ public class ToolSandboxService
                 toolName, DefaultToolTimeout.TotalSeconds);
             return SandboxResult.TimedOut(toolName, DefaultToolTimeout);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "🔒 [Sandbox] Tool '{Tool}' FAILED in sandbox", toolName);

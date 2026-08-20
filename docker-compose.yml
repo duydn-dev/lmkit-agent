@@ -16,6 +16,9 @@ services:
       - Cors__AllowedOrigins__0=${CORS_ORIGIN:-http://localhost}
       - ConnectionStrings__Redis=${REDIS_CONNECTION_STRING:-redis:6379}
       - LMKit__LicenseKey=${LMKIT_LICENSE_KEY:-}
+      - LMKit__RequireLicense=${LMKIT_REQUIRE_LICENSE:-false}
+      - AiModels__WarmupChatModel=${AI_WARMUP_CHAT_MODEL:-false}
+      - AiModels__RequireChatModelReady=${AI_REQUIRE_CHAT_MODEL_READY:-false}
       - LiveKit__ApiKey=${LIVEKIT_API_KEY:-}
       - LiveKit__ApiSecret=${LIVEKIT_API_SECRET:-}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}

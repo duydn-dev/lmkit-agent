@@ -22,19 +22,25 @@ public class QdrantVectorService : IVectorStoreService
         _cache = cache;
     }
 
-    public async Task EnsureCollectionExistsAsync(string collectionName, ulong vectorSize)
+    public async Task EnsureCollectionExistsAsync(string collectionName, ulong vectorSize, CancellationToken ct = default)
     {
-        var collections = await _client.ListCollectionsAsync();
+        var collections = await _client.ListCollectionsAsync(ct);
         if (!collections.Contains(collectionName))
         {
             await _client.CreateCollectionAsync(
                 collectionName: collectionName,
-                vectorsConfig: new VectorParams { Size = vectorSize, Distance = Distance.Cosine }
+                vectorsConfig: new VectorParams { Size = vectorSize, Distance = Distance.Cosine },
+                cancellationToken: ct
             );
         }
     }
 
-    public async Task UpsertVectorAsync(string collectionName, Guid id, float[] vector, Dictionary<string, object>? payload = null)
+    public async Task UpsertVectorAsync(
+        string collectionName,
+        Guid id,
+        float[] vector,
+        Dictionary<string, object>? payload = null,
+        CancellationToken ct = default)
     {
         var pointId = new PointId { Uuid = id.ToString() };
         
@@ -59,7 +65,7 @@ public class QdrantVectorService : IVectorStoreService
 
         var points = new List<PointStruct> { point };
 
-        await _client.UpsertAsync(collectionName, points);
+        await _client.UpsertAsync(collectionName, points, cancellationToken: ct);
     }
 
     public async Task DeleteVectorsAsync(
@@ -71,7 +77,11 @@ public class QdrantVectorService : IVectorStoreService
         await _client.DeleteAsync(collectionName, ids, cancellationToken: ct);
     }
 
-    public async Task<List<VectorSearchResult>> SearchSimilarAsync(string collectionName, float[] queryVector, int topK)
+    public async Task<List<VectorSearchResult>> SearchSimilarAsync(
+        string collectionName,
+        float[] queryVector,
+        int topK,
+        CancellationToken ct = default)
     {
         // Tạo Hash cho câu truy vấn (Vector -> string) để làm Cache Key
         string vectorHash;
@@ -85,7 +95,7 @@ public class QdrantVectorService : IVectorStoreService
         var cacheKey = $"qdrant_{collectionName}_{topK}_{vectorHash}";
         
         // Cố gắng lấy từ Cache
-        var cachedData = await _cache.GetStringAsync(cacheKey);
+        var cachedData = await _cache.GetStringAsync(cacheKey, ct);
         if (!string.IsNullOrEmpty(cachedData))
         {
             var cachedResult = JsonSerializer.Deserialize<List<VectorSearchResult>>(cachedData);
@@ -95,7 +105,8 @@ public class QdrantVectorService : IVectorStoreService
             collectionName: collectionName,
             query: queryVector,
             limit: (ulong)topK,
-            payloadSelector: true
+            payloadSelector: true,
+            cancellationToken: ct
         );
 
         var results = new List<VectorSearchResult>();
@@ -124,7 +135,7 @@ public class QdrantVectorService : IVectorStoreService
         await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(results), new DistributedCacheEntryOptions
         {
             AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10)
-        });
+        }, ct);
 
         return results;
     }
@@ -178,7 +189,7 @@ public class QdrantVectorService : IVectorStoreService
     /// </summary>
     public async Task<List<VectorSearchResult>> SearchByPayloadFilterAsync(
         string collectionName, string payloadField, List<string> keywords,
-        string tenantFilterField, string tenantId, int topK)
+        string tenantFilterField, string tenantId, int topK, CancellationToken ct = default)
     {
         var results = new List<VectorSearchResult>();
         if (keywords.Count == 0) return results;
@@ -213,7 +224,8 @@ public class QdrantVectorService : IVectorStoreService
                 collectionName: collectionName,
                 filter: filter,
                 limit: (uint)topK,
-                payloadSelector: true
+                payloadSelector: true,
+                cancellationToken: ct
             );
 
             foreach (var p in scrollResult.Result)
@@ -243,6 +255,10 @@ public class QdrantVectorService : IVectorStoreService
                     Payload = payload
                 });
             }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {

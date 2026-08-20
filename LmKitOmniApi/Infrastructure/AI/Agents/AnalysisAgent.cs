@@ -48,7 +48,11 @@ public class AnalysisAgent : ISpecializedAgent
                 tenantId, userId, userRole, "AnalyzeText", null,
                 async token =>
                 {
-                    var analysis = await _mediator.Send(new AnalyzeTextCommand { Text = query }, token);
+                    var analysis = await _mediator.Send(new AnalyzeTextCommand
+                    {
+                        Text = query,
+                        ChatInferenceLeaseAlreadyHeld = true
+                    }, token);
                     return $"Sentiment: {analysis.Sentiment}, Entities: {string.Join(", ", analysis.ExtractedEntities)}";
                 }, ct);
 
@@ -66,6 +70,10 @@ public class AnalysisAgent : ISpecializedAgent
                 ToolsUsed = new List<string> { "AnalyzeText" },
                 Elapsed = sw.Elapsed
             };
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

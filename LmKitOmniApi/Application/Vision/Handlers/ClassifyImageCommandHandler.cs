@@ -20,7 +20,8 @@ public class ClassifyImageCommandHandler : IRequestHandler<ClassifyImageCommand,
         if (string.IsNullOrEmpty(request.ImagePath) || !System.IO.File.Exists(request.ImagePath))
             throw new FileNotFoundException("Image file not found.", request.ImagePath);
 
-        var visionModel = await _modelManager.GetVisionModelAsync();
+        var visionModel = await _modelManager.GetVisionModelAsync(ct: cancellationToken);
+        await using var inferenceLease = await _modelManager.AcquireVisionInferenceAsync(cancellationToken);
         var classifier = new Categorization(visionModel);
 
         using var img = ImageBuffer.LoadAsRGB(request.ImagePath);

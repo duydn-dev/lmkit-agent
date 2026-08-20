@@ -54,7 +54,13 @@ public class ResearchAgent : ISpecializedAgent
             _logger.LogInformation("🔬 [{Agent}] Searching knowledge base...", AgentName);
             var ragExecution = await _toolGateway.ExecuteReadOnlyAsync(
                 tenantId, userId, userRole, "QueryKnowledgeBase", query,
-                token => _ragService.QueryKnowledgeBaseAsync(tenantId, userId ?? Guid.Empty, query, topK: 3), ct);
+                token => _ragService.QueryKnowledgeBaseAsync(
+                    tenantId,
+                    userId ?? Guid.Empty,
+                    query,
+                    topK: 3,
+                    ct: token,
+                    chatInferenceLeaseAlreadyHeld: true), ct);
             if (ragExecution.IsSuccess
                 && !string.IsNullOrWhiteSpace(ragExecution.Output)
                 && !ragExecution.Output.Contains("Không tìm thấy"))
@@ -90,6 +96,10 @@ public class ResearchAgent : ISpecializedAgent
                 ToolsUsed = tools,
                 Elapsed = sw.Elapsed
             };
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

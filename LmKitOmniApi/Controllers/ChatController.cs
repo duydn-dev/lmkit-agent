@@ -26,11 +26,16 @@ public class ChatController : ControllerBase
 
     private readonly IMediator _mediator;
     private readonly OCRKnowledgeIngestionService _ocrIngestion;
+    private readonly ILogger<ChatController> _logger;
 
-    public ChatController(IMediator mediator, OCRKnowledgeIngestionService ocrIngestion)
+    public ChatController(
+        IMediator mediator,
+        OCRKnowledgeIngestionService ocrIngestion,
+        ILogger<ChatController> logger)
     {
         _mediator = mediator;
         _ocrIngestion = ocrIngestion;
+        _logger = logger;
     }
 
     /// <summary>
@@ -73,14 +78,7 @@ public class ChatController : ControllerBase
 
         var stream = _mediator.CreateStream(request, cancellationToken);
 
-        await foreach (var chunk in stream)
-        {
-            if (cancellationToken.IsCancellationRequested) break;
-            
-            await WriteSseAsync(chunk, cancellationToken);
-        }
-        
-        await WriteSseAsync("[DONE]", cancellationToken);
+        await StreamResponseAsync(stream, cancellationToken);
     }
 
     /// <summary>
@@ -218,13 +216,27 @@ public class ChatController : ControllerBase
 
         var chatStream = _mediator.CreateStream(command, cancellationToken);
 
-        await foreach (var chunk in chatStream)
+        await StreamResponseAsync(chatStream, cancellationToken);
+    }
+
+    private async Task StreamResponseAsync(IAsyncEnumerable<string> stream, CancellationToken ct)
+    {
+        try
         {
-            if (cancellationToken.IsCancellationRequested) break;
-            await WriteSseAsync(chunk, cancellationToken);
+            await foreach (var chunk in stream.WithCancellation(ct))
+                await WriteSseAsync(chunk, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Chat stream failed after response headers were sent");
+            await WriteSseAsync("[ERROR]: Unable to generate a response.", ct);
         }
 
-        await WriteSseAsync("[DONE]", cancellationToken);
+        await WriteSseAsync("[DONE]", ct);
     }
 
     private async Task WriteSseAsync(string data, CancellationToken ct)

@@ -1,6 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.AspNetCore.SignalR;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Infrastructure.VectorDb;
 using LmKitOmniApi.Application.Abstractions;
@@ -81,18 +79,6 @@ builder.Services.AddCors(options =>
               .AllowAnyHeader();
     });
 });
-
-// Đăng ký SignalR với Redis Backplane
-var signalRRedisConn = builder.Configuration.GetConnectionString("Redis");
-if (!string.IsNullOrEmpty(signalRRedisConn))
-{
-    // builder.Services.AddSignalR().AddStackExchangeRedis(signalRRedisConn);
-    builder.Services.AddSignalR(); // Tạm thời fallback do lỗi package của .NET 10 preview
-}
-else
-{
-    builder.Services.AddSignalR();
-}
 
 // Đăng ký Swagger/OpenAPI
 builder.Services.AddEndpointsApiExplorer();
@@ -204,7 +190,6 @@ builder.Services.AddScoped<AgentFilterPipeline>();
 // ============================================================
 builder.Services.AddScoped<IAgentMemoryService, AgentMemoryService>();
 builder.Services.AddScoped<ITokenManagementService, TokenManagementService>();
-builder.Services.AddScoped<ISentimentAnalyzerService, SentimentAnalyzerService>();
 
 // ============================================================
 // 🔍 Query Expansion (Phase 4 — Hybrid Search)
@@ -218,6 +203,7 @@ builder.Services.AddScoped<IRagPipelineService, RagPipelineService>();
 // Đăng ký Background Worker cho RAG Bất đồng bộ
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DocumentVectorizationWorker>();
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DataRetentionWorker>();
+builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ModelWarmupWorker>();
 
 // ============================================================
 // 🔄 Multi-Agent System (Phase 3)
@@ -240,6 +226,8 @@ builder.Services.AddScoped<OCRKnowledgeIngestionService>();
 var redisConnectionString = builder.Configuration.GetConnectionString("Redis");
 if (!string.IsNullOrEmpty(redisConnectionString))
 {
+    builder.Services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(
+        _ => StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString));
     builder.Services.AddStackExchangeRedisCache(options =>
     {
         options.Configuration = redisConnectionString;
@@ -296,34 +284,39 @@ builder.Services.AddHttpClient<IWebSearchService, LmKitOmniApi.Infrastructure.We
     client.Timeout = TimeSpan.FromSeconds(10);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("LmKitOmniAgent/1.0");
 });
-builder.Services.AddScoped<IOfficeDocumentToolService, LmKitOmniApi.Infrastructure.Tools.OfficeDocumentToolService>();
 
 // ============================================================
 // 🏥 Health Checks
 // ============================================================
 var healthChecks = builder.Services.AddHealthChecks()
     .AddCheck<LmKitOmniApi.Infrastructure.Health.PostgresHealthCheck>("postgres", tags: ["ready"])
-    .AddCheck<LmKitOmniApi.Infrastructure.Health.QdrantHealthCheck>("qdrant", tags: ["ready"]);
+    .AddCheck<LmKitOmniApi.Infrastructure.Health.QdrantHealthCheck>("qdrant", tags: ["ready"])
+    .AddCheck<LmKitOmniApi.Infrastructure.Health.LmKitModelHealthCheck>("lmkit-model", tags: ["ready"]);
 if (!string.IsNullOrWhiteSpace(redisConnectionString))
     healthChecks.AddCheck<LmKitOmniApi.Infrastructure.Health.RedisHealthCheck>("redis", tags: ["ready"]);
 
 // ============================================================
 // 🚦 Rate Limiting (bảo vệ tài nguyên LLM đắt đỏ)
 // ============================================================
+var aiRequestsPerWindow = builder.Configuration.GetValue("RateLimiting:AiRequestsPerWindow", 10);
+var aiWindowSeconds = builder.Configuration.GetValue("RateLimiting:AiWindowSeconds", 60);
+if (aiRequestsPerWindow <= 0 || aiWindowSeconds <= 0)
+    throw new InvalidOperationException("AI rate-limit values must be greater than zero.");
+
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     
-    // In Production with multiple instances, implement an IDistributedCache / Redis-backed sliding window here.
-    // E.g. using AspNetCoreRateLimit or a custom middleware. Using local TokenBucket for now.
+    // Local token bucket is the fallback and also protects each process. When Redis
+    // is configured, DistributedAiRateLimitMiddleware adds a cross-replica atomic window.
     options.AddPolicy("ai-agent", httpContext =>
         RateLimitPartition.GetTokenBucketLimiter(
             httpContext.User.Identity?.Name ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
             _ => new TokenBucketRateLimiterOptions
             {
-                TokenLimit = 10,
-                ReplenishmentPeriod = TimeSpan.FromMinutes(1),
-                TokensPerPeriod = 5,
+                TokenLimit = aiRequestsPerWindow,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(aiWindowSeconds),
+                TokensPerPeriod = aiRequestsPerWindow,
                 AutoReplenishment = true
             }));
 
@@ -404,9 +397,11 @@ if (builder.Configuration.GetValue("HttpsRedirection:Enabled", true))
 // Kích hoạt CORS (đã đổi tên policy từ "AllowAll" → "ProductionCors")
 app.UseCors("ProductionCors");
 
+app.UseRouting();
 app.UseAuthentication();
 // Authentication must run first so rate-limit partitions use the stable user id
 // instead of grouping every signed-in caller behind the same proxy IP.
+app.UseMiddleware<LmKitOmniApi.Infrastructure.Security.DistributedAiRateLimitMiddleware>();
 app.UseRateLimiter();
 app.UseAuthorization();
 
@@ -436,9 +431,5 @@ app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.Health
 {
     Predicate = check => check.Tags.Contains("ready")
 });
-
-// Map SignalR Hub
-app.MapHub<LmKitOmniApi.Infrastructure.Hubs.NotificationHub>("/hubs/notifications")
-    .RequireAuthorization();
 
 app.Run();

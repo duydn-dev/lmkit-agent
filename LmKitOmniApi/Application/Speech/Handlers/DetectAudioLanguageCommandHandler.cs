@@ -20,7 +20,8 @@ public class DetectAudioLanguageCommandHandler : IRequestHandler<DetectAudioLang
         if (string.IsNullOrEmpty(request.AudioPath) || !System.IO.File.Exists(request.AudioPath))
             throw new FileNotFoundException("Audio file not found.", request.AudioPath);
 
-        var speechModel = await _modelManager.GetSpeechModelAsync();
+        var speechModel = await _modelManager.GetSpeechModelAsync(ct: cancellationToken);
+        await using var inferenceLease = await _modelManager.AcquireSpeechInferenceAsync(cancellationToken);
         var engine = new SpeechToText(speechModel);
 
         var audio = new WaveFile(request.AudioPath);

@@ -29,7 +29,8 @@ public class RunContentCreationPipelineCommandHandler : IRequestHandler<RunConte
 
     public async Task<RunContentCreationPipelineResult> Handle(RunContentCreationPipelineCommand request, CancellationToken cancellationToken)
     {
-        var model = await _modelManager.GetChatModelAsync();
+        var model = await _modelManager.GetChatModelAsync(ct: cancellationToken);
+        await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(cancellationToken);
 
         var outlinerAgent = Agent.CreateBuilder(model)
             .WithPersona(@"Outliner - You are an expert Content Outliner. Your job is to analyze a topic and create a well-structured outline.
@@ -63,7 +64,13 @@ Include: A compelling title, Introduction, 3-5 main sections, Key points, Conclu
                             request.UserRole,
                             "QueryKnowledgeBase",
                             query,
-                            _ => _ragService.QueryKnowledgeBaseAsync(request.TenantId, request.UserId, query, topK: 5),
+                            token => _ragService.QueryKnowledgeBaseAsync(
+                                request.TenantId,
+                                request.UserId,
+                                query,
+                                topK: 5,
+                                ct: token,
+                                chatInferenceLeaseAlreadyHeld: true),
                             ct);
                         if (!execution.IsSuccess) throw new InvalidOperationException(execution.ErrorMessage);
                         return execution.Output;

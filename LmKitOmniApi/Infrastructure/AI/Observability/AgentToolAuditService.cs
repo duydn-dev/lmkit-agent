@@ -56,6 +56,10 @@ public sealed class AgentToolAuditService
             dbContext.AuditLogs.Add(entry);
             await dbContext.SaveChangesAsync(ct);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to persist tool audit {ToolCallId} for {ToolName}.", toolCallId, toolName);

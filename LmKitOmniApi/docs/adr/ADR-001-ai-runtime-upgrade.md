@@ -13,8 +13,8 @@ approval, rate limiting, output limits and audit persistence.
 
 The old string-action planner, keyword model router, generic MCP selector, custom DAG and
 unused Neo4j runtime have been removed from active code. Generated Office/Image/PDF
-`LMFunction` surfaces containing placeholders are excluded from compilation until they are
-implemented and reviewed.
+`LMFunction` placeholder surfaces were removed; future tools must be implemented,
+authorized and tested before entering the product tree.
 
 ## Default LM-Kit.NET tools
 

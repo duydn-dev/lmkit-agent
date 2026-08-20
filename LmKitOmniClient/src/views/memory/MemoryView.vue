@@ -22,12 +22,18 @@
               <div class="flex items-center gap-2 mb-2">
                 <span class="text-xs font-semibold px-2 py-1 rounded-full bg-blue-50 text-blue-700">{{ memory.memoryType }}</span>
                 <span class="text-xs text-gray-400">Độ tin cậy {{ Math.round(memory.confidence * 100) }}%</span>
+                <span class="text-xs font-medium px-2 py-1 rounded-full" :class="memory.isConfirmed ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'">
+                  {{ memory.isConfirmed ? 'Đã xác nhận' : 'Chờ xác nhận' }}
+                </span>
               </div>
               <h2 class="font-semibold break-words">{{ memory.memoryKey }}</h2>
               <p class="mt-2 text-sm text-gray-600 whitespace-pre-wrap break-words">{{ memory.memoryValue }}</p>
               <p class="mt-3 text-xs text-gray-400">Cập nhật {{ formatDate(memory.updatedAtUtc) }}</p>
             </div>
-            <Button icon="pi pi-trash" severity="danger" text rounded aria-label="Quên thông tin này" @click="forget(memory)" />
+            <div class="flex items-center gap-1">
+              <Button v-if="!memory.isConfirmed" icon="pi pi-check" severity="success" text rounded aria-label="Xác nhận thông tin này" @click="confirmMemory(memory)" />
+              <Button icon="pi pi-trash" severity="danger" text rounded aria-label="Quên thông tin này" @click="forget(memory)" />
+            </div>
           </div>
         </article>
       </div>
@@ -45,6 +51,7 @@ interface MemoryItem {
   memoryKey: string;
   memoryValue: string;
   confidence: number;
+  isConfirmed: boolean;
   updatedAtUtc: string;
 }
 
@@ -71,6 +78,16 @@ async function forget(memory: MemoryItem) {
   const response = await http.delete(`/api/memory/${memory.id}`);
   if (response.ok) memories.value = memories.value.filter(item => item.id !== memory.id);
   else error.value = 'Không thể xóa thông tin đã chọn.';
+}
+
+async function confirmMemory(memory: MemoryItem) {
+  const response = await http.post(`/api/memory/${memory.id}/confirm`);
+  if (response.ok) {
+    memory.isConfirmed = true;
+    memory.confidence = Math.max(memory.confidence, 0.95);
+  } else {
+    error.value = 'Không thể xác nhận thông tin đã chọn.';
+  }
 }
 
 function formatDate(value: string) {

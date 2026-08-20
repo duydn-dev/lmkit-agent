@@ -90,6 +90,10 @@ public class McpClientService
                     discoveredForTenant[server.Name] = tools;
                     _logger.LogInformation("🔗 [MCP] Discovered {Count} tools from '{Server}' for Tenant {Tenant}", tools.Count, server.Name, tenantId);
                 }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogWarning("⚠️ [MCP] Failed to discover tools from '{Server}' for Tenant {Tenant}: {Error}", server.Name, tenantId, ex.Message);
@@ -180,6 +184,10 @@ public class McpClientService
                 _logger.LogWarning("🔗 [MCP] Tool '{Tool}' invocation failed with HTTP {Status}", toolName, response.StatusCode);
                 return McpInvocationResult.Fail($"MCP server returned HTTP {(int)response.StatusCode}.");
             }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

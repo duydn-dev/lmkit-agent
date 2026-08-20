@@ -16,14 +16,17 @@ public class ClassifyTextCommandHandler : IRequestHandler<ClassifyTextCommand, C
 
     public async Task<ClassifyTextResult> Handle(ClassifyTextCommand request, CancellationToken cancellationToken)
     {
-        var chatModel = await _modelManager.GetChatModelAsync();
+        var chatModel = await _modelManager.GetChatModelAsync(ct: cancellationToken);
+        await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(cancellationToken);
         var classifier = new Categorization(chatModel);
 
         int categoryIndex = classifier.GetBestCategory(request.Categories, request.Text);
 
         return new ClassifyTextResult
         {
-            Category = request.Categories[categoryIndex],
+            Category = categoryIndex >= 0 && categoryIndex < request.Categories.Length
+                ? request.Categories[categoryIndex]
+                : "Unknown",
             Confidence = classifier.Confidence
         };
     }

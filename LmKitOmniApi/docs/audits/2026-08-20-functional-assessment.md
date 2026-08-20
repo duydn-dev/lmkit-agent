@@ -24,23 +24,23 @@
 | 4 | ReAct agent runtime | **7,5** | LM-Kit native ReAct, structured tools, filter, timeout, permission và approval hoạt động. Vẫn thường có lượt ReAct rồi synthesis nên latency cao; chưa có golden eval để chứng minh chất lượng/chi phí. |
 | 5 | LM-Kit Default Tools | **8,0** | Sáu tool read-only phù hợp đã bật: arithmetic, time, JSON, CSV, XML và statistics. Chưa có eval chọn tool/false-call; file/PDF/image tools chưa được bật vì cần policy và ownership riêng. |
 | 6 | Multi-agent supervisor và specialist | **7,0** | Role thật được truyền xuyên supervisor/specialist, lỗi path có khoảng trắng đã sửa. Chưa có parallel/load/eval; swarm interfaces cũ vẫn chỉ là scaffolding ngoài đường chạy chính. |
-| 7 | Agent memory | **7,0** | Có tenant/user scope, retention worker, semantic recall, overwrite contradiction, API và UI xem/xóa. Fact heuristic giờ là unconfirmed/confidence thấp; còn thiếu consent workflow, confirmation UI và precision/recall eval. |
+| 7 | Agent memory | **8,0** | Có tenant/user scope, retention worker, semantic recall, overwrite contradiction và UI xem/xác nhận/xóa. Fact heuristic là unconfirmed và không được đưa vào prompt trước khi user xác nhận; còn thiếu precision/recall eval và chỉnh sửa trực tiếp. |
 | 8 | RAG và knowledge base | **8,0** | Vector filter theo tenant+owner, reindex migration, deterministic chunk IDs, citation chunk, Admin-only ingest và delete end-to-end. Chưa có shared-document ACL, page-level citation, quality eval và DB/vector outbox cho distributed atomicity. |
 | 9 | MCP integration | **6,5** | Có tenant-scoped CRUD/UI, SSRF guard, encrypted headers, cache dùng chung và không trả secret. Đây vẫn là REST MCP adapter (`/mcp/tools`, `/mcp/invoke`), chưa phải MCP transport/capability negotiation chuẩn. |
-| 10 | Tool RBAC, sandbox, resilience, HITL và audit | **8,0** | Approved action re-check quyền hiện tại; write/unknown action không retry; regression test chứng minh chạy một lần. Rate/circuit counters trên Redis chưa atomic tuyệt đối và policy role vẫn là hai mức đơn giản. |
+| 10 | Tool RBAC, sandbox, resilience, HITL và audit | **8,0** | Approved action re-check quyền hiện tại; write/unknown action không retry; regression test chứng minh chạy một lần. AI HTTP quota dùng Redis atomic fixed-window với local fallback; circuit-breaker state vẫn chưa atomic tuyệt đối và policy role còn hai mức đơn giản. |
 | 11 | Quản lý tài liệu | **8,0** | Magic-byte validation, lifecycle Pending/Processing/Completed/Failed, atomic lease/retry, delete vector/file/DB và UI trạng thái thật. Còn thiếu virus scan, object storage, dead-letter UI và multi-replica integration test. |
-| 12 | Vision, OCR, classification, remove background | **7,0** | Ownership/signature/size checks và cleanup temp đã có; response output bị cap. Inference ngoài chat chưa có concurrency gate chung, chưa có image golden test và vẫn chạy native workload trong request. |
+| 12 | Vision, OCR, classification, remove background | **7,5** | Ownership/signature/size checks, cleanup temp, response cap và per-model concurrency gate đã có. Chưa có image golden test và native workload vẫn chạy trong request. |
 | 13 | Speech và LiveKit voice | **5,5** | Token đã tenant-scoped và speech endpoint có limit/rate limit. LiveKit vẫn là development profile, room UI còn tĩnh và chưa có backend voice-agent/media pipeline production. |
-| 14 | Text analysis và embeddings | **7,0** | Endpoint có auth, per-user rate limit và input cap; dùng LM-Kit thật. Còn thiếu batch API, per-model concurrency gate và quality set tiếng Việt. |
+| 14 | Text analysis và embeddings | **7,5** | Endpoint có auth, per-user rate limit, input cap và per-model concurrency gate; dùng LM-Kit thật. Còn thiếu batch API và quality set tiếng Việt. |
 | 15 | Content creation pipeline | **6,5** | Multi-stage pipeline và fact-check gateway có thật, input bị giới hạn/rate limit. Chưa có UI, citation schema và factuality/golden evaluation. |
 | 16 | Web search | **6,5** | Typed client, timeout, cancellation, response cap, cache và redirect normalization đã bổ sung. DuckDuckGo HTML scraping vẫn không ổn định như API chính thức và chưa fetch/verify nội dung nguồn. |
 | 17 | Web client chính | **7,5** | XSS từ model HTML đã chặn bằng escape-before-format, Pinia là auth source, logout backend thật, theme hiện hành, memory/MCP UI hoạt động. Chưa có frontend unit/E2E, accessibility audit và toast/error contract thống nhất. |
 | 18 | Embeddable chat widget | **4,5** | Đã chặn route bằng auth và giới hạn `postMessage` theo referrer origin, nên không còn giả vờ public/insecure. Chưa phải widget nhúng công khai; cần scoped widget credential, origin allowlist và quota trước khi mở. |
-| 19 | Notification, graph, API key và automation | **4,5** | SignalR đã authorize, không còn client broadcast toàn hệ thống; fake Hangfire/Telegram/proactive code đã gỡ. Graph memory, API-key product và notification service chưa phải chức năng triển khai; không còn được quảng cáo trong UI. |
-| 20 | Observability, audit và health | **8,0** | Có readiness/liveness, PostgreSQL/Redis/Qdrant checks, Prometheus/OTLP, audit và hash tenant trace. Chưa có dashboard/alert/SLO, audit query UI và readiness của model bắt buộc. |
+| 19 | Notification, graph, API key và automation | **4,5** | Fake SignalR echo, Hangfire, Telegram, proactive job và graph runtime đã gỡ khỏi active code. Graph/API-key/notification entities còn là schema kế thừa, không phải chức năng triển khai và không được quảng cáo trong UI. |
+| 20 | Observability, audit và health | **8,0** | Có readiness/liveness, PostgreSQL/Redis/Qdrant/model-license checks, warmup tùy chọn, Prometheus/OTLP, audit và hash tenant trace. Production phải bật ba model gate trong env; chưa có dashboard/alert/SLO và audit query UI. |
 | 21 | Docker/deployment/config | **8,0** | Non-root API, init volume ownership, persisted model/upload/key volumes, dependency health, migration-before-traffic và security headers đã có. Production vẫn cần TLS ingress, secret manager, certificate rotation, backup/restore drill và immutable image registry. |
-| 22 | Test và CI/CD | **7,5** | 80 backend tests pass, frontend/Release build sạch, npm audit 0, migration drift check sạch; CI/Dependabot/container jobs đã thêm. Chưa có browser/controller/model E2E, coverage gate, AI golden set, load/chaos/DAST. |
-| 23 | Tài liệu và vận hành | **7,5** | Root README, architecture/AI boundaries, deployment/rollback runbook, ADR và checklist này đã có. Legacy LM-Kit example tree còn nhiều `NotImplementedException` nhưng bị loại khỏi product compilation; cần tách hẳn samples thành repo/package riêng. |
+| 22 | Test và CI/CD | **7,5** | 87 backend tests pass, frontend/Release/Docker build sạch, npm/NuGet vulnerability audit sạch, migration drift check sạch; CI/Dependabot/container jobs đã thêm. Chưa có browser/model E2E, coverage gate, AI golden set, load/chaos/DAST. |
+| 23 | Tài liệu và vận hành | **8,5** | Root README, capability matrix, architecture boundaries, deployment/rollback runbook, ADR và checklist này đã có. Source placeholder với hơn 400 `NotImplementedException` và roadmap quảng cáo sai đã được loại khỏi product tree. |
 
 ## Hạng mục đã đóng trong đợt remediation
 
@@ -50,6 +50,7 @@
 - Bổ sung rate limit cho endpoint AI, input/output cap, web-search timeout/cache và non-idempotent retry policy.
 - Sửa auth state/frontend logout, thêm memory/MCP UI, bỏ các tab chức năng giả chưa có backend.
 - Bổ sung health checks, Data Protection persistence/certificate option, non-root container, model volume, CI và runbook.
+- Bổ sung per-model inference gate/cancellation, Redis atomic AI quota, model warmup/readiness gate và memory confirmation consent.
 
 ## Giới hạn chưa được phép gọi là “production-ready”
 
@@ -61,12 +62,15 @@
 
 ## Bằng chứng kiểm tra
 
-- `dotnet test ... -c Release`: **80/80 pass**, build **0 warning, 0 error** (ngoài thông báo SDK .NET 10 preview trên máy host).
+- `dotnet test ...`: **87/87 pass**, build **0 warning, 0 error** (ngoài thông báo SDK .NET 10 preview trên máy host).
 - `npm run build`: thành công; các route Memory/MCP và formatter an toàn được compile.
 - `npm audit --audit-level=high`: **0 vulnerability**.
+- `dotnet list ... package --vulnerable --include-transitive`: **không có package dễ tổn thương** theo nguồn NuGet hiện tại.
 - `dotnet ef migrations has-pending-model-changes`: **không có model drift**.
 - `docker compose --env-file .env.example config --quiet`: hợp lệ.
-- Smoke trước vòng cuối: login → me → refresh → logout; token/refresh cũ đều 401; cross-tenant user update 404; upload/list/delete document thành công; file giả PDF bị 400.
+- Docker artifact mới: API/client build sạch; PostgreSQL/Redis/API healthy; `/health/ready`, `/health/live` và frontend đều HTTP 200.
+- Smoke vòng cuối: memory fixture `IsConfirmed=false` → confirm HTTP 204 → `true`; 10 request AI nhận validation 400 và request thứ 11 nhận 429 + `Retry-After: 60`; Redis counter bằng 11 và có TTL.
+- Smoke vòng trước: login → me → refresh → logout; token/refresh cũ đều 401; cross-tenant user update 404; upload/list/delete document thành công; file giả PDF bị 400.
 
 ## Gate phát hành còn bắt buộc
 

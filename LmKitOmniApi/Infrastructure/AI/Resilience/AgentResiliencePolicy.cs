@@ -72,6 +72,10 @@ public class AgentResiliencePolicy
                 lastException = new TimeoutException($"Tool '{toolName}' timed out after {DefaultToolTimeout.TotalSeconds}s");
                 await RecordFailureAsync(toolName, ct);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning("🔄 Tool '{Tool}' failed on attempt {Attempt}/{Max}: {Error}",
@@ -140,6 +144,10 @@ public class AgentResiliencePolicy
                 lastException = new TimeoutException(
                     $"Tool '{toolName}' timed out after {DefaultToolTimeout.TotalSeconds}s.");
                 await RecordFailureAsync(toolName, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {

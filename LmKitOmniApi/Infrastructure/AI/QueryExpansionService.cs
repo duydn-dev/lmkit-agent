@@ -25,13 +25,17 @@ public class QueryExpansionService
     /// Expand a query by generating synonym variations + multi-perspective rewrites.
     /// Returns the original query plus expanded versions for broader retrieval.
     /// </summary>
-    public async Task<List<string>> ExpandQueryAsync(string query, int maxExpansions = 3, CancellationToken ct = default)
+    public async Task<List<string>> ExpandQueryAsync(
+        string query,
+        int maxExpansions = 3,
+        CancellationToken ct = default,
+        bool chatInferenceLeaseAlreadyHeld = false)
     {
         var expansions = new List<string> { query }; // Always include original
 
         try
         {
-            var model = await _modelManager.GetChatModelAsync();
+            var model = await _modelManager.GetChatModelAsync(ct: ct);
             var chat = new MultiTurnConversation(model);
             chat.SystemPrompt = @"Bạn là một chuyên gia tìm kiếm thông tin. 
 Nhiệm vụ: Viết lại câu hỏi của người dùng thành các biến thể khác nhau để tìm kiếm toàn diện hơn.
@@ -49,7 +53,16 @@ Phương pháp cải thiện performance cơ sở dữ liệu
 Kỹ thuật tăng tốc truy vấn database
 Tối ưu hóa query và index database";
 
-            var result = chat.Submit($"Viết lại câu hỏi: '{query}'");
+            LMKit.TextGeneration.TextGenerationResult result;
+            if (chatInferenceLeaseAlreadyHeld)
+            {
+                result = chat.Submit($"Viết lại câu hỏi: '{query}'", ct);
+            }
+            else
+            {
+                await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(ct);
+                result = chat.Submit($"Viết lại câu hỏi: '{query}'", ct);
+            }
             
             var lines = result.Completion
                 .Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
@@ -63,6 +76,10 @@ Tối ưu hóa query và index database";
             _logger.LogInformation("Query length {QueryLength} expanded to {Count} variations",
                 query.Length, expansions.Count);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning("⚠️ Query expansion failed, using original query only. Error: {Error}", ex.Message);
@@ -75,21 +92,37 @@ Tối ưu hóa query và index database";
     /// Generate a hypothetical document that would answer the query (HyDE technique).
     /// The embedding of this hypothetical doc often retrieves better results than the raw query.
     /// </summary>
-    public async Task<string> GenerateHypotheticalDocumentAsync(string query, CancellationToken ct = default)
+    public async Task<string> GenerateHypotheticalDocumentAsync(
+        string query,
+        CancellationToken ct = default,
+        bool chatInferenceLeaseAlreadyHeld = false)
     {
         try
         {
-            var model = await _modelManager.GetChatModelAsync();
+            var model = await _modelManager.GetChatModelAsync(ct: ct);
             var chat = new MultiTurnConversation(model);
             chat.SystemPrompt = @"Bạn là chuyên gia viết tài liệu. Hãy viết một đoạn văn ngắn (100-200 từ) 
 mô tả câu trả lời chi tiết cho câu hỏi bên dưới, như thể đây là đoạn trích từ tài liệu chính thức.
 Chỉ viết nội dung, không thêm tiêu đề hay giải thích.";
 
-            var result = chat.Submit(query);
+            LMKit.TextGeneration.TextGenerationResult result;
+            if (chatInferenceLeaseAlreadyHeld)
+            {
+                result = chat.Submit(query, ct);
+            }
+            else
+            {
+                await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(ct);
+                result = chat.Submit(query, ct);
+            }
             
             _logger.LogInformation("HyDE generated for query length {QueryLength}", query.Length);
             
             return result.Completion.Trim();
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

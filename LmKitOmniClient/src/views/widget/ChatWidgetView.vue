@@ -175,19 +175,16 @@ const sendMessage = async () => {
   const assistantMsg = messages.value[messages.value.length - 1];
   await scrollToBottom();
 
-  if (!currentSessionId.value) {
-      try {
+  try {
+    if (!currentSessionId.value) {
           const sessionRes = await http.post(ApiFactory.CHAT.CREATE_SESSION);
           if (sessionRes.ok) {
               const newSession = await sessionRes.json();
               currentSessionId.value = newSession.id;
+          } else {
+              throw new Error('Không thể tạo phiên trò chuyện.');
           }
-      } catch (e) {
-          console.error('Lỗi tạo session ẩn danh:', e);
-      }
-  }
-
-  try {
+    }
     const payload = {
       SessionId: currentSessionId.value || '00000000-0000-0000-0000-000000000000',
       Message: content,
@@ -196,7 +193,16 @@ const sendMessage = async () => {
     
     const response = await http.post(ApiFactory.CHAT.STREAM, payload);
 
-    if (!response.body) throw new Error('ReadableStream not supported');
+    if (!response.ok) {
+      let message = `Yêu cầu thất bại (${response.status}).`;
+      try {
+        const error = await response.json();
+        if (typeof error?.message === 'string') message = error.message;
+        else if (typeof error?.title === 'string') message = error.title;
+      } catch { /* response is not JSON */ }
+      throw new Error(message);
+    }
+    if (!response.body) throw new Error('Trình duyệt không hỗ trợ streaming response.');
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
@@ -204,7 +210,8 @@ const sendMessage = async () => {
     assistantMsg.isTyping = false;
 
     let buffer = '';
-    while (true) {
+    let streamFinished = false;
+    while (!streamFinished) {
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -227,7 +234,13 @@ const sendMessage = async () => {
             data = rawData;
           }
 
-          if (data === '[DONE]') break;
+          if (data === '[DONE]') {
+              streamFinished = true;
+              break;
+          }
+          if (data.startsWith('[ERROR]:')) {
+              throw new Error(data.substring('[ERROR]:'.length).trim());
+          }
           
           if (data.startsWith('[WEB_SEARCH]:')) {
               continue; // Bỏ qua web search display cho widget nhỏ để đỡ rối
@@ -245,6 +258,7 @@ const sendMessage = async () => {
               const taskId = data.replace('[HITL_APPROVAL_REQUIRED:', '').replace(']', '').trim();
               assistantMsg.hitlTaskId = taskId;
               await scrollToBottom();
+              streamFinished = true;
               break;
           }
           if (data.startsWith('[Agent invoked:')) continue; // Ẩn log thô của agent
@@ -254,6 +268,7 @@ const sendMessage = async () => {
         }
       }
     }
+    if (streamFinished) await reader.cancel();
   } catch (error) {
     assistantMsg.content = `Lỗi phản hồi: ${error instanceof Error ? error.message : 'Unknown error'}`;
     assistantMsg.isTyping = false;

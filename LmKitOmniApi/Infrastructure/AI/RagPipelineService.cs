@@ -42,10 +42,15 @@ public class RagPipelineService : IRagPipelineService
         _enableHyDE = configuration.GetValue<bool>("RagSettings:EnableHyDE", false);
     }
 
-    public async Task<string> IngestDocumentAsync(Guid tenantId, Guid userId, string fileName, string content)
+    public async Task<string> IngestDocumentAsync(
+        Guid tenantId,
+        Guid userId,
+        string fileName,
+        string content,
+        CancellationToken ct = default)
     {
-        var embeddingModel = await _modelManager.GetEmbeddingModelAsync();
-        await _vectorStore.EnsureCollectionExistsAsync(_collectionName, (ulong)embeddingModel.EmbeddingSize);
+        var embeddingModel = await _modelManager.GetEmbeddingModelAsync(ct: ct);
+        await _vectorStore.EnsureCollectionExistsAsync(_collectionName, (ulong)embeddingModel.EmbeddingSize, ct);
 
         var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
         var chunks = _chunkingService.ChunkText(content);
@@ -54,7 +59,9 @@ public class RagPipelineService : IRagPipelineService
         for (var chunkIndex = 0; chunkIndex < chunks.Count; chunkIndex++)
         {
             var chunk = chunks[chunkIndex];
-            var vector = embedder.GetEmbeddings(chunk);
+            float[] vector;
+            await using (var inferenceLease = await _modelManager.AcquireEmbeddingInferenceAsync(ct))
+                vector = embedder.GetEmbeddings(chunk);
             
             // Extract keywords for sparse search support
             var keywords = _queryExpansion.ExtractKeywords(chunk);
@@ -70,7 +77,7 @@ public class RagPipelineService : IRagPipelineService
                 { "Keywords", string.Join(" ", keywords) } // Sparse search field
             };
             
-            await _vectorStore.UpsertVectorAsync(_collectionName, Guid.NewGuid(), vector, payload);
+            await _vectorStore.UpsertVectorAsync(_collectionName, Guid.NewGuid(), vector, payload, ct);
             totalChunks++;
         }
 
@@ -79,16 +86,26 @@ public class RagPipelineService : IRagPipelineService
         return $"Ingested {totalChunks} chunks from {fileName}.";
     }
 
-    public async Task<string> QueryKnowledgeBaseAsync(Guid tenantId, Guid userId, string query, int topK = 3)
+    public async Task<string> QueryKnowledgeBaseAsync(
+        Guid tenantId,
+        Guid userId,
+        string query,
+        int topK = 3,
+        CancellationToken ct = default,
+        bool chatInferenceLeaseAlreadyHeld = false)
     {
         _logger.LogInformation("Hybrid search starting for tenant {TenantId}; query length {QueryLength}",
             tenantId, query.Length);
 
-        var embeddingModel = await _modelManager.GetEmbeddingModelAsync();
+        var embeddingModel = await _modelManager.GetEmbeddingModelAsync(ct: ct);
         var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
 
         // === Stage 1: Query Expansion ===
-        var expandedQueries = await _queryExpansion.ExpandQueryAsync(query, maxExpansions: 2);
+        var expandedQueries = await _queryExpansion.ExpandQueryAsync(
+            query,
+            maxExpansions: 2,
+            ct: ct,
+            chatInferenceLeaseAlreadyHeld: chatInferenceLeaseAlreadyHeld);
         _logger.LogInformation("Expanded to {Count} query variations", expandedQueries.Count);
 
         // === Stage 1.5: HyDE (Hypothetical Document Embeddings) ===
@@ -96,9 +113,16 @@ public class RagPipelineService : IRagPipelineService
         {
             try
             {
-                var hydeDoc = await _queryExpansion.GenerateHypotheticalDocumentAsync(query);
+                var hydeDoc = await _queryExpansion.GenerateHypotheticalDocumentAsync(
+                    query,
+                    ct,
+                    chatInferenceLeaseAlreadyHeld);
                 expandedQueries.Add(hydeDoc);
                 _logger.LogInformation("HyDE document generated and added to search queries");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -112,13 +136,16 @@ public class RagPipelineService : IRagPipelineService
 
         foreach (var expandedQuery in expandedQueries)
         {
-            var queryVector = embedder.GetEmbeddings(expandedQuery);
+            float[] queryVector;
+            await using (var inferenceLease = await _modelManager.AcquireEmbeddingInferenceAsync(ct))
+                queryVector = embedder.GetEmbeddings(expandedQuery);
             var tenantResults = await _vectorStore.SearchSimilarWithAnyPayloadAsync(
                 _collectionName,
                 queryVector,
                 "AccessScope",
                 new[] { BuildPrivateAccessScope(tenantId, userId) },
-                initialTopK);
+                initialTopK,
+                ct);
 
             foreach (var r in tenantResults)
             {
@@ -131,7 +158,7 @@ public class RagPipelineService : IRagPipelineService
         }
 
         // === Stage 3: Sparse Retrieval (Keyword Matching — BM25-like) ===
-        var sparseResults = await PerformKeywordSearchAsync(tenantId, userId, query);
+        var sparseResults = await PerformKeywordSearchAsync(tenantId, userId, query, ct);
 
         // === Stage 4: Reciprocal Rank Fusion (RRF) ===
         var fusedResults = ReciprocalRankFusion(allDenseResults, sparseResults, topK * 3);
@@ -150,10 +177,12 @@ public class RagPipelineService : IRagPipelineService
         if (!candidateTexts.Any()) return "Tài liệu bị rỗng nội dung.";
 
         // === Stage 5: Cross-Encoder Reranking ===
-        var rerankerModel = await _modelManager.GetRerankerModelAsync();
+        var rerankerModel = await _modelManager.GetRerankerModelAsync(ct: ct);
         var ranker = new LMKit.Embeddings.Reranker(rerankerModel);
 
-        var rankedScores = ranker.GetScore(query, candidateTexts.ToArray());
+        float[] rankedScores;
+        await using (var inferenceLease = await _modelManager.AcquireRerankerInferenceAsync(ct))
+            rankedScores = ranker.GetScore(query, candidateTexts.ToArray());
 
         var topResults = rankedScores
             .Select((score, index) => new
@@ -186,7 +215,11 @@ public class RagPipelineService : IRagPipelineService
     /// which meant documents outside the vector top-50 were invisible to keyword search.
     /// Now uses Qdrant's native payload filter — completely independent of vector similarity.
     /// </summary>
-    private async Task<List<(string Content, float Score, string Source)>> PerformKeywordSearchAsync(Guid tenantId, Guid userId, string query)
+    private async Task<List<(string Content, float Score, string Source)>> PerformKeywordSearchAsync(
+        Guid tenantId,
+        Guid userId,
+        string query,
+        CancellationToken ct)
     {
         var results = new List<(string Content, float Score, string Source)>();
         
@@ -202,7 +235,8 @@ public class RagPipelineService : IRagPipelineService
                 keywords: keywords.ToList(),
                 tenantFilterField: "AccessScope",
                 tenantId: BuildPrivateAccessScope(tenantId, userId),
-                topK: 20
+                topK: 20,
+                ct: ct
             );
 
             foreach (var r in payloadResults)
@@ -215,12 +249,16 @@ public class RagPipelineService : IRagPipelineService
             _logger.LogInformation("H3 Sparse search: {Count} results from payload filter for {Keywords} keywords",
                 results.Count, keywords.Count());
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning("Keyword search failed, falling back to vector+filter: {Error}", ex.Message);
             
             // Fallback: original vector-based keyword filtering (graceful degradation)
-            results = await PerformKeywordSearchFallbackAsync(tenantId, userId, query);
+            results = await PerformKeywordSearchFallbackAsync(tenantId, userId, query, ct);
         }
 
         return results;
@@ -230,22 +268,29 @@ public class RagPipelineService : IRagPipelineService
     /// Fallback sparse search — original vector-then-filter approach.
     /// Used when Qdrant payload index is not available.
     /// </summary>
-    private async Task<List<(string Content, float Score, string Source)>> PerformKeywordSearchFallbackAsync(Guid tenantId, Guid userId, string query)
+    private async Task<List<(string Content, float Score, string Source)>> PerformKeywordSearchFallbackAsync(
+        Guid tenantId,
+        Guid userId,
+        string query,
+        CancellationToken ct)
     {
         var results = new List<(string Content, float Score, string Source)>();
         var keywords = _queryExpansion.ExtractKeywords(query);
         if (!keywords.Any()) return results;
 
-        var embeddingModel = await _modelManager.GetEmbeddingModelAsync();
+        var embeddingModel = await _modelManager.GetEmbeddingModelAsync(ct: ct);
         var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
-        var queryVector = embedder.GetEmbeddings(query);
+        float[] queryVector;
+        await using (var inferenceLease = await _modelManager.AcquireEmbeddingInferenceAsync(ct))
+            queryVector = embedder.GetEmbeddings(query);
         
         var tenantResults = await _vectorStore.SearchSimilarWithAnyPayloadAsync(
             _collectionName,
             queryVector,
             "AccessScope",
             new[] { BuildPrivateAccessScope(tenantId, userId) },
-            50);
+            50,
+            ct);
 
         foreach (var r in tenantResults)
         {
