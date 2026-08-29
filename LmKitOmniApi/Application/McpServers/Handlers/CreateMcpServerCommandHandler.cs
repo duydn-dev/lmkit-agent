@@ -1,0 +1,57 @@
+using LmKitOmniApi.Application.McpServers.Commands;
+using LmKitOmniApi.Domain.Entities;
+using LmKitOmniApi.Infrastructure.AI.Mcp;
+using LmKitOmniApi.Infrastructure.AI.Security;
+using LmKitOmniApi.Infrastructure.Data;
+using LmKitOmniApi.Infrastructure.Security;
+using MediatR;
+
+namespace LmKitOmniApi.Application.McpServers.Handlers;
+
+public class CreateMcpServerCommandHandler : IRequestHandler<CreateMcpServerCommand, SaveMcpServerResult>
+{
+    private readonly HermesDbContext _db;
+    private readonly ToolSandboxService _sandbox;
+    private readonly McpHeaderProtector _protector;
+    private readonly McpClientService _mcp;
+
+    public CreateMcpServerCommandHandler(HermesDbContext db, ToolSandboxService sandbox, McpHeaderProtector protector, McpClientService mcp)
+    {
+        _db = db;
+        _sandbox = sandbox;
+        _protector = protector;
+        _mcp = mcp;
+    }
+
+    public async Task<SaveMcpServerResult> Handle(CreateMcpServerCommand request, CancellationToken cancellationToken)
+    {
+        var validation = await McpServerRules.ValidateAsync(_db, _sandbox, request.TenantId, null, request, cancellationToken);
+        if (validation is not null) return validation;
+
+        var server = new ExternalMcpServer
+        {
+            TenantId = request.TenantId,
+            Name = request.Name.Trim().ToLowerInvariant(),
+            Url = request.Url.TrimEnd('/'),
+            HeadersJson = McpServerRules.ProtectHeaders(_protector, request.Headers),
+            IsActive = request.IsActive,
+            TrustReadOnlyAnnotations = request.TrustReadOnlyAnnotations
+        };
+        _db.ExternalMcpServers.Add(server);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _mcp.InvalidateTenantCacheAsync(request.TenantId, cancellationToken);
+
+        return new SaveMcpServerResult
+        {
+            Status = McpServerMutationStatus.Success,
+            Server = new CreatedMcpServerDto
+            {
+                Id = server.Id,
+                Name = server.Name,
+                Url = server.Url,
+                IsActive = server.IsActive,
+                TrustReadOnlyAnnotations = server.TrustReadOnlyAnnotations
+            }
+        };
+    }
+}

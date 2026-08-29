@@ -42,6 +42,8 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
 
     public async IAsyncEnumerable<string> Handle(StreamChatCommand request, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        // Intentionally tracked: this entity is mutated below (Title auto-generation,
+        // Summary) and persisted via SaveChangesAsync — do not add AsNoTracking here.
         var session = await _dbContext.ChatSessions
             .FirstOrDefaultAsync(s => s.Id == request.SessionId
                 && s.TenantId == request.TenantId
@@ -77,8 +79,11 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
 
         if (historyMessages == null)
         {
-            // Load messages with absolute cap (prevents loading 10000+ messages)
+            // Load messages with absolute cap (prevents loading 10000+ messages).
+            // Read-only: rows are only copied into HistoryMessage below, never
+            // updated, so skip change tracking.
             var dbMessages = await _dbContext.ChatMessages
+                .AsNoTracking()
                 .Where(m => m.ChatSessionId == request.SessionId)
                 .OrderByDescending(m => m.CreatedAt) // Load newest first
                 .Take(MaxMessagesToLoad)

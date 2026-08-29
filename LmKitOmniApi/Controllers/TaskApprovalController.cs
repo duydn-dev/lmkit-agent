@@ -1,9 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.EntityFrameworkCore;
-using LmKitOmniApi.Infrastructure.Data;
-using LmKitOmniApi.Application.Abstractions;
-using LmKitOmniApi.Infrastructure.Security;
+using MediatR;
+using LmKitOmniApi.Application.Approvals.Commands;
+using LmKitOmniApi.Application.Approvals.Queries;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -12,21 +11,11 @@ namespace LmKitOmniApi.Controllers;
 [Authorize]
 public class TaskApprovalController : ApiControllerBase
 {
-    private readonly HermesDbContext _dbContext;
-    private readonly IAgentOrchestrator _agentOrchestrator;
-    private readonly ILogger<TaskApprovalController> _logger;
-    private readonly TaskApprovalPayloadProtector _payloadProtector;
+    private readonly IMediator _mediator;
 
-    public TaskApprovalController(
-        HermesDbContext dbContext,
-        IAgentOrchestrator agentOrchestrator,
-        TaskApprovalPayloadProtector payloadProtector,
-        ILogger<TaskApprovalController> logger)
+    public TaskApprovalController(IMediator mediator)
     {
-        _dbContext = dbContext;
-        _agentOrchestrator = agentOrchestrator;
-        _payloadProtector = payloadProtector;
-        _logger = logger;
+        _mediator = mediator;
     }
 
     [HttpGet("pending")]
@@ -35,11 +24,11 @@ public class TaskApprovalController : ApiControllerBase
         if (!TryGetIdentity(out var tenantId, out var userId))
             return Unauthorized();
 
-        var pending = await _dbContext.TaskApprovals
-            .Where(t => t.TenantId == tenantId && t.UserId == userId && t.Status == "Pending")
-            .OrderByDescending(t => t.CreatedAtUtc)
-            .Select(t => new { t.Id, t.ActionName, t.CreatedAtUtc })
-            .ToListAsync();
+        var pending = await _mediator.Send(new GetPendingApprovalsQuery
+        {
+            TenantId = tenantId,
+            UserId = userId
+        }, HttpContext.RequestAborted);
 
         return Ok(pending);
     }
@@ -50,53 +39,21 @@ public class TaskApprovalController : ApiControllerBase
         if (!TryGetIdentity(out var tenantId, out var userId))
             return Unauthorized();
 
-        var task = await _dbContext.TaskApprovals
-            .AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == id && t.TenantId == tenantId && t.UserId == userId);
-        if (task == null) return NotFound("Task not found.");
+        var outcome = await _mediator.Send(new ApproveTaskCommand
+        {
+            TaskId = id,
+            TenantId = tenantId,
+            UserId = userId
+        }, HttpContext.RequestAborted);
 
-        // Atomically claim the task. Two concurrent approval requests must never
-        // execute the same side-effecting tool twice.
-        var claimed = await _dbContext.TaskApprovals
-            .Where(t => t.Id == id
-                && t.TenantId == tenantId
-                && t.UserId == userId
-                && t.Status == "Pending")
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(t => t.Status, "Executing")
-                .SetProperty(t => t.ResolvedAtUtc, DateTime.UtcNow),
-                HttpContext.RequestAborted);
+        if (outcome.Outcome == ApproveTaskOutcome.NotFound)
+            return NotFound("Task not found.");
 
-        if (claimed == 0)
+        if (outcome.Outcome == ApproveTaskOutcome.Conflict)
             return Conflict("Task is no longer pending.");
-        
-        // Execute tool directly
-        string result;
-        try
-        {
-            var parameters = _payloadProtector.Unprotect(task.ParametersJson);
-            result = await _agentOrchestrator.ExecuteDirectActionAsync(
-                tenantId,
-                userId,
-                task.ActionName,
-                parameters,
-                id,
-                HttpContext.RequestAborted);
 
-            await _dbContext.TaskApprovals
-                .Where(t => t.Id == id && t.Status == "Executing")
-                .ExecuteUpdateAsync(
-                    setters => setters.SetProperty(t => t.Status, "Completed"),
-                    HttpContext.RequestAborted);
-        }
-        catch (Exception ex)
+        if (outcome.Outcome == ApproveTaskOutcome.Failed)
         {
-            _logger.LogError(ex, "Error executing approved task.");
-            await _dbContext.TaskApprovals
-                .Where(t => t.Id == id && t.Status == "Executing")
-                .ExecuteUpdateAsync(
-                    setters => setters.SetProperty(t => t.Status, "Failed"),
-                    HttpContext.RequestAborted);
             return StatusCode(StatusCodes.Status500InternalServerError, new
             {
                 Success = false,
@@ -104,7 +61,7 @@ public class TaskApprovalController : ApiControllerBase
             });
         }
 
-        return Ok(new { Success = true, Result = result });
+        return Ok(new { Success = true, Result = outcome.Result });
     }
 
     [HttpPost("{id}/reject")]
@@ -113,18 +70,15 @@ public class TaskApprovalController : ApiControllerBase
         if (!TryGetIdentity(out var tenantId, out var userId))
             return Unauthorized();
 
-        var rejected = await _dbContext.TaskApprovals
-            .Where(t => t.Id == id
-                && t.TenantId == tenantId
-                && t.UserId == userId
-                && t.Status == "Pending")
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(t => t.Status, "Rejected")
-                .SetProperty(t => t.ResolvedAtUtc, DateTime.UtcNow)
-                .SetProperty(t => t.RejectionComment, request.Comment),
-                HttpContext.RequestAborted);
+        var rejected = await _mediator.Send(new RejectTaskCommand
+        {
+            TaskId = id,
+            TenantId = tenantId,
+            UserId = userId,
+            Comment = request.Comment
+        }, HttpContext.RequestAborted);
 
-        if (rejected == 0) return NotFound("Pending task not found.");
+        if (!rejected) return NotFound("Pending task not found.");
 
         return Ok(new { Success = true, Message = "Task rejected." });
     }

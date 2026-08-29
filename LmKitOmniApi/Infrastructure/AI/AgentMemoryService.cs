@@ -100,14 +100,14 @@ public class AgentMemoryService : IAgentMemoryService
     public async Task<List<MemoryRecallResult>> RecallMemoriesAsync(Guid tenantId, Guid? userId, string query, int maxResults = 5, CancellationToken ct = default)
     {
         var cacheKey = GetTenantCacheKey(tenantId);
-        List<AgentMemory>? candidates = null;
+        List<MemoryCandidate>? candidates = null;
         var cachedMemories = await _cache.GetStringAsync(cacheKey, ct);
-        
+
         if (!string.IsNullOrEmpty(cachedMemories))
         {
             try
             {
-                candidates = JsonSerializer.Deserialize<List<AgentMemory>>(cachedMemories, new JsonSerializerOptions
+                candidates = JsonSerializer.Deserialize<List<MemoryCandidate>>(cachedMemories, new JsonSerializerOptions
                 {
                     ReferenceHandler = ReferenceHandler.IgnoreCycles
                 });
@@ -117,11 +117,36 @@ public class AgentMemoryService : IAgentMemoryService
 
         if (candidates == null)
         {
+            // Read-only scoring path: no tracking, and only the columns recall actually
+            // consumes (SourceContext and the Tenant/User navigations stay in the DB).
+            // The 1000-row candidate window is kept deliberately: only the top
+            // `maxResults` survive scoring, but keyword matching needs a wide recency
+            // window to reach older memories, and this query runs only on a cache miss
+            // (results are cached per tenant for 24h below).
+            // Upgrade path (deferred): recall could be served by tenant-scoped vector
+            // search alone — the vectors already exist in Qdrant (see
+            // ExtractAndStoreFactsAsync) — but that would make an embedding model
+            // mandatory at request time. Today the semantic score below is optional and
+            // keyword/recency scoring keeps recall functional with no model loaded.
             candidates = await _dbContext.AgentMemories
+                .AsNoTracking()
                 .Where(m => m.TenantId == tenantId
                     && (m.ExpiresAtUtc == null || m.ExpiresAtUtc > DateTime.UtcNow))
                 .OrderByDescending(m => m.UpdatedAtUtc)
                 .Take(1000)
+                .Select(m => new MemoryCandidate
+                {
+                    Id = m.Id,
+                    UserId = m.UserId,
+                    MemoryType = m.MemoryType,
+                    MemoryKey = m.MemoryKey,
+                    MemoryValue = m.MemoryValue,
+                    Confidence = m.Confidence,
+                    IsConfirmed = m.IsConfirmed,
+                    ExpiresAtUtc = m.ExpiresAtUtc,
+                    CreatedAtUtc = m.CreatedAtUtc,
+                    UpdatedAtUtc = m.UpdatedAtUtc
+                })
                 .ToListAsync(ct);
                 
             try
@@ -462,4 +487,26 @@ public class AgentMemoryService : IAgentMemoryService
 
         return facts;
     }
+}
+
+/// <summary>
+/// Lightweight projection of <see cref="AgentMemory"/> used for recall scoring and the
+/// per-tenant candidate cache. Recall only reads these fields; TenantId (already implied
+/// by the cache key and query filter), SourceContext, and the Tenant/User navigations are
+/// deliberately excluded so the DB reads and cached JSON stay small and untracked.
+/// Property names mirror <see cref="AgentMemory"/> so cache entries written before this
+/// projection existed still deserialize (unknown JSON members are skipped).
+/// </summary>
+internal sealed class MemoryCandidate
+{
+    public Guid Id { get; set; }
+    public Guid? UserId { get; set; }
+    public string MemoryType { get; set; } = string.Empty;
+    public string MemoryKey { get; set; } = string.Empty;
+    public string MemoryValue { get; set; } = string.Empty;
+    public float Confidence { get; set; }
+    public bool IsConfirmed { get; set; }
+    public DateTime? ExpiresAtUtc { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
 }

@@ -1,6 +1,6 @@
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
-using LmKitOmniApi.Application.Documents.Commands;
+using LmKitOmniApi.Application.KnowledgeBase.Commands;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
 
@@ -23,7 +23,7 @@ public class KnowledgeBaseController : ApiControllerBase
 
     [HttpPost("ingest")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> IngestDocument([FromBody] IngestDocumentCommand command)
+    public async Task<IActionResult> IngestDocument([FromBody] IngestKnowledgeCommand command)
     {
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
         command.TenantId = tenantId;
@@ -44,7 +44,7 @@ public class KnowledgeBaseController : ApiControllerBase
     }
 
     [HttpPost("query")]
-    public async Task<IActionResult> QueryKnowledge([FromBody] QueryDocumentCommand command)
+    public async Task<IActionResult> QueryKnowledge([FromBody] QueryKnowledgeCommand command)
     {
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
         command.TenantId = tenantId;

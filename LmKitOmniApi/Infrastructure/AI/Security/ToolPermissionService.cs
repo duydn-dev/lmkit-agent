@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using LmKitOmniApi.Application.Abstractions;
 using Microsoft.Extensions.Logging;
+using StackExchange.Redis;
 
 namespace LmKitOmniApi.Infrastructure.AI.Security;
 
@@ -8,12 +11,17 @@ namespace LmKitOmniApi.Infrastructure.AI.Security;
 /// Manages tool permissions per role and enforces rate limiting.
 /// Addresses OWASP LLM: Tool Misuse, Privilege Escalation.
 /// Inspired by console_net/ai-agents/permissions.
+/// When Redis is configured the quota window is a Redis sorted set updated by Lua
+/// scripts, so counts are atomic across replicas and survive restarts (mirrors
+/// <see cref="Resilience.AgentResiliencePolicy"/>); the in-process tracker remains
+/// the single-node fallback and the degradation path when Redis is unavailable.
 /// </summary>
 public class ToolPermissionService : IToolPermissionService
 {
     private readonly ILogger<ToolPermissionService> _logger;
-    
-    // Tool invocation tracking for rate limiting (in-memory for simplicity)
+    private readonly IDatabase? _redis;
+
+    // Tool invocation tracking for rate limiting (single-node / Redis-outage fallback)
     private readonly ConcurrentDictionary<string, List<DateTime>> _invocationTracker = new();
     
     // Role-based tool whitelist
@@ -61,26 +69,29 @@ public class ToolPermissionService : IToolPermissionService
     private const int DefaultRateLimit = 20; // per minute
     private const int RateLimitWindowMinutes = 1;
 
-    public ToolPermissionService(ILogger<ToolPermissionService> logger)
+    public ToolPermissionService(
+        ILogger<ToolPermissionService> logger,
+        IConnectionMultiplexer? redis = null)
     {
         _logger = logger;
+        _redis = redis?.GetDatabase();
     }
 
-    public Task<ToolPermissionResult> CanInvokeToolAsync(Guid tenantId, Guid? userId, string userRole, string toolName, CancellationToken ct = default)
+    public async Task<ToolPermissionResult> CanInvokeToolAsync(Guid tenantId, Guid? userId, string userRole, string toolName, CancellationToken ct = default)
     {
         // Check 1: Role-based permission
         if (!IsToolAllowedForRole(userRole, toolName))
         {
             _logger.LogWarning("🚫 Tool '{Tool}' denied for role '{Role}' (Tenant: {Tenant}, User: {User})",
                 toolName, userRole, tenantId, userId);
-            return Task.FromResult(ToolPermissionResult.Deny($"Tool '{toolName}' is not available for role '{userRole}'"));
+            return ToolPermissionResult.Deny($"Tool '{toolName}' is not available for role '{userRole}'");
         }
 
         // Check 2: Approval required?
         if (ApprovalRequiredTools.Contains(toolName))
         {
             _logger.LogInformation("⚠️ Tool '{Tool}' requires human approval (User: {User})", toolName, userId);
-            return Task.FromResult(ToolPermissionResult.NeedApproval());
+            return ToolPermissionResult.NeedApproval();
         }
 
         // Check 2b: Dynamic MCP Tool names
@@ -92,43 +103,30 @@ public class ToolPermissionService : IToolPermissionService
             if (!toolName.StartsWith("MCP:TRUSTED_READ:", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogInformation("⚠️ MCP Tool '{Tool}' requires human approval (User: {User})", toolName, userId);
-                return Task.FromResult(ToolPermissionResult.NeedApproval());
+                return ToolPermissionResult.NeedApproval();
             }
         }
 
         // Check 3: Rate limiting
         var rateLimitKey = $"{tenantId}:{userId ?? Guid.Empty}:{toolName}";
-        if (IsRateLimited(rateLimitKey, toolName))
+        if (await IsRateLimitedAsync(rateLimitKey, toolName))
         {
             _logger.LogWarning("⏱️ Rate limit exceeded for tool '{Tool}' (User: {User})", toolName, userId);
-            return Task.FromResult(ToolPermissionResult.Deny($"Rate limit exceeded for '{toolName}'. Please wait before retrying."));
+            return ToolPermissionResult.Deny($"Rate limit exceeded for '{toolName}'. Please wait before retrying.");
         }
 
-        return Task.FromResult(ToolPermissionResult.Allow());
+        return ToolPermissionResult.Allow();
     }
 
-    public Task RecordToolInvocationAsync(Guid tenantId, Guid? userId, string toolName, string? parameters = null, CancellationToken ct = default)
+    public async Task RecordToolInvocationAsync(Guid tenantId, Guid? userId, string toolName, string? parameters = null, CancellationToken ct = default)
     {
         var rateLimitKey = $"{tenantId}:{userId ?? Guid.Empty}:{toolName}";
-        
-        _invocationTracker.AddOrUpdate(
-            rateLimitKey,
-            _ => new List<DateTime> { DateTime.UtcNow },
-            (_, list) =>
-            {
-                lock (list)
-                {
-                    var cutoff = DateTime.UtcNow.AddMinutes(-RateLimitWindowMinutes);
-                    list.RemoveAll(t => t < cutoff);
-                    list.Add(DateTime.UtcNow);
-                }
-                return list;
-            });
+
+        if (!await TryRecordInvocationInRedisAsync(rateLimitKey))
+            RecordInvocationLocally(rateLimitKey);
 
         _logger.LogInformation("📋 Tool invocation recorded: {Tool} by User {User} (Tenant: {Tenant})",
             toolName, userId, tenantId);
-
-        return Task.CompletedTask;
     }
 
     public Task<List<string>> GetAllowedToolsAsync(string userRole, CancellationToken ct = default)
@@ -153,23 +151,112 @@ public class ToolPermissionService : IToolPermissionService
         return false; // Unknown role = deny all
     }
 
-    private bool IsRateLimited(string key, string toolName)
+    private async Task<bool> IsRateLimitedAsync(string key, string toolName)
     {
-        if (!_invocationTracker.TryGetValue(key, out var invocations))
-            return false;
-
-        var cutoff = DateTime.UtcNow.AddMinutes(-RateLimitWindowMinutes);
-        int recentCount;
-        lock (invocations)
-        {
-            invocations.RemoveAll(t => t < cutoff);
-            recentCount = invocations.Count;
-        }
-        
         var limit = ToolRateLimits.TryGetValue(toolName, out var specificLimit)
             ? specificLimit
             : DefaultRateLimit;
 
-        return recentCount >= limit;
+        var redisCount = await TryCountRecentInvocationsInRedisAsync(key);
+        if (redisCount is not null)
+            return redisCount.Value >= limit;
+
+        return CountRecentInvocationsLocally(key) >= limit;
     }
+
+    // ── Redis-backed sliding window (atomic across replicas) ──
+
+    private static readonly TimeSpan QuotaWindow = TimeSpan.FromMinutes(RateLimitWindowMinutes);
+
+    /// <returns>The in-window invocation count, or null when Redis is not configured/available.</returns>
+    private async Task<long?> TryCountRecentInvocationsInRedisAsync(string rateLimitKey)
+    {
+        if (_redis is null) return null;
+
+        try
+        {
+            const string script = """
+            redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, tonumber(ARGV[1]) - tonumber(ARGV[2]))
+            return redis.call('ZCARD', KEYS[1])
+            """;
+            var result = await _redis.ScriptEvaluateAsync(
+                script,
+                [BuildQuotaKey(rateLimitKey)],
+                [DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), (long)QuotaWindow.TotalMilliseconds]);
+            return (long)result;
+        }
+        catch (Exception ex) when (IsRedisAvailabilityFailure(ex))
+        {
+            _logger.LogError(ex, "Redis tool quota unavailable; using process-local invocation counts.");
+            return null;
+        }
+    }
+
+    /// <returns>True when the invocation was recorded in Redis; false to use the local fallback.</returns>
+    private async Task<bool> TryRecordInvocationInRedisAsync(string rateLimitKey)
+    {
+        if (_redis is null) return false;
+
+        try
+        {
+            const string script = """
+            redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, tonumber(ARGV[1]) - tonumber(ARGV[2]))
+            redis.call('ZADD', KEYS[1], tonumber(ARGV[1]), ARGV[3])
+            redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[2]))
+            return 1
+            """;
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            await _redis.ScriptEvaluateAsync(
+                script,
+                [BuildQuotaKey(rateLimitKey)],
+                [nowMs, (long)QuotaWindow.TotalMilliseconds, $"{nowMs}-{Guid.NewGuid():N}"]);
+            return true;
+        }
+        catch (Exception ex) when (IsRedisAvailabilityFailure(ex))
+        {
+            _logger.LogError(ex, "Redis tool quota unavailable; recording invocation in process-local fallback.");
+            return false;
+        }
+    }
+
+    // ── In-process fallback (identical to the original single-node behavior) ──
+
+    private void RecordInvocationLocally(string rateLimitKey) =>
+        _invocationTracker.AddOrUpdate(
+            rateLimitKey,
+            _ => new List<DateTime> { DateTime.UtcNow },
+            (_, list) =>
+            {
+                lock (list)
+                {
+                    var cutoff = DateTime.UtcNow.AddMinutes(-RateLimitWindowMinutes);
+                    list.RemoveAll(t => t < cutoff);
+                    list.Add(DateTime.UtcNow);
+                }
+                return list;
+            });
+
+    private int CountRecentInvocationsLocally(string key)
+    {
+        if (!_invocationTracker.TryGetValue(key, out var invocations))
+            return 0;
+
+        var cutoff = DateTime.UtcNow.AddMinutes(-RateLimitWindowMinutes);
+        lock (invocations)
+        {
+            invocations.RemoveAll(t => t < cutoff);
+            return invocations.Count;
+        }
+    }
+
+    // Hash the tenant:user:tool key so Redis never stores raw tenant/user ids or tool
+    // names (same convention as AgentResiliencePolicy.BuildCircuitKey).
+    private static string BuildQuotaKey(string rateLimitKey)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(rateLimitKey));
+        return $"LmKitOmniApi_tq:{Convert.ToHexString(hash)[..24].ToLowerInvariant()}";
+    }
+
+    private static bool IsRedisAvailabilityFailure(Exception exception) =>
+        exception is RedisConnectionException or RedisTimeoutException or ObjectDisposedException;
 }

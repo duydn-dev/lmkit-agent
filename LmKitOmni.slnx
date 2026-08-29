@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="LmKitOmniApi.Tests/LmKitOmniApi.Tests.csproj" />
+  <Project Path="LmKitOmniApi/LmKitOmniApi.csproj" />
+</Solution>

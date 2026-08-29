@@ -11,11 +11,7 @@ using LmKitOmniApi.Infrastructure.AI.Resilience;
 using LmKitOmniApi.Infrastructure.AI.Security;
 using LmKitOmniApi.Services;
 using MediatR;
-using LmKitOmniApi.Application.Vision.Commands;
-using LmKitOmniApi.Application.Speech.Commands;
-using LmKitOmniApi.Application.TextAnalysis.Commands;
 using System.Runtime.CompilerServices;
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using LmKitOmniApi.Infrastructure.AI.Tools;
 using LmKitOmniApi.Infrastructure.Security;
@@ -40,26 +36,24 @@ public class AgentOrchestrator : IAgentOrchestrator
 {
     // ── Core ──
     private readonly LmModelManager _modelManager;
-    private readonly IRagPipelineService _ragService;
-    private readonly IMediator _mediator;
-    private readonly IWebSearchService _webSearch;
     private readonly ILogger<AgentOrchestrator> _logger;
 
     // ── Security ──
     private readonly AgentFilterPipeline _filterPipeline;
     private readonly IToolPermissionService _toolPermission;
     private readonly ToolSandboxService _sandbox;
-    private readonly UserResourceAccessService _resources;
 
     // ── Memory ──
     private readonly IAgentMemoryService _memoryService;
     private readonly ITokenManagementService _tokenManagement;
 
-    // ── Multi-Agent ──
-    private readonly MultiAgentOrchestrator _multiAgent;
-
     // ── MCP ──
     private readonly McpClientService _mcpClient;
+
+    // ── Action dispatch ──
+    // Case bodies of ExecuteActionCoreAsync, mechanically extracted. Constructed
+    // directly by this class (not DI-registered) to keep the refactor self-contained.
+    private readonly AgentActionDispatcher _actionDispatcher;
 
     // ── Observability ──
     private readonly AgentTelemetryService _telemetry;
@@ -76,6 +70,12 @@ public class AgentOrchestrator : IAgentOrchestrator
     // ReAct loop configuration
     private const int MaxReActIterations = 5;
 
+    /// <summary>Completion-token cap applied to both the ReAct executor and the synthesis pass.</summary>
+    private const int DefaultMaximumCompletionTokens = 2048;
+
+    /// <summary>Upper bound on discovered MCP tool definitions exposed to the ReAct agent per request.</summary>
+    private const int MaxDiscoveredMcpToolCount = 12;
+
     // C3 Fix: Map ReAct action names → tool permission names for correct RBAC checks
     private static readonly Dictionary<string, string> ActionToToolMap = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -88,13 +88,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["SUMMARIZE"] = "AnalyzeText",
     };
 
-    // H6 Fix: Regex patterns for robust file path extraction
-    private static readonly Regex ImagePathRegex = new(
-        @"(?:^|\s)(?:""([^""]+\.(jpg|jpeg|png|bmp|webp))""|([^""\s]+\.(jpg|jpeg|png|bmp|webp)))",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex AudioPathRegex = new(
-        @"(?:^|\s)(?:""([^""]+\.(wav|mp3|flac))""|([^""\s]+\.(wav|mp3|flac)))",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // H6 path-extraction regexes moved to AgentActionDispatcher alongside the
+    // VISION/SPEECH cases that consume them (patterns unchanged).
 
     public AgentOrchestrator(
         LmModelManager modelManager,
@@ -119,16 +114,11 @@ public class AgentOrchestrator : IAgentOrchestrator
         LmKitOmniApi.Infrastructure.Data.HermesDbContext dbContext)
     {
         _modelManager = modelManager;
-        _ragService = ragService;
-        _mediator = mediator;
-        _webSearch = webSearch;
         _filterPipeline = filterPipeline;
         _memoryService = memoryService;
         _tokenManagement = tokenManagement;
         _toolPermission = toolPermission;
         _sandbox = sandbox;
-        _resources = resources;
-        _multiAgent = multiAgent;
         _mcpClient = mcpClient;
         _telemetry = telemetry;
         _toolAudit = toolAudit;
@@ -138,6 +128,21 @@ public class AgentOrchestrator : IAgentOrchestrator
         _defaultToolCatalog = defaultToolCatalog;
         _logger = logger;
         _dbContext = dbContext;
+
+        // Deliberately constructed here (not resolved from DI): the dispatcher gets
+        // exactly the injected dependencies its action cases use, and the public
+        // constructor signature of this class stays identical.
+        _actionDispatcher = new AgentActionDispatcher(
+            ragService,
+            mediator,
+            webSearch,
+            toolPermission,
+            resources,
+            multiAgent,
+            mcpClient,
+            modelManager,
+            promptTemplate,
+            logger);
     }
     private readonly LmKitOmniApi.Infrastructure.Data.HermesDbContext _dbContext;
 
@@ -177,6 +182,17 @@ public class AgentOrchestrator : IAgentOrchestrator
             ? "[THINKING]: 🧠 Đã tìm thấy ký ức liên quan\\n"
             : "[THINKING]: 🧠 Không có ký ức liên quan\\n";
 
+        // ── Two-pass inference design (deliberate trade-off — do not collapse casually) ──
+        // Pass 1 (Steps 3-4): the LM-Kit native ReAct agent runs the tool stage. It sees
+        //   only the current query plus memory context — ReAct carries NO session chat
+        //   history by design.
+        // Pass 2 (Step 5):   a history-aware MultiTurnConversation synthesizes the final
+        //   answer, integrating session history + memory + the ReAct result, with only
+        //   safe default tools registered.
+        // Cost: roughly 2x inference per query. Collapsing the two passes into one would
+        // require model-backed evals (golden-set) proving answer quality is preserved;
+        // until that evaluation exists, this two-pass flow is the documented, intentional
+        // behavior — not a bug.
         // ── Step 3-4: LM-Kit native tool discovery + ReAct planning ──
         yield return "[THINKING]: 📋 Khởi tạo LM-Kit ReAct agent với công cụ có cấu trúc...\\n";
         await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(cancellationToken);
@@ -200,7 +216,7 @@ public class AgentOrchestrator : IAgentOrchestrator
 
         var model = await _modelManager.GetChatModelAsync(ct: cancellationToken);
         var chat = new MultiTurnConversation(model, history);
-        chat.MaximumCompletionTokens = 2048;
+        chat.MaximumCompletionTokens = DefaultMaximumCompletionTokens;
         _defaultToolCatalog.RegisterSafeDefaults(chat);
         chat.SystemPrompt = BuildSystemPrompt(fullContext, memoryContext);
 
@@ -334,7 +350,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             .Build();
 
         using var executor = new AgentExecutor();
-        executor.MaximumCompletionTokens = 2048;
+        executor.MaximumCompletionTokens = DefaultMaximumCompletionTokens;
         var result = executor.Execute(agent, query, ct);
 
         return new NativeReActResult(
@@ -383,7 +399,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         if (profile.HasFlag(AgentToolProfile.ExternalMcp))
         {
             var mcpTools = await _mcpClient.DiscoverToolsAsync(tenantId, ct);
-            foreach (var definition in mcpTools.Take(12))
+            foreach (var definition in mcpTools.Take(MaxDiscoveredMcpToolCount))
             {
                 tools.Add(new McpProxyTool(
                     definition,
@@ -483,131 +499,14 @@ public class AgentOrchestrator : IAgentOrchestrator
 
     /// <summary>
     /// Core action execution (inside sandbox + resilience).
-    /// Now includes DELEGATE, MCP, and SUMMARIZE actions.
+    /// Includes DELEGATE, MCP, and SUMMARIZE actions.
+    /// The per-action bodies were mechanically extracted, unchanged, into
+    /// <see cref="AgentActionDispatcher"/>; this method remains the single entry
+    /// point invoked inside the sandbox/resilience layers.
     /// </summary>
-    private async Task<string> ExecuteActionCoreAsync(
+    private Task<string> ExecuteActionCoreAsync(
         Guid tenantId, Guid? userId, string userRole, string query, string action, CancellationToken ct)
-    {
-        switch (action)
-        {
-            case "RAG":
-                var ragResult = await _ragService.QueryKnowledgeBaseAsync(
-                    tenantId,
-                    userId ?? Guid.Empty,
-                    query,
-                    topK: 3,
-                    ct: ct,
-                    chatInferenceLeaseAlreadyHeld: true);
-                await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "QueryKnowledgeBase", query, ct);
-                return ragResult;
-
-            case "VISION":
-                // H6 Fix: Use regex for robust file path extraction
-                var imageMatch = ImagePathRegex.Match(query);
-                var imagePath = imageMatch.Success
-                    ? (imageMatch.Groups[1].Success ? imageMatch.Groups[1].Value : imageMatch.Groups[3].Value)
-                    : null;
-                if (!string.IsNullOrEmpty(imagePath))
-                {
-                    if (userId is null) return "[File access denied: user identity is required]";
-                    var pathCheck = _resources.ValidateOwnedPath(tenantId, userId.Value, imagePath);
-                    if (!pathCheck.IsAllowed) return $"[File access denied: {pathCheck.DenialReason}]";
-
-                    var visionResult = await _mediator.Send(new AnalyzeImageCommand { ImagePath = pathCheck.SanitizedPath }, ct);
-                    await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "AnalyzeImage", imagePath, ct);
-                    return visionResult;
-                }
-                return "No image path found in query.";
-
-            case "SPEECH":
-                // H6 Fix: Use regex for robust file path extraction
-                var audioMatch = AudioPathRegex.Match(query);
-                var audioPath = audioMatch.Success
-                    ? (audioMatch.Groups[1].Success ? audioMatch.Groups[1].Value : audioMatch.Groups[3].Value)
-                    : null;
-                if (!string.IsNullOrEmpty(audioPath))
-                {
-                    if (userId is null) return "[File access denied: user identity is required]";
-                    var audioPathCheck = _resources.ValidateOwnedPath(tenantId, userId.Value, audioPath);
-                    if (!audioPathCheck.IsAllowed) return $"[File access denied: {audioPathCheck.DenialReason}]";
-
-                    var speechResult = await _mediator.Send(new TranscribeAudioCommand { AudioPath = audioPathCheck.SanitizedPath }, ct);
-                    await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "TranscribeAudio", audioPath, ct);
-                    return speechResult.Text;
-                }
-                return "No audio path found in query.";
-
-            case "NLP":
-                var nlpResult = await _mediator.Send(new AnalyzeTextCommand
-                {
-                    Text = query,
-                    ChatInferenceLeaseAlreadyHeld = true
-                }, ct);
-                await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "AnalyzeText", null, ct);
-                return $"Sentiment: {nlpResult.Sentiment}, Entities: {string.Join(", ", nlpResult.ExtractedEntities)}";
-
-            case "WEB_SEARCH":
-                var webResult = await _webSearch.SearchWebAsync(query, 5, ct);
-                await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "SearchWeb", query, ct);
-                return webResult;
-
-            // ── NEW: Multi-Agent Delegation ──
-            case "DELEGATE":
-                _logger.LogInformation("🤖 Delegating to multi-agent system...");
-                var agentResult = await _multiAgent.RouteAndExecuteAsync(tenantId, userId, userRole, query, ct);
-                await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "Delegate", query, ct);
-                return agentResult;
-
-            // ── MCP External Tool (H5 Fix: query-based tool selection) ──
-            case var mcpAction when mcpAction.StartsWith("MCP:", StringComparison.OrdinalIgnoreCase):
-                var target = mcpAction[4..];
-                if (target.StartsWith("TRUSTED_READ:", StringComparison.OrdinalIgnoreCase))
-                    target = target[13..];
-                var separator = target.IndexOf(':');
-                if (separator <= 0 || separator == target.Length - 1)
-                    return "[MCP error: invalid server-qualified tool name]";
-                var exactServerName = target[..separator];
-                var exactToolName = target[(separator + 1)..];
-                Dictionary<string, object>? parameters;
-                try
-                {
-                    parameters = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(query);
-                }
-                catch (System.Text.Json.JsonException)
-                {
-                    return "[MCP error: invalid structured arguments]";
-                }
-
-                var exactMcpResult = await _mcpClient.InvokeToolAsync(
-                    tenantId,
-                    exactServerName,
-                    exactToolName,
-                    parameters ?? new Dictionary<string, object>(),
-                    ct);
-                if (!exactMcpResult.Success)
-                    throw new InvalidOperationException(exactMcpResult.ErrorMessage ?? "MCP tool failed.");
-
-                await _toolPermission.RecordToolInvocationAsync(
-                    tenantId, userId, mcpAction, query, ct);
-                return exactMcpResult.Content;
-
-            // ── NEW: Document Summarization ──
-            case "SUMMARIZE":
-                _logger.LogInformation("📝 Summarizing content...");
-                var summaryModel = await _modelManager.GetChatModelAsync(ct: ct);
-                var summaryChat = new MultiTurnConversation(summaryModel);
-                summaryChat.SystemPrompt = _promptTemplate.Render("summarize", new Dictionary<string, string>
-                {
-                    ["agent_name"] = "Hermes",
-                    ["context"] = query.Length > 3000 ? query.Substring(0, 3000) : query
-                });
-                var summaryResult = summaryChat.Submit("Hãy tóm tắt nội dung trên.", ct);
-                return summaryResult.Completion;
-
-            default:
-                return $"Unknown action: {action}";
-        }
-    }
+        => _actionDispatcher.ExecuteAsync(tenantId, userId, userRole, query, action, ct);
 
     /// <summary>
     /// Executes an approved action without repeating the approval check, while still

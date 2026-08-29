@@ -1,8 +1,8 @@
-using LmKitOmniApi.Application.Abstractions;
-using LmKitOmniApi.Infrastructure.Data;
+using LmKitOmniApi.Application.Memory.Commands;
+using LmKitOmniApi.Application.Memory.Queries;
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -11,13 +11,11 @@ namespace LmKitOmniApi.Controllers;
 [Authorize]
 public sealed class MemoryController : ApiControllerBase
 {
-    private readonly HermesDbContext _dbContext;
-    private readonly IAgentMemoryService _memoryService;
+    private readonly IMediator _mediator;
 
-    public MemoryController(HermesDbContext dbContext, IAgentMemoryService memoryService)
+    public MemoryController(IMediator mediator)
     {
-        _dbContext = dbContext;
-        _memoryService = memoryService;
+        _mediator = mediator;
     }
 
     [HttpGet]
@@ -25,25 +23,11 @@ public sealed class MemoryController : ApiControllerBase
     {
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
 
-        var memories = await _dbContext.AgentMemories
-            .AsNoTracking()
-            .Where(memory => memory.TenantId == tenantId
-                && memory.UserId == userId
-                && (memory.ExpiresAtUtc == null || memory.ExpiresAtUtc > DateTime.UtcNow))
-            .OrderByDescending(memory => memory.UpdatedAtUtc)
-            .Select(memory => new
-            {
-                memory.Id,
-                memory.MemoryType,
-                memory.MemoryKey,
-                memory.MemoryValue,
-                memory.Confidence,
-                memory.IsConfirmed,
-                memory.ExpiresAtUtc,
-                memory.CreatedAtUtc,
-                memory.UpdatedAtUtc,
-            })
-            .ToListAsync(ct);
+        var memories = await _mediator.Send(new ListAgentMemoriesQuery
+        {
+            TenantId = tenantId,
+            UserId = userId
+        }, ct);
 
         return Ok(memories);
     }
@@ -52,7 +36,14 @@ public sealed class MemoryController : ApiControllerBase
     public async Task<IActionResult> Forget(Guid id, CancellationToken ct)
     {
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
-        var deleted = await _memoryService.DeleteMemoryAsync(tenantId, userId, id, ct);
+
+        var deleted = await _mediator.Send(new DeleteAgentMemoryCommand
+        {
+            TenantId = tenantId,
+            UserId = userId,
+            MemoryId = id
+        }, ct);
+
         return deleted ? NoContent() : NotFound();
     }
 
@@ -60,7 +51,14 @@ public sealed class MemoryController : ApiControllerBase
     public async Task<IActionResult> Confirm(Guid id, CancellationToken ct)
     {
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
-        var confirmed = await _memoryService.ConfirmMemoryAsync(tenantId, userId, id, ct);
+
+        var confirmed = await _mediator.Send(new ConfirmAgentMemoryCommand
+        {
+            TenantId = tenantId,
+            UserId = userId,
+            MemoryId = id
+        }, ct);
+
         return confirmed ? NoContent() : NotFound();
     }
 }

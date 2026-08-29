@@ -6,11 +6,8 @@ using LmKitOmniApi.Infrastructure.AI.Resilience;
 using LmKitOmniApi.Services;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Caching.Distributed;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
@@ -71,8 +68,7 @@ public sealed class SecurityRegressionTests
     [Fact]
     public async Task ResiliencePolicy_DoesNotRetryUnsafeAction()
     {
-        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
-        var policy = new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance, cache);
+        var policy = new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance);
         var attempts = 0;
 
         var result = await policy.ExecuteWithResilienceAsync(
@@ -92,8 +88,7 @@ public sealed class SecurityRegressionTests
     [Fact]
     public async Task RequiredResiliencePolicy_DoesNotRetryUnsafeAction()
     {
-        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
-        var policy = new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance, cache);
+        var policy = new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance);
         var attempts = 0;
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => policy.ExecuteRequiredWithResilienceAsync<string>(
@@ -111,8 +106,7 @@ public sealed class SecurityRegressionTests
     [Fact]
     public async Task CircuitBreaker_CountsConcurrentFailuresAtomicallyAndIsolatesTenants()
     {
-        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
-        var policy = new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance, cache);
+        var policy = new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance);
         var releaseFailures = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = 0;
 
@@ -177,14 +171,13 @@ public sealed class SecurityRegressionTests
         Skip.IfNot(redisConfigured, "LMKIT_TEST_REDIS_CONNECTION is not set; skipping the Redis-backed circuit breaker test.");
 
         using var redis = await ConnectionMultiplexer.ConnectAsync(connectionString!);
-        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
         var isolationKey = $"redis-test:{Guid.NewGuid():N}";
         var redisKey = AgentResiliencePolicy.BuildCircuitKey(isolationKey);
         await redis.GetDatabase().KeyDeleteAsync(redisKey);
         try
         {
             var policies = Enumerable.Range(0, 5)
-                .Select(_ => new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance, cache, redis))
+                .Select(_ => new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance, redis))
                 .ToArray();
             var releaseFailures = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var started = 0;
@@ -270,8 +263,7 @@ public sealed class SecurityRegressionTests
         Skip.IfNot(redisConfigured, "LMKIT_TEST_REDIS_CONNECTION is not set; skipping the Redis-backed circuit breaker test.");
 
         using var redis = await ConnectionMultiplexer.ConnectAsync(connectionString!);
-        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
-        var policy = new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance, cache, redis);
+        var policy = new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance, redis);
         var isolationKey = $"redis-disconnect:{Guid.NewGuid():N}";
         await redis.CloseAsync();
 
@@ -340,8 +332,7 @@ public sealed class SecurityRegressionTests
     [Fact]
     public async Task ResiliencePolicy_PropagatesCallerCancellationInsteadOfReturningFallback()
     {
-        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
-        var policy = new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance, cache);
+        var policy = new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance);
         using var cancellation = new CancellationTokenSource();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => policy.ExecuteWithResilienceAsync(

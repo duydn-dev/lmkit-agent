@@ -8,7 +8,7 @@ Prerequisites: Docker Desktop with at least 12 GB available memory.
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env and replace POSTGRES_PASSWORD and JWT_SECRET_KEY.
+# Edit .env and replace POSTGRES_PASSWORD, REDIS_PASSWORD and JWT_SECRET_KEY.
 docker compose up --build -d
 docker compose ps
 ```
@@ -70,6 +70,7 @@ Important configuration:
 | Setting | Purpose |
 |---|---|
 | `JwtSettings__SecretKey` | JWT signing secret, at least 32 bytes |
+| `REDIS_PASSWORD` | Redis `requirepass` shared by the server and the API connection string (no commas) |
 | `AuthCookies__Secure` | Must be `true` behind production HTTPS |
 | `Database__ApplyMigrations` | Apply pending migrations on API startup |
 | `DataProtection__KeyPath` | Persistent key ring for encrypted approvals/MCP headers |

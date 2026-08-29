@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.Extensions.Caching.Distributed;
 using StackExchange.Redis;
 
 namespace LmKitOmniApi.Infrastructure.AI.Resilience;
@@ -29,11 +28,9 @@ public sealed class AgentResiliencePolicy
 
     public AgentResiliencePolicy(
         ILogger<AgentResiliencePolicy> logger,
-        IDistributedCache cache,
         IConnectionMultiplexer? redis = null)
     {
         _logger = logger;
-        ArgumentNullException.ThrowIfNull(cache);
         _redis = redis?.GetDatabase();
     }
 
