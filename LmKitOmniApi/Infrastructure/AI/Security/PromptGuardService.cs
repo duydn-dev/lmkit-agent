@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using LmKitOmniApi.Application.Abstractions;
 using Microsoft.Extensions.Logging;
@@ -68,6 +70,45 @@ public class PromptGuardService : IPromptGuardService
             "ContextInjection", "Persistent memory poisoning attempt", 0.7),
     };
 
+    // Vietnamese-language prompt injection / jailbreak patterns.
+    // Matched against a diacritic-folded copy of the input (see RemoveDiacritics), so both
+    // accented ("bỏ qua") and unaccented ("bo qua") spellings are detected. Patterns are
+    // therefore written in folded ASCII (no diacritics, 'đ' → 'd') and are case-insensitive.
+    private static readonly List<(string Pattern, string ThreatType, string Description, double Weight)> VietnameseInjectionPatterns = new()
+    {
+        // Override / ignore prior instructions — e.g. "bỏ qua tất cả hướng dẫn phía trên"
+        (@"(?i)\b(bo qua|phot lo|lo di|quen)\s+(di\s+)?(tat ca|toan bo|het|moi|cac|nhung)?\s*(huong dan|chi dan|chi thi|quy tac|quy dinh|nguyen tac|lenh|yeu cau|loi nhac|system prompt|prompt)",
+            "PromptInjection", "Vietnamese attempt to override system instructions", 0.9),
+
+        // Role reassignment — "bạn (giờ|bây giờ) là ..."
+        (@"(?i)\bban\s+(bay gio|gio day|hien gio|hien tai|gio)\s+la\b",
+            "Jailbreak", "Vietnamese role reassignment attempt", 0.7),
+
+        // Roleplay — "đóng vai ..." (negative lookahead excludes the benign "đóng vai trò")
+        (@"(?i)\bdong vai(?!\s+tro\b)",
+            "Jailbreak", "Vietnamese role-playing jailbreak attempt", 0.7),
+
+        // Pretend / impersonate — "giả vờ (là|rằng) ..."
+        (@"(?i)\bgia vo\b(\s+(la|rang|nhu))?",
+            "Jailbreak", "Vietnamese pretend/impersonation jailbreak attempt", 0.7),
+
+        // Developer / unrestricted mode — "chế độ nhà phát triển"
+        (@"(?i)\bche do\s+((nha\s+)?phat trien|dan|khong gioi han|tu do|khong kiem duyet|khong an toan)",
+            "Jailbreak", "Vietnamese developer/unrestricted mode jailbreak", 0.85),
+
+        // Refuse to comply — "không tuân theo (quy tắc|an toàn ...)"
+        (@"(?i)\bkhong\s+(tuan theo|tuan thu|lam theo|nghe theo|can tuan|phai tuan)\s+(cac|moi|nhung|bat ky|theo)?\s*(quy tac|quy dinh|huong dan|chi dan|nguyen tac|chinh sach|gioi han|rang buoc|an toan|kiem duyet)",
+            "Jailbreak", "Vietnamese safety-bypass / non-compliance attempt", 0.9),
+
+        // System prompt / instruction extraction — "tiết lộ prompt", "in ra hướng dẫn hệ thống"
+        (@"(?i)\b(tiet lo|hien thi|in ra|cho\s+\w+\s+xem|cho xem|doc|lap lai|nhac lai|liet ke)\s+(cho\s+\w+\s+)?(noi dung\s+)?(cac\s+|nhung\s+)?(system\s+|he thong\s+)?(system prompt|prompt|huong dan he thong|chi dan he thong|lenh he thong|cau lenh he thong|huong dan goc|huong dan ban dau|loi nhac he thong)",
+            "DataExfiltration", "Vietnamese system prompt extraction attempt", 0.85),
+
+        // System prompt probing — "hướng dẫn (ban đầu|gốc|hệ thống) của bạn là gì"
+        (@"(?i)\b(huong dan|chi dan|lenh|quy tac|prompt|system prompt)\s+(goc|ban dau|dau tien|he thong|khoi tao)\s+(cua ban|cua may|cua he thong|cua ai)?",
+            "DataExfiltration", "Vietnamese system prompt probing", 0.8),
+    };
+
     // Heuristic thresholds
     private const int SuspiciousSpecialCharThreshold = 15;
     private const double MaxAllowedRiskScore = 0.7;
@@ -101,6 +142,28 @@ public class PromptGuardService : IPromptGuardService
                         : matches[0].Value
                 };
                 detections.Add(detection);
+                maxRisk = Math.Max(maxRisk, weight);
+            }
+        }
+
+        // Layer 1b: Vietnamese pattern matching (diacritic-insensitive).
+        // Vietnamese users routinely type with or without accents, so match against a
+        // folded copy of the input where diacritics and 'đ' are normalized to base ASCII.
+        var foldedInput = RemoveDiacritics(input);
+        foreach (var (pattern, threatType, description, weight) in VietnameseInjectionPatterns)
+        {
+            var matches = Regex.Matches(foldedInput, pattern, RegexOptions.None, TimeSpan.FromMilliseconds(500));
+            if (matches.Count > 0)
+            {
+                detections.Add(new PromptThreatDetection
+                {
+                    ThreatType = threatType,
+                    Description = description,
+                    Confidence = weight,
+                    MatchedPattern = matches[0].Value.Length > 100
+                        ? matches[0].Value.Substring(0, 100) + "..."
+                        : matches[0].Value
+                });
                 maxRisk = Math.Max(maxRisk, weight);
             }
         }
@@ -301,5 +364,25 @@ public class PromptGuardService : IPromptGuardService
         }
         
         return Math.Min(composite, 1.0);
+    }
+
+    /// <summary>
+    /// Fold diacritics to base ASCII letters so pattern matching tolerates accented and
+    /// unaccented spellings alike. Also maps the Vietnamese letter 'đ'/'Đ' (which Unicode
+    /// does not decompose via normalization) to 'd'/'D'.
+    /// </summary>
+    private static string RemoveDiacritics(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        var normalized = text.Replace('đ', 'd').Replace('Đ', 'D').Normalize(NormalizationForm.FormD);
+        var sb = new StringBuilder(normalized.Length);
+        foreach (var c in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                sb.Append(c);
+        }
+
+        return sb.ToString().Normalize(NormalizationForm.FormC);
     }
 }

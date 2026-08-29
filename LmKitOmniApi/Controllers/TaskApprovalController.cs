@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
-using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Application.Abstractions;
@@ -11,7 +10,7 @@ namespace LmKitOmniApi.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class TaskApprovalController : ControllerBase
+public class TaskApprovalController : ApiControllerBase
 {
     private readonly HermesDbContext _dbContext;
     private readonly IAgentOrchestrator _agentOrchestrator;
@@ -33,10 +32,7 @@ public class TaskApprovalController : ControllerBase
     [HttpGet("pending")]
     public async Task<IActionResult> GetPendingApprovals()
     {
-        var tenantIdStr = User.FindFirst("TenantId")?.Value;
-        var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
-        if (!Guid.TryParse(tenantIdStr, out var tenantId) || !Guid.TryParse(userIdStr, out var userId))
+        if (!TryGetIdentity(out var tenantId, out var userId))
             return Unauthorized();
 
         var pending = await _dbContext.TaskApprovals
@@ -51,10 +47,7 @@ public class TaskApprovalController : ControllerBase
     [HttpPost("{id}/approve")]
     public async Task<IActionResult> ApproveTask(Guid id)
     {
-        var tenantIdStr = User.FindFirst("TenantId")?.Value;
-        var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
-        if (!Guid.TryParse(tenantIdStr, out var tenantId) || !Guid.TryParse(userIdStr, out var userId))
+        if (!TryGetIdentity(out var tenantId, out var userId))
             return Unauthorized();
 
         var task = await _dbContext.TaskApprovals
@@ -117,9 +110,7 @@ public class TaskApprovalController : ControllerBase
     [HttpPost("{id}/reject")]
     public async Task<IActionResult> RejectTask(Guid id, [FromBody] RejectTaskRequest request)
     {
-        var tenantIdStr = User.FindFirst("TenantId")?.Value;
-        var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (!Guid.TryParse(tenantIdStr, out var tenantId) || !Guid.TryParse(userIdStr, out var userId))
+        if (!TryGetIdentity(out var tenantId, out var userId))
             return Unauthorized();
 
         var rejected = await _dbContext.TaskApprovals

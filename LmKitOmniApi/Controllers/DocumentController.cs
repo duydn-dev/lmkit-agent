@@ -4,7 +4,6 @@ using LmKitOmniApi.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MediatR;
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using LmKitOmniApi.Infrastructure.AI.Security;
 using Microsoft.AspNetCore.RateLimiting;
@@ -16,7 +15,7 @@ namespace LmKitOmniApi.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class DocumentController : ControllerBase
+public class DocumentController : ApiControllerBase
 {
     private const long MaxUploadBytes = 50 * 1024 * 1024;
     private readonly LmModelManager _modelManager;
@@ -25,6 +24,7 @@ public class DocumentController : ControllerBase
     private readonly UserResourceAccessService _resources;
     private readonly IVectorStoreService _vectorStore;
     private readonly string _vectorCollectionName;
+    private readonly ILogger<DocumentController> _logger;
 
     public DocumentController(
         LmModelManager modelManager,
@@ -32,7 +32,8 @@ public class DocumentController : ControllerBase
         IMediator mediator,
         UserResourceAccessService resources,
         IVectorStoreService vectorStore,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ILogger<DocumentController> logger)
     {
         _modelManager = modelManager;
         _dbContext = dbContext;
@@ -40,16 +41,14 @@ public class DocumentController : ControllerBase
         _resources = resources;
         _vectorStore = vectorStore;
         _vectorCollectionName = configuration["VectorStore:CollectionName"] ?? "lmkit_chunks";
+        _logger = logger;
     }
 
     [Authorize]
     [HttpGet]
     public async Task<IActionResult> GetDocuments()
     {
-        var tenantIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "TenantId")?.Value;
-        var userIdString = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (!Guid.TryParse(tenantIdString, out var tenantId) || !Guid.TryParse(userIdString, out var userId))
-            return Unauthorized();
+        if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
         var isAdmin = User.IsInRole("Admin");
 
         var docs = await _dbContext.Documents
@@ -191,8 +190,9 @@ public class DocumentController : ControllerBase
                     await inferenceLease.DisposeAsync();
             }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Document conversion failed for tenant {TenantId} user {UserId} using strategy {Strategy}.", tenantId, userId, request.Strategy);
             return Problem(statusCode: 500, title: "Document conversion failed.");
         }
     }
@@ -225,16 +225,10 @@ public class DocumentController : ControllerBase
         {
             return NotFound(ex.Message);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Document data extraction failed for tenant {TenantId} user {UserId}.", tenantId, userId);
             return Problem(statusCode: 500, title: "Document extraction failed.");
         }
-    }
-
-    private bool TryGetIdentity(out Guid tenantId, out Guid userId)
-    {
-        var tenantValid = Guid.TryParse(User.FindFirst("TenantId")?.Value, out tenantId);
-        var userValid = Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out userId);
-        return tenantValid && userValid;
     }
 }

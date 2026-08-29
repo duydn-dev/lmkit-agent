@@ -115,7 +115,7 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         };
         _dbContext.ChatMessages.Add(userMsg);
 
-        if (string.IsNullOrWhiteSpace(session.Title) || session.Title == "Đoạn chat mới")
+        if (string.IsNullOrWhiteSpace(session.Title) || session.Title == CreateChatSessionCommand.DefaultChatTitle)
         {
             session.Title = request.Message.Length > 35 
                 ? request.Message.Substring(0, 35) + "..." 

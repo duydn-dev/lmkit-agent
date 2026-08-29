@@ -8,8 +8,16 @@ class Http {
     if (!isFormData && !reqHeaders['Content-Type']) {
       reqHeaders['Content-Type'] = 'application/json';
     }
-    
+
     return reqHeaders;
+  }
+
+  private serializeBody(body: unknown): BodyInit | undefined {
+    if (body instanceof FormData) {
+      return body;
+    }
+    // Preserve the original semantics: falsy bodies (undefined/null/'') are sent without a payload.
+    return body ? JSON.stringify(body) : undefined;
   }
 
   private isRefreshing = false;
@@ -22,6 +30,12 @@ class Http {
 
   private addRefreshSubscriber(cb: (success: boolean) => void) {
     this.refreshSubscribers.push(cb);
+  }
+
+  private redirectToLogin() {
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      window.location.assign('/login');
+    }
   }
 
   private async _request(url: string, options: RequestInit): Promise<Response> {
@@ -50,14 +64,14 @@ class Http {
           } else {
             this.isRefreshing = false;
             this.onRefreshed(false);
-            // If refresh fails, we could redirect to login here
-            if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-               window.location.assign('/login');
-            }
+            // Refresh was rejected: send the user back to the login screen.
+            this.redirectToLogin();
           }
-        } catch (e) {
+        } catch {
+          // A network error while refreshing is also a refresh failure.
           this.isRefreshing = false;
           this.onRefreshed(false);
+          this.redirectToLogin();
         }
       } else {
         // Wait for the ongoing refresh to finish
@@ -67,6 +81,11 @@ class Http {
         if (success) {
           // Retry the original request
           response = await fetch(`${BASE_URL}${url}`, options);
+        } else {
+          // The shared refresh failed for this waiter too. Previously the waiter
+          // branch silently returned the original 401 without redirecting; redirect
+          // so every concurrent request lands on /login consistently.
+          this.redirectToLogin();
         }
       }
     }
@@ -82,22 +101,22 @@ class Http {
     });
   }
 
-  async post(url: string, body?: any, headers: HeadersInit = {}): Promise<Response> {
+  async post(url: string, body?: unknown, headers: HeadersInit = {}): Promise<Response> {
     const isFormData = body instanceof FormData;
     return this._request(url, {
       method: 'POST',
       headers: this.prepareHeaders(headers, isFormData),
-      body: isFormData ? body : (body ? JSON.stringify(body) : undefined),
+      body: this.serializeBody(body),
       credentials: 'include'
     });
   }
-  
-  async put(url: string, body?: any, headers: HeadersInit = {}): Promise<Response> {
+
+  async put(url: string, body?: unknown, headers: HeadersInit = {}): Promise<Response> {
     const isFormData = body instanceof FormData;
     return this._request(url, {
       method: 'PUT',
       headers: this.prepareHeaders(headers, isFormData),
-      body: isFormData ? body : (body ? JSON.stringify(body) : undefined),
+      body: this.serializeBody(body),
       credentials: 'include'
     });
   }

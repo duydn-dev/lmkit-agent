@@ -25,7 +25,7 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                 Id = Guid.NewGuid(),
                 UserId = request.UserId,
                 TenantId = user.TenantId,
-                Title = request.Title,
+                Title = string.IsNullOrWhiteSpace(request.Title) ? CreateChatSessionCommand.DefaultChatTitle : request.Title,
                 CreatedAt = DateTime.UtcNow
             };
 

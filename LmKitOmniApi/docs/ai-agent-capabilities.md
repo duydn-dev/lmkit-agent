@@ -13,6 +13,8 @@ Tài liệu này mô tả các đường chạy có thật trong `LmKitOmniApi`.
 | Agent memory | Hỗ trợ | Memory theo tenant/user, semantic recall, retention worker và UI xem/xác nhận/xóa. Fact heuristic không vào prompt trước khi được xác nhận. |
 | Graph memory | Không hỗ trợ | Không có graph runtime được đăng ký. Các entity schema cũ không đồng nghĩa với một chức năng product. |
 
+Tool resilience được cô lập theo tenant/tool. Production dùng Redis Lua để đếm failure và cấp đúng một half-open probe giữa nhiều replica; circuit key được hash và side-effect không idempotent không bị retry.
+
 ## Công cụ agent
 
 Các LM-Kit Default Tools được bật mặc định đều là read-only, deterministic và không truy cập filesystem/process/environment:

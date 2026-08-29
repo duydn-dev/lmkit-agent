@@ -95,7 +95,8 @@ public sealed class AgentToolGateway
                         sandboxResult.ErrorMessage ?? $"Tool '{toolName}' failed.");
                 },
                 AgentToolGatewayResult.Failed($"Tool '{toolName}' is temporarily unavailable."),
-                ct);
+                ct,
+                isolationKey: $"{tenantId:N}:{toolName}");
 
             if (result.IsSuccess)
             {

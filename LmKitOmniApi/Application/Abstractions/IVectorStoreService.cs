@@ -10,7 +10,6 @@ public class VectorSearchResult
 public interface IVectorStoreService
 {
     Task UpsertVectorAsync(string collectionName, Guid id, float[] vector, Dictionary<string, object>? payload = null, CancellationToken ct = default);
-    Task<List<VectorSearchResult>> SearchSimilarAsync(string collectionName, float[] queryVector, int topK, CancellationToken ct = default);
     Task<List<VectorSearchResult>> SearchSimilarWithAnyPayloadAsync(
         string collectionName,
         float[] queryVector,

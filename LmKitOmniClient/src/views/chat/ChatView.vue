@@ -146,9 +146,9 @@
           
           <!-- Text Area -->
           <div class="px-3 pt-2">
-            <Textarea 
-              v-model="inputMessage" 
-              @keydown.enter.prevent="sendMessage"
+            <Textarea
+              v-model="inputMessage"
+              @keydown.enter.exact.prevent="sendMessage"
               class="w-full max-h-48 !bg-transparent !border-0 resize-none !shadow-none text-gray-800 text-base"
               rows="1"
               autoResize
@@ -215,26 +215,20 @@ import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import GenerativeUiRenderer from '@/components/chat/GenerativeUiRenderer.vue';
-import { ChatSseParser, type ChatStreamEvent } from '@/utils/chatSse';
+import {
+  useChatStream,
+  useHitlActions,
+  isSafeWebUrl,
+  getCleanUserContent,
+  type ChatMessage,
+} from '@/composables/useChatStream';
 const VoiceWebRtcModule = defineAsyncComponent(
   () => import('@/components/voice/VoiceWebRtcModule.vue')
 );
 
-interface Message {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  isTyping?: boolean;
-  webUrls?: string[];
-  thinkingSteps?: string[];
-  attachedFiles?: string[];
-  hitlTaskId?: string;
-  hitlResolved?: string;
-  hitlBusy?: boolean;
-  hitlError?: string;
-}
-
 const inputMessage = ref('');
-const messages = ref<Message[]>([]);
+const messages = ref<ChatMessage[]>([]);
+const { consumeStream } = useChatStream();
 const chatError = ref('');
 const isGenerating = ref(false);
 const chatContainer = ref<HTMLElement | null>(null);
@@ -250,7 +244,7 @@ const loadMessages = async () => {
     const response = await http.get(ApiFactory.CHAT.GET_MESSAGES(currentSessionId.value));
     if (response.ok) {
       const data = await response.json();
-      messages.value = data.map((m: any) => {
+      messages.value = data.map((m: { content: string; role: string }) => {
         let content = m.content;
         let webUrls: string[] | undefined = undefined;
         let thinkingSteps: string[] | undefined = undefined;
@@ -295,15 +289,6 @@ const drawerUrls = ref<string[]>([]);
 const openDrawer = (urls: string[]) => {
   drawerUrls.value = urls.filter(isSafeWebUrl);
   isDrawerOpen.value = true;
-};
-
-const isSafeWebUrl = (urlStr: string) => {
-  try {
-    const url = new URL(urlStr);
-    return url.protocol === 'https:' || url.protocol === 'http:';
-  } catch {
-    return false;
-  }
 };
 
 const getCleanHostname = (urlStr: string) => {
@@ -367,11 +352,6 @@ const getFileIconForInput = (name: string) => {
   return 'pi pi-file text-gray-600';
 };
 
-// Remove file context block from user message display
-const getCleanUserContent = (content: string) => {
-  return content.replace(/\n\n--- Nội dung file đính kèm ---[\s\S]*/g, '').trim();
-};
-
 const copyMessage = async (content: string) => {
   chatError.value = '';
   try {
@@ -433,56 +413,13 @@ const sendMessage = async () => {
     }
 
     if (!response.ok) throw new Error(await readApiError(response, 'Yêu cầu chat thất bại'));
-    if (!response.body) throw new Error('Trình duyệt không hỗ trợ streaming response.');
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-
-    assistantMsg.isTyping = false;
-
-    const parser = new ChatSseParser();
-    let streamFinished = false;
-    while (!streamFinished) {
-      const { done, value } = await reader.read();
-      const events = done
-        ? [...parser.push(decoder.decode()), ...parser.finish()]
-        : parser.push(decoder.decode(value, { stream: true }));
-      for (const event of events) {
-          if (event.type === 'done') {
-              streamFinished = true;
-              break;
-          }
-          if (event.type === 'error') {
-              throw new Error(event.value);
-          }
-          
-          if (event.type === 'web-search') {
-              const urls = event.value.split('|').filter(isSafeWebUrl);
-              assistantMsg.webUrls = urls;
-              continue;
-          }
-          if (event.type === 'thinking') {
-              if (!assistantMsg.thinkingSteps) {
-                  assistantMsg.thinkingSteps = [];
-              }
-              assistantMsg.thinkingSteps.push(event.value);
-              await scrollToBottom();
-              continue;
-          }
-          if (event.type === 'approval') {
-              assistantMsg.hitlTaskId = event.value;
-              await scrollToBottom();
-              streamFinished = true;
-              break;
-          }
-          if (event.type === 'agent-log') continue;
-
-          assistantMsg.content += (event as Extract<ChatStreamEvent, { type: 'content' }>).value;
-          await scrollToBottom();
-      }
-      if (done) break;
-    }
-    if (streamFinished) await reader.cancel();
+    await consumeStream({
+      response,
+      assistantMsg,
+      scrollToBottom,
+      onWebSearch: (urls) => { assistantMsg.webUrls = urls; },
+    });
   } catch (error) {
     assistantMsg.content = `Lỗi: ${errorMessage(error, 'Không thể tạo câu trả lời.')}`;
     assistantMsg.isTyping = false;
@@ -492,43 +429,10 @@ const sendMessage = async () => {
   }
 };
 
-const approveTask = async (msg: any) => {
-  msg.hitlBusy = true;
-  msg.hitlError = undefined;
-  try {
-    const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/approve`);
-    if (!res.ok) throw new Error(await readApiError(res, 'Phê duyệt thất bại'));
-    const response = await res.json();
-    const result = typeof response.result === 'string' ? response.result : '';
-    msg.hitlResolved = 'Approved';
-    messages.value.push({
-      role: 'system',
-      content: `Đã phê duyệt. Kết quả thực thi tool: ${result}`
-    });
-    inputMessage.value = `Tôi đã phê duyệt hành động trên. Kết quả thực thi là: ${result}. Vui lòng tiếp tục.`;
-    await sendMessage();
-  } catch (error) {
-    msg.hitlError = errorMessage(error, 'Không thể phê duyệt thao tác.');
-  } finally {
-    msg.hitlBusy = false;
-  }
-};
-
-const rejectTask = async (msg: any) => {
-  msg.hitlBusy = true;
-  msg.hitlError = undefined;
-  try {
-    const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/reject`, { Comment: "User rejected" });
-    if (!res.ok) throw new Error(await readApiError(res, 'Từ chối thất bại'));
-    msg.hitlResolved = 'Rejected';
-    messages.value.push({
-      role: 'system',
-      content: `Đã từ chối hành động.`
-    });
-  } catch (error) {
-    msg.hitlError = errorMessage(error, 'Không thể từ chối thao tác.');
-  } finally {
-    msg.hitlBusy = false;
-  }
-};
+const { approveTask, rejectTask } = useHitlActions({
+  messages,
+  inputMessage,
+  sendMessage,
+  approvedSystemMessage: (result) => `Đã phê duyệt. Kết quả thực thi tool: ${result}`,
+});
 </script>

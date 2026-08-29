@@ -11,6 +11,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using StackExchange.Redis;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace LmKitOmniApi.Tests;
@@ -105,6 +106,200 @@ public sealed class SecurityRegressionTests
             retrySafe: false));
 
         Assert.Equal(1, attempts);
+    }
+
+    [Fact]
+    public async Task CircuitBreaker_CountsConcurrentFailuresAtomicallyAndIsolatesTenants()
+    {
+        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
+        var policy = new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance, cache);
+        var releaseFailures = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = 0;
+
+        var failures = Enumerable.Range(0, 5).Select(_ => policy.ExecuteWithResilienceAsync(
+            "SHARED_TOOL",
+            async _ =>
+            {
+                Interlocked.Increment(ref started);
+                await releaseFailures.Task;
+                throw new InvalidOperationException("simulated dependency failure");
+            },
+            "fallback",
+            retrySafe: false,
+            isolationKey: "tenant-a:shared-tool")).ToArray();
+
+        await WaitUntilAsync(() => Volatile.Read(ref started) == 5);
+        releaseFailures.SetResult();
+        Assert.All(await Task.WhenAll(failures), result => Assert.Equal("fallback", result));
+
+        var blockedWasInvoked = false;
+        var blocked = await policy.ExecuteWithResilienceAsync(
+            "SHARED_TOOL",
+            _ =>
+            {
+                blockedWasInvoked = true;
+                return Task.FromResult("unexpected");
+            },
+            "circuit-open",
+            retrySafe: false,
+            isolationKey: "tenant-a:shared-tool");
+        var otherTenant = await policy.ExecuteWithResilienceAsync(
+            "SHARED_TOOL",
+            _ => Task.FromResult("tenant-b-ok"),
+            "fallback",
+            retrySafe: false,
+            isolationKey: "tenant-b:shared-tool");
+
+        Assert.False(blockedWasInvoked);
+        Assert.Equal("circuit-open", blocked);
+        Assert.Equal("tenant-b-ok", otherTenant);
+    }
+
+    [Fact]
+    public void CircuitBreakerKey_IsStableAndDoesNotExposeTenantOrToolNames()
+    {
+        const string scope = "11111111-1111-1111-1111-111111111111:MCP:private-tool";
+
+        var first = AgentResiliencePolicy.BuildCircuitKey(scope);
+        var second = AgentResiliencePolicy.BuildCircuitKey(scope);
+
+        Assert.Equal(first, second);
+        Assert.Equal("LmKitOmniApi_cb:".Length + 24, first.Length);
+        Assert.DoesNotContain("11111111", first);
+        Assert.DoesNotContain("private-tool", first);
+    }
+
+    [SkippableFact]
+    public async Task RedisCircuitBreaker_AtomicallyOpensAcrossPolicyInstances()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("LMKIT_TEST_REDIS_CONNECTION");
+        var redisConfigured = !string.IsNullOrWhiteSpace(connectionString);
+        Skip.IfNot(redisConfigured, "LMKIT_TEST_REDIS_CONNECTION is not set; skipping the Redis-backed circuit breaker test.");
+
+        using var redis = await ConnectionMultiplexer.ConnectAsync(connectionString!);
+        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
+        var isolationKey = $"redis-test:{Guid.NewGuid():N}";
+        var redisKey = AgentResiliencePolicy.BuildCircuitKey(isolationKey);
+        await redis.GetDatabase().KeyDeleteAsync(redisKey);
+        try
+        {
+            var policies = Enumerable.Range(0, 5)
+                .Select(_ => new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance, cache, redis))
+                .ToArray();
+            var releaseFailures = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var started = 0;
+            var failures = policies.Select(policy => policy.ExecuteWithResilienceAsync(
+                "DISTRIBUTED_TOOL",
+                async _ =>
+                {
+                    Interlocked.Increment(ref started);
+                    await releaseFailures.Task;
+                    throw new InvalidOperationException("distributed failure");
+                },
+                "fallback",
+                retrySafe: false,
+                isolationKey: isolationKey)).ToArray();
+
+            await WaitUntilAsync(() => Volatile.Read(ref started) == 5);
+            releaseFailures.SetResult();
+            await Task.WhenAll(failures);
+
+            var invoked = false;
+            var blocked = await policies[0].ExecuteWithResilienceAsync(
+                "DISTRIBUTED_TOOL",
+                _ =>
+                {
+                    invoked = true;
+                    return Task.FromResult("unexpected");
+                },
+                "open",
+                retrySafe: false,
+                isolationKey: isolationKey);
+
+            Assert.False(invoked);
+            Assert.Equal("open", blocked);
+            var database = redis.GetDatabase();
+            Assert.True(await database.KeyTimeToLiveAsync(redisKey) > TimeSpan.Zero);
+
+            await database.HashSetAsync(redisKey, "openedAt",
+                DateTimeOffset.UtcNow.AddSeconds(-31).ToUnixTimeMilliseconds());
+            var probeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseProbe = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var probe = policies[0].ExecuteWithResilienceAsync(
+                "DISTRIBUTED_TOOL",
+                async _ =>
+                {
+                    probeStarted.SetResult();
+                    await releaseProbe.Task;
+                    return "recovered";
+                },
+                "open",
+                retrySafe: false,
+                isolationKey: isolationKey);
+            await probeStarted.Task;
+
+            var secondProbeInvoked = false;
+            var secondProbe = await policies[1].ExecuteWithResilienceAsync(
+                "DISTRIBUTED_TOOL",
+                _ =>
+                {
+                    secondProbeInvoked = true;
+                    return Task.FromResult("unexpected");
+                },
+                "half-open-busy",
+                retrySafe: false,
+                isolationKey: isolationKey);
+            releaseProbe.SetResult();
+
+            Assert.False(secondProbeInvoked);
+            Assert.Equal("half-open-busy", secondProbe);
+            Assert.Equal("recovered", await probe);
+            Assert.False(await database.KeyExistsAsync(redisKey));
+        }
+        finally
+        {
+            await redis.GetDatabase().KeyDeleteAsync(redisKey);
+        }
+    }
+
+    [SkippableFact]
+    public async Task RedisCircuitBreaker_FallsBackLocallyWhenRedisDisconnects()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("LMKIT_TEST_REDIS_CONNECTION");
+        var redisConfigured = !string.IsNullOrWhiteSpace(connectionString);
+        Skip.IfNot(redisConfigured, "LMKIT_TEST_REDIS_CONNECTION is not set; skipping the Redis-backed circuit breaker test.");
+
+        using var redis = await ConnectionMultiplexer.ConnectAsync(connectionString!);
+        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
+        var policy = new AgentResiliencePolicy(NullLogger<AgentResiliencePolicy>.Instance, cache, redis);
+        var isolationKey = $"redis-disconnect:{Guid.NewGuid():N}";
+        await redis.CloseAsync();
+
+        for (var failure = 0; failure < 5; failure++)
+        {
+            var result = await policy.ExecuteWithResilienceAsync(
+                "DISCONNECTED_TOOL",
+                _ => throw new InvalidOperationException("dependency failed"),
+                "fallback",
+                retrySafe: false,
+                isolationKey: isolationKey);
+            Assert.Equal("fallback", result);
+        }
+
+        var invoked = false;
+        var blocked = await policy.ExecuteWithResilienceAsync(
+            "DISCONNECTED_TOOL",
+            _ =>
+            {
+                invoked = true;
+                return Task.FromResult("unexpected");
+            },
+            "open",
+            retrySafe: false,
+            isolationKey: isolationKey);
+
+        Assert.False(invoked);
+        Assert.Equal("open", blocked);
     }
 
     [Fact]
@@ -218,5 +413,12 @@ public sealed class SecurityRegressionTests
 
         Assert.Equal(HealthStatus.Unhealthy, result.Status);
         Assert.Contains("not loaded", result.Description ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!condition())
+            await Task.Delay(10, timeout.Token);
     }
 }

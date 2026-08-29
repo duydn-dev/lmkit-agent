@@ -1,13 +1,30 @@
 (function () {
-    // 1. Determine the base URL from the script tag itself
-    var scripts = document.getElementsByTagName('script');
-    var currentScript = scripts[scripts.length - 1]; // Assume the last loaded script is this one
-    var baseUrl = 'http://localhost:5173'; // Fallback
-    
-    if (currentScript && currentScript.src) {
-        var url = new URL(currentScript.src);
-        baseUrl = url.origin;
+    // 1. Determine the app origin that serves this widget (and the chat iframe).
+    //    Prefer document.currentScript (accurate for a synchronously executed
+    //    classic script); fall back to locating our own <script> by filename,
+    //    and finally to the host page origin rather than a hardcoded localhost.
+    function resolveAppOrigin() {
+        var script = document.currentScript;
+        if (!(script && script.src)) {
+            var scripts = document.getElementsByTagName('script');
+            for (var i = scripts.length - 1; i >= 0; i--) {
+                if (scripts[i].src && scripts[i].src.indexOf('widget.js') !== -1) {
+                    script = scripts[i];
+                    break;
+                }
+            }
+        }
+        if (script && script.src) {
+            try {
+                return new URL(script.src).origin;
+            } catch (e) {
+                /* fall through to the host origin */
+            }
+        }
+        return window.location.origin;
     }
+
+    var baseUrl = resolveAppOrigin();
 
     // 2. Add styles for the widget components
     var style = document.createElement('style');
@@ -151,17 +168,21 @@
         if (isOpen) {
             iframeContainer.classList.add('open');
             button.classList.add('open');
-            // Optional: send message to iframe to focus input
-            iframe.contentWindow.postMessage({ type: 'lmkit-widget-open' }, '*');
+            // Only deliver to the widget app origin (never '*').
+            iframe.contentWindow.postMessage({ type: 'lmkit-widget-open' }, baseUrl);
         } else {
             iframeContainer.classList.remove('open');
             button.classList.remove('open');
-            iframe.contentWindow.postMessage({ type: 'lmkit-widget-close' }, '*');
+            iframe.contentWindow.postMessage({ type: 'lmkit-widget-close' }, baseUrl);
         }
     });
 
-    // 7. Listen for messages from iframe (e.g. to close the widget from inside)
+    // 7. Listen for messages from iframe (e.g. to close the widget from inside).
+    //    Reject any message that is not from our own iframe/app origin so a
+    //    hostile page or frame cannot drive the widget.
     window.addEventListener('message', function (event) {
+        if (event.origin !== baseUrl) return;
+        if (event.source !== iframe.contentWindow) return;
         if (event.data && event.data.type === 'lmkit-close-widget') {
             isOpen = false;
             iframeContainer.classList.remove('open');

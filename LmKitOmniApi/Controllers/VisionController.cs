@@ -5,7 +5,6 @@ using LmKitOmniApi.Models;
 using LmKitOmniApi.Infrastructure.AI.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
-using System.Security.Claims;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -13,16 +12,18 @@ namespace LmKitOmniApi.Controllers;
 [Route("api/[controller]")]
 [Authorize]
 [EnableRateLimiting("ai-agent")]
-public class VisionController : ControllerBase
+public class VisionController : ApiControllerBase
 {
     private const long MaximumImageBytes = 20 * 1024 * 1024;
     private readonly IMediator _mediator;
     private readonly UserResourceAccessService _resources;
+    private readonly ILogger<VisionController> _logger;
 
-    public VisionController(IMediator mediator, UserResourceAccessService resources)
+    public VisionController(IMediator mediator, UserResourceAccessService resources, ILogger<VisionController> logger)
     {
         _mediator = mediator;
         _resources = resources;
+        _logger = logger;
     }
 
     [HttpPost("analyze")]
@@ -52,8 +53,9 @@ public class VisionController : ControllerBase
         {
             return BadRequest("The requested image was not found.");
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Image analysis failed.");
             return Problem(statusCode: 500, title: "Image analysis failed.");
         }
     }
@@ -78,8 +80,9 @@ public class VisionController : ControllerBase
         {
             return NotFound("The requested image was not found.");
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Background removal failed.");
             return Problem(statusCode: 500, title: "Background removal failed.");
         }
     }
@@ -114,8 +117,9 @@ public class VisionController : ControllerBase
         {
             return NotFound("The requested image was not found.");
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Image classification failed.");
             return Problem(statusCode: 500, title: "Image classification failed.");
         }
     }
@@ -148,16 +152,16 @@ public class VisionController : ControllerBase
         {
             return NotFound("The requested image was not found.");
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Image OCR failed.");
             return Problem(statusCode: 500, title: "Image OCR failed.");
         }
     }
 
     private PathValidationResult ValidateOwnedPath(string path)
     {
-        if (!Guid.TryParse(User.FindFirst("TenantId")?.Value, out var tenantId)
-            || !Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+        if (!TryGetIdentity(out var tenantId, out var userId))
             return PathValidationResult.Deny("Authenticated tenant/user identity is missing.");
         return _resources.ValidateOwnedPath(tenantId, userId, path);
     }

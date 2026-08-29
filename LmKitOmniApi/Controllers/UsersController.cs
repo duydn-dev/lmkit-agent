@@ -4,14 +4,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
-using System.Security.Claims;
 
 namespace LmKitOmniApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
 [Authorize(Roles = "Admin")] // Chỉ Admin mới được truy cập các API này
-public class UsersController : ControllerBase
+public class UsersController : ApiControllerBase
 {
     private static readonly HashSet<string> AllowedRoles = new(StringComparer.OrdinalIgnoreCase) { "Admin", "Member" };
     private readonly HermesDbContext _dbContext;
@@ -24,7 +23,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetUsers()
+    public async Task<IActionResult> GetUsers(CancellationToken cancellationToken)
     {
         if (!TryGetIdentity(out var tenantId, out _)) return Unauthorized();
         var users = await _dbContext.Users
@@ -43,13 +42,13 @@ public class UsersController : ControllerBase
                 u.TenantId
             })
             .OrderByDescending(u => u.CreatedAt)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         return Ok(users);
     }
 
     [HttpPost]
-    public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request)
+    public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
     {
         if (!TryGetIdentity(out var tenantId, out _)) return Unauthorized();
         if (string.IsNullOrEmpty(request.Email) || string.IsNullOrEmpty(request.Password) || string.IsNullOrEmpty(request.FullName))
@@ -65,7 +64,7 @@ public class UsersController : ControllerBase
 
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
 
-        if (await _dbContext.Users.AnyAsync(u => u.Email.ToLower() == normalizedEmail))
+        if (await _dbContext.Users.AnyAsync(u => u.Email.ToLower() == normalizedEmail, cancellationToken))
             return BadRequest(new { message = "Email này đã tồn tại trong hệ thống." });
 
         var newUser = new User
@@ -80,7 +79,7 @@ public class UsersController : ControllerBase
         };
 
         _dbContext.Users.Add(newUser);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("Admin created new user {Email} with role {Role}", newUser.Email, newUser.Role);
 
@@ -96,10 +95,10 @@ public class UsersController : ControllerBase
     }
 
     [HttpPut("{id}/role")]
-    public async Task<IActionResult> UpdateRole(Guid id, [FromBody] UpdateRoleRequest request)
+    public async Task<IActionResult> UpdateRole(Guid id, [FromBody] UpdateRoleRequest request, CancellationToken cancellationToken)
     {
         if (!TryGetIdentity(out var tenantId, out var actorId)) return Unauthorized();
-        var user = await _dbContext.Users.FirstOrDefaultAsync(candidate => candidate.Id == id && candidate.TenantId == tenantId);
+        var user = await _dbContext.Users.FirstOrDefaultAsync(candidate => candidate.Id == id && candidate.TenantId == tenantId, cancellationToken);
         if (user == null)
             return NotFound(new { message = "Không tìm thấy User." });
 
@@ -111,17 +110,17 @@ public class UsersController : ControllerBase
         user.Role = AllowedRoles.First(candidate => candidate.Equals(request.Role, StringComparison.OrdinalIgnoreCase));
         user.UpdatedAt = DateTime.UtcNow;
 
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("Admin updated role for user {Email} to {Role}", user.Email, user.Role);
 
         return Ok(new { message = "Cập nhật quyền thành công.", role = user.Role });
     }
 
     [HttpPut("{id}/toggle-status")]
-    public async Task<IActionResult> ToggleStatus(Guid id)
+    public async Task<IActionResult> ToggleStatus(Guid id, CancellationToken cancellationToken)
     {
         if (!TryGetIdentity(out var tenantId, out var actorId)) return Unauthorized();
-        var user = await _dbContext.Users.FirstOrDefaultAsync(candidate => candidate.Id == id && candidate.TenantId == tenantId);
+        var user = await _dbContext.Users.FirstOrDefaultAsync(candidate => candidate.Id == id && candidate.TenantId == tenantId, cancellationToken);
         if (user == null)
             return NotFound(new { message = "Không tìm thấy User." });
         if (actorId == id && user.IsActive)
@@ -137,17 +136,10 @@ public class UsersController : ControllerBase
             user.LockoutEnd = null;
         }
 
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("Admin toggled active status for user {Email}. New status: {Status}", user.Email, user.IsActive);
 
         return Ok(new { message = $"Đã {(user.IsActive ? "mở khóa" : "khóa")} tài khoản.", isActive = user.IsActive });
-    }
-
-    private bool TryGetIdentity(out Guid tenantId, out Guid userId)
-    {
-        var tenantValid = Guid.TryParse(User.FindFirst("TenantId")?.Value, out tenantId);
-        var userValid = Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out userId);
-        return tenantValid && userValid;
     }
 }
 
@@ -157,7 +149,6 @@ public class CreateUserRequest
     public string Password { get; set; } = string.Empty;
     public string FullName { get; set; } = string.Empty;
     public string? Role { get; set; }
-    public Guid TenantId { get; set; }
 }
 
 public class UpdateRoleRequest

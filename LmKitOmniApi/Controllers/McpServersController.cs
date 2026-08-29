@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using LmKitOmniApi.Domain.Entities;
@@ -15,7 +14,7 @@ namespace LmKitOmniApi.Controllers;
 [ApiController]
 [Route("api/mcp-servers")]
 [Authorize(Roles = "Admin")]
-public sealed class McpServersController : ControllerBase
+public sealed class McpServersController : ApiControllerBase
 {
     private static readonly Regex ValidName = new("^[a-zA-Z0-9][a-zA-Z0-9_-]{1,63}$", RegexOptions.Compiled);
     private static readonly HashSet<string> BlockedHeaders = new(StringComparer.OrdinalIgnoreCase)
@@ -127,9 +126,6 @@ public sealed class McpServersController : ControllerBase
         if (headers is null || headers.Count == 0) return null;
         return _protector.Protect(JsonSerializer.Serialize(headers));
     }
-
-    private bool TryGetTenantId(out Guid tenantId) =>
-        Guid.TryParse(User.FindFirst("TenantId")?.Value, out tenantId);
 }
 
 public sealed class SaveMcpServerRequest

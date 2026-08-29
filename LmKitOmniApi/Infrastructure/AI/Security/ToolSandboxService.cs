@@ -187,13 +187,26 @@ public class ToolSandboxService
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
             return PathValidationResult.Deny("URL không hợp lệ.");
 
-        // Block internal network (SSRF protection)
+        // Block internal network (SSRF protection). Classify literal IP hosts against the
+        // SAME private/loopback ranges as the authoritative IsPrivateOrLocalAddress, and block
+        // loopback/metadata hostnames. The old substring checks were a foot-gun: "172.16."
+        // missed the rest of 172.16.0.0/12 (e.g. Docker's 172.17-172.31.x.x), while host.Contains
+        // false-matched public hosts such as "example10.com" ("10.") or "custom192.168.io".
         var host = uri.Host.ToLowerInvariant();
-        var blockedHosts = new[] { "localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.", "10.", "172.16.", "192.168.", "metadata.google" };
-        
-        if (blockedHosts.Any(b => host.StartsWith(b) || host.Contains(b)))
+        if (IPAddress.TryParse(uri.DnsSafeHost, out var literalIp))
         {
-            _logger.LogWarning("🔒 [Sandbox] SSRF attempt blocked: '{Url}'", url);
+            if (IsPrivateOrLocalAddress(literalIp))
+            {
+                _logger.LogWarning("🔒 [Sandbox] SSRF attempt blocked (private/loopback IP): '{Url}'", url);
+                return PathValidationResult.Deny("Không cho phép truy cập mạng nội bộ hoặc metadata.");
+            }
+        }
+        else if (host == "localhost"
+            || host.EndsWith(".localhost", StringComparison.Ordinal)
+            || host == "metadata.google.internal"
+            || host.Contains("metadata.google"))
+        {
+            _logger.LogWarning("🔒 [Sandbox] SSRF attempt blocked (blocked hostname): '{Url}'", url);
             return PathValidationResult.Deny("Không cho phép truy cập mạng nội bộ hoặc metadata.");
         }
 

@@ -1,7 +1,6 @@
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
-using System.Security.Claims;
 using LmKitOmniApi.Application.Chat.Commands;
 using LmKitOmniApi.Application.Chat.Queries;
 using LmKitOmniApi.Infrastructure.AI;
@@ -13,7 +12,7 @@ namespace LmKitOmniApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class ChatController : ControllerBase
+public class ChatController : ApiControllerBase
 {
     private const long MaxAttachmentBytes = 20 * 1024 * 1024;
     private const long MaxTotalAttachmentBytes = 50 * 1024 * 1024;
@@ -61,10 +60,7 @@ public class ChatController : ControllerBase
             return;
         }
 
-        var userIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier || c.Type == "sub")?.Value;
-        var tenantIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "TenantId")?.Value;
-
-        if (!Guid.TryParse(userIdString, out var currentUserId) || !Guid.TryParse(tenantIdString, out var currentTenantId))
+        if (!TryGetIdentity(out var currentTenantId, out var currentUserId))
         {
             Response.StatusCode = 401;
             await Response.WriteAsync("Unauthorized");
@@ -102,9 +98,7 @@ public class ChatController : ControllerBase
         Response.Headers.Append("Cache-Control", "no-cache");
         Response.Headers.Append("Connection", "keep-alive");
 
-        var userIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier || c.Type == "sub")?.Value;
-        var tenantIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "TenantId")?.Value;
-        if (!Guid.TryParse(userIdString, out var currentUserId) || !Guid.TryParse(tenantIdString, out var tenantId))
+        if (!TryGetIdentity(out var tenantId, out var currentUserId))
         {
             Response.StatusCode = StatusCodes.Status401Unauthorized;
             await WriteSseAsync("[ERROR: Unauthorized]", cancellationToken);
@@ -286,11 +280,7 @@ public class ChatController : ControllerBase
     [HttpGet("sessions")]
     public async Task<IActionResult> GetSessions(CancellationToken cancellationToken)
     {
-        var userIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "id" || c.Type == ClaimTypes.NameIdentifier)?.Value;
-        if (!Guid.TryParse(userIdString, out var currentUserId))
-        {
-             return Unauthorized();
-        }
+        if (!TryGetUserId(out var currentUserId)) return Unauthorized();
 
         var query = new GetChatSessionsQuery { UserId = currentUserId };
         var result = await _mediator.Send(query, cancellationToken);
@@ -301,8 +291,7 @@ public class ChatController : ControllerBase
     [HttpPost("sessions")]
     public async Task<IActionResult> CreateSession(CancellationToken cancellationToken)
     {
-        var userIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "id" || c.Type == ClaimTypes.NameIdentifier)?.Value;
-        if (!Guid.TryParse(userIdString, out var currentUserId)) return Unauthorized();
+        if (!TryGetUserId(out var currentUserId)) return Unauthorized();
 
         var command = new CreateChatSessionCommand { UserId = currentUserId };
         var result = await _mediator.Send(command, cancellationToken);
@@ -313,8 +302,7 @@ public class ChatController : ControllerBase
     [HttpGet("sessions/{id}/messages")]
     public async Task<IActionResult> GetSessionMessages(Guid id, CancellationToken cancellationToken)
     {
-        var userIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "id" || c.Type == ClaimTypes.NameIdentifier)?.Value;
-        if (!Guid.TryParse(userIdString, out var currentUserId)) return Unauthorized();
+        if (!TryGetUserId(out var currentUserId)) return Unauthorized();
 
         var query = new GetChatMessagesQuery { SessionId = id, UserId = currentUserId };
         var result = await _mediator.Send(query, cancellationToken);
@@ -325,8 +313,7 @@ public class ChatController : ControllerBase
     [HttpDelete("sessions/{id}")]
     public async Task<IActionResult> DeleteSession(Guid id, CancellationToken cancellationToken)
     {
-        var userIdString = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "id" || c.Type == ClaimTypes.NameIdentifier)?.Value;
-        if (!Guid.TryParse(userIdString, out var currentUserId)) return Unauthorized();
+        if (!TryGetUserId(out var currentUserId)) return Unauthorized();
 
         var command = new DeleteChatSessionCommand { SessionId = id, UserId = currentUserId };
         var result = await _mediator.Send(command, cancellationToken);

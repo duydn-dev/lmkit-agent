@@ -5,7 +5,6 @@ using LmKitOmniApi.Models;
 using LmKitOmniApi.Infrastructure.AI.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
-using System.Security.Claims;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -13,15 +12,17 @@ namespace LmKitOmniApi.Controllers;
 [Route("api/[controller]")]
 [Authorize]
 [EnableRateLimiting("ai-agent")]
-public class SpeechController : ControllerBase
+public class SpeechController : ApiControllerBase
 {
     private readonly IMediator _mediator;
     private readonly UserResourceAccessService _resources;
+    private readonly ILogger<SpeechController> _logger;
 
-    public SpeechController(IMediator mediator, UserResourceAccessService resources)
+    public SpeechController(IMediator mediator, UserResourceAccessService resources, ILogger<SpeechController> logger)
     {
         _mediator = mediator;
         _resources = resources;
+        _logger = logger;
     }
 
     [HttpPost("transcribe")]
@@ -49,8 +50,9 @@ public class SpeechController : ControllerBase
         {
             return BadRequest("The requested audio file was not found.");
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Audio transcription failed.");
             return Problem(statusCode: 500, title: "Audio transcription failed.");
         }
     }
@@ -78,8 +80,9 @@ public class SpeechController : ControllerBase
         {
             return NotFound("The requested audio file was not found.");
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Audio language detection failed.");
             return Problem(statusCode: 500, title: "Audio language detection failed.");
         }
     }
@@ -90,8 +93,7 @@ public class SpeechController : ControllerBase
         if (string.IsNullOrWhiteSpace(room) || room.Length > 100)
             return BadRequest("Room must contain between 1 and 100 characters.");
 
-        if (!Guid.TryParse(User.FindFirst("TenantId")?.Value, out var tenantId)
-            || !Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+        if (!TryGetIdentity(out var tenantId, out var userId))
             return Unauthorized();
 
         var apiKey = config["LiveKit:ApiKey"];
@@ -134,8 +136,7 @@ public class SpeechController : ControllerBase
 
     private PathValidationResult ValidateOwnedPath(string path)
     {
-        if (!Guid.TryParse(User.FindFirst("TenantId")?.Value, out var tenantId)
-            || !Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+        if (!TryGetIdentity(out var tenantId, out var userId))
             return PathValidationResult.Deny("Authenticated tenant/user identity is missing.");
         return _resources.ValidateOwnedPath(tenantId, userId, path);
     }

@@ -35,9 +35,12 @@ public class GlobalExceptionHandler : IExceptionHandler
         }
         else if (exception is ArgumentException || exception is InvalidOperationException)
         {
+            // Do not surface exception.Message to clients: it can leak internal detail
+            // (file paths, SQL fragments, config values, invariant text). The full
+            // exception is already logged server-side above.
             problemDetails.Status = StatusCodes.Status400BadRequest;
             problemDetails.Title = "Bad Request";
-            problemDetails.Detail = exception.Message;
+            problemDetails.Detail = "The request was invalid or could not be processed.";
         }
 
         httpContext.Response.StatusCode = problemDetails.Status.Value;

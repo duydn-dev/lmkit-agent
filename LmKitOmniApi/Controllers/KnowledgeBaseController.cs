@@ -2,7 +2,6 @@ using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using LmKitOmniApi.Application.Documents.Commands;
 using Microsoft.AspNetCore.Authorization;
-using System.Security.Claims;
 using Microsoft.AspNetCore.RateLimiting;
 
 namespace LmKitOmniApi.Controllers;
@@ -11,13 +10,15 @@ namespace LmKitOmniApi.Controllers;
 [Route("api/[controller]")]
 [Authorize]
 [EnableRateLimiting("ai-agent")]
-public class KnowledgeBaseController : ControllerBase
+public class KnowledgeBaseController : ApiControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ILogger<KnowledgeBaseController> _logger;
 
-    public KnowledgeBaseController(IMediator mediator)
+    public KnowledgeBaseController(IMediator mediator, ILogger<KnowledgeBaseController> logger)
     {
         _mediator = mediator;
+        _logger = logger;
     }
 
     [HttpPost("ingest")]
@@ -35,8 +36,9 @@ public class KnowledgeBaseController : ControllerBase
             var result = await _mediator.Send(command);
             return Ok(new { Message = result });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Knowledge ingestion failed for tenant {TenantId} user {UserId}.", tenantId, userId);
             return Problem(statusCode: 500, title: "Knowledge ingestion failed.");
         }
     }
@@ -55,16 +57,10 @@ public class KnowledgeBaseController : ControllerBase
             var result = await _mediator.Send(command);
             return Ok(new { Answer = result });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Knowledge query failed for tenant {TenantId} user {UserId}.", tenantId, userId);
             return Problem(statusCode: 500, title: "Knowledge query failed.");
         }
-    }
-
-    private bool TryGetIdentity(out Guid tenantId, out Guid userId)
-    {
-        var tenantValid = Guid.TryParse(User.FindFirst("TenantId")?.Value, out tenantId);
-        var userValid = Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out userId);
-        return tenantValid && userValid;
     }
 }

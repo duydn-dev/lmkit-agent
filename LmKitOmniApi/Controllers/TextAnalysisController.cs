@@ -15,10 +15,12 @@ public class TextAnalysisController : ControllerBase
 {
     private const int MaximumTextLength = 50_000;
     private readonly IMediator _mediator;
+    private readonly ILogger<TextAnalysisController> _logger;
 
-    public TextAnalysisController(IMediator mediator)
+    public TextAnalysisController(IMediator mediator, ILogger<TextAnalysisController> logger)
     {
         _mediator = mediator;
+        _logger = logger;
     }
 
     [HttpPost("analyze")]
@@ -45,8 +47,9 @@ public class TextAnalysisController : ControllerBase
                 RedactedText = result.RedactedText
             });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Text analysis failed.");
             return Problem(statusCode: 500, title: "Text analysis failed.");
         }
     }
@@ -77,8 +80,9 @@ public class TextAnalysisController : ControllerBase
                 Confidence = result.Confidence
             });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Text classification failed.");
             return Problem(statusCode: 500, title: "Text classification failed.");
         }
     }
@@ -97,8 +101,9 @@ public class TextAnalysisController : ControllerBase
 
             return Ok(new DetectLanguageResponse { Language = result.Language });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Language detection failed.");
             return Problem(statusCode: 500, title: "Language detection failed.");
         }
     }
@@ -121,8 +126,9 @@ public class TextAnalysisController : ControllerBase
                 Confidence = result.Confidence
             });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Keyword extraction failed.");
             return Problem(statusCode: 500, title: "Keyword extraction failed.");
         }
     }
@@ -141,8 +147,9 @@ public class TextAnalysisController : ControllerBase
 
             return Ok(new GenerateEmbeddingsResponse { Embeddings = result.Embeddings });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Embedding generation failed.");
             return Problem(statusCode: 500, title: "Embedding generation failed.");
         }
     }

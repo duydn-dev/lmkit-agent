@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Infrastructure.Data;
 using Microsoft.AspNetCore.Authorization;
@@ -10,7 +9,7 @@ namespace LmKitOmniApi.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public sealed class MemoryController : ControllerBase
+public sealed class MemoryController : ApiControllerBase
 {
     private readonly HermesDbContext _dbContext;
     private readonly IAgentMemoryService _memoryService;
@@ -63,12 +62,5 @@ public sealed class MemoryController : ControllerBase
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
         var confirmed = await _memoryService.ConfirmMemoryAsync(tenantId, userId, id, ct);
         return confirmed ? NoContent() : NotFound();
-    }
-
-    private bool TryGetIdentity(out Guid tenantId, out Guid userId)
-    {
-        var tenantValid = Guid.TryParse(User.FindFirst("TenantId")?.Value, out tenantId);
-        var userValid = Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out userId);
-        return tenantValid && userValid;
     }
 }

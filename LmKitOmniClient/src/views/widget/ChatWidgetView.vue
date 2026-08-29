@@ -93,9 +93,9 @@
     <!-- Input Area -->
     <div class="bg-white border-t border-gray-100 p-3 shrink-0">
       <div class="relative flex items-center bg-gray-50 border border-gray-200 rounded-full pr-1 shadow-inner focus-within:border-blue-300 focus-within:ring-1 focus-within:ring-blue-300 transition-all">
-        <textarea 
-          v-model="inputMessage" 
-          @keydown.enter.prevent="sendMessage"
+        <textarea
+          v-model="inputMessage"
+          @keydown.enter.exact.prevent="sendMessage"
           class="flex-1 bg-transparent border-0 resize-none py-2.5 pl-4 pr-2 text-[13px] text-gray-700 max-h-24 leading-snug"
           rows="1"
           aria-label="Tin nhắn"
@@ -125,21 +125,15 @@ import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import { formatSafeMessage } from '@/utils/safeFormatting';
-import { ChatSseParser, type ChatStreamEvent } from '@/utils/chatSse';
-
-interface Message {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  isTyping?: boolean;
-  thinkingSteps?: string[];
-  hitlTaskId?: string;
-  hitlResolved?: string;
-  hitlBusy?: boolean;
-  hitlError?: string;
-}
+import {
+  useChatStream,
+  useHitlActions,
+  getCleanUserContent,
+  type ChatMessage,
+} from '@/composables/useChatStream';
 
 const inputMessage = ref('');
-const messages = ref<Message[]>([
+const messages = ref<ChatMessage[]>([
     {
         role: 'assistant',
         content: 'Xin chào! Tôi có thể giúp gì cho bạn?'
@@ -148,6 +142,7 @@ const messages = ref<Message[]>([
 const isGenerating = ref(false);
 const chatContainer = ref<HTMLElement | null>(null);
 const currentSessionId = ref<string | null>(null);
+const { consumeStream } = useChatStream();
 
 const closeWidget = () => {
     if (window.parent && document.referrer) {
@@ -164,10 +159,6 @@ const scrollToBottom = async () => {
 };
 
 const formatMessage = formatSafeMessage;
-
-const getCleanUserContent = (content: string) => {
-  return content.replace(/\n\n--- Nội dung file đính kèm ---[\s\S]*/g, '').trim();
-};
 
 const sendMessage = async () => {
   const content = inputMessage.value.trim();
@@ -199,54 +190,10 @@ const sendMessage = async () => {
     const response = await http.post(ApiFactory.CHAT.STREAM, payload);
 
     if (!response.ok) throw new Error(await readApiError(response, 'Yêu cầu chat thất bại'));
-    if (!response.body) throw new Error('Trình duyệt không hỗ trợ streaming response.');
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-
-    assistantMsg.isTyping = false;
-
-    const parser = new ChatSseParser();
-    let streamFinished = false;
-    while (!streamFinished) {
-      const { done, value } = await reader.read();
-      const events = done
-        ? [...parser.push(decoder.decode()), ...parser.finish()]
-        : parser.push(decoder.decode(value, { stream: true }));
-      for (const event of events) {
-          if (event.type === 'done') {
-              streamFinished = true;
-              break;
-          }
-          if (event.type === 'error') {
-              throw new Error(event.value);
-          }
-          
-          if (event.type === 'web-search') {
-              continue; // Bỏ qua web search display cho widget nhỏ để đỡ rối
-          }
-          if (event.type === 'thinking') {
-              if (!assistantMsg.thinkingSteps) {
-                  assistantMsg.thinkingSteps = [];
-              }
-              assistantMsg.thinkingSteps.push(event.value);
-              await scrollToBottom();
-              continue;
-          }
-          if (event.type === 'approval') {
-              assistantMsg.hitlTaskId = event.value;
-              await scrollToBottom();
-              streamFinished = true;
-              break;
-          }
-          if (event.type === 'agent-log') continue;
-
-          assistantMsg.content += (event as Extract<ChatStreamEvent, { type: 'content' }>).value;
-          await scrollToBottom();
-      }
-      if (done) break;
-    }
-    if (streamFinished) await reader.cancel();
+    // No onWebSearch handler: the widget intentionally ignores [WEB_SEARCH]
+    // events to keep the compact UI uncluttered.
+    await consumeStream({ response, assistantMsg, scrollToBottom });
   } catch (error) {
     assistantMsg.content = `Lỗi phản hồi: ${errorMessage(error, 'Không thể tạo câu trả lời.')}`;
     assistantMsg.isTyping = false;
@@ -263,51 +210,18 @@ onMounted(() => {
         tx[i].addEventListener("input", OnInput, false);
     }
 
-    function OnInput(this: any) {
-        this.style.height = 0;
+    function OnInput(this: HTMLTextAreaElement) {
+        this.style.height = '0';
         this.style.height = (this.scrollHeight) + "px";
     }
 });
 
-const approveTask = async (msg: any) => {
-  msg.hitlBusy = true;
-  msg.hitlError = undefined;
-  try {
-    const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/approve`);
-    if (!res.ok) throw new Error(await readApiError(res, 'Phê duyệt thất bại'));
-    const response = await res.json();
-    const result = typeof response.result === 'string' ? response.result : '';
-    msg.hitlResolved = 'Approved';
-    messages.value.push({
-      role: 'system',
-      content: `Đã phê duyệt. Kết quả: ${result}`
-    });
-    inputMessage.value = `Tôi đã phê duyệt hành động trên. Kết quả thực thi là: ${result}. Vui lòng tiếp tục.`;
-    await sendMessage();
-  } catch (error) {
-    msg.hitlError = errorMessage(error, 'Không thể phê duyệt thao tác.');
-  } finally {
-    msg.hitlBusy = false;
-  }
-};
-
-const rejectTask = async (msg: any) => {
-  msg.hitlBusy = true;
-  msg.hitlError = undefined;
-  try {
-    const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/reject`, { Comment: "User rejected" });
-    if (!res.ok) throw new Error(await readApiError(res, 'Từ chối thất bại'));
-    msg.hitlResolved = 'Rejected';
-    messages.value.push({
-      role: 'system',
-      content: `Đã từ chối hành động.`
-    });
-  } catch (error) {
-    msg.hitlError = errorMessage(error, 'Không thể từ chối thao tác.');
-  } finally {
-    msg.hitlBusy = false;
-  }
-};
+const { approveTask, rejectTask } = useHitlActions({
+  messages,
+  inputMessage,
+  sendMessage,
+  approvedSystemMessage: (result) => `Đã phê duyệt. Kết quả: ${result}`,
+});
 </script>
 
 <style scoped>

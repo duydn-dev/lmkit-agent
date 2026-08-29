@@ -4,7 +4,6 @@ using LmKitOmniApi.Application.Agents.Commands;
 using LmKitOmniApi.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
-using System.Security.Claims;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -12,13 +11,15 @@ namespace LmKitOmniApi.Controllers;
 [Route("api/[controller]")]
 [Authorize]
 [EnableRateLimiting("ai-agent")]
-public class AgentsController : ControllerBase
+public class AgentsController : ApiControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ILogger<AgentsController> _logger;
 
-    public AgentsController(IMediator mediator)
+    public AgentsController(IMediator mediator, ILogger<AgentsController> logger)
     {
         _mediator = mediator;
+        _logger = logger;
     }
 
     [HttpPost("content-creation-pipeline")]
@@ -27,8 +28,7 @@ public class AgentsController : ControllerBase
         if (string.IsNullOrEmpty(request.Topic))
             return BadRequest("Topic cannot be empty.");
         if (request.Topic.Length > 2_000) return BadRequest("Topic cannot exceed 2000 characters.");
-        if (!Guid.TryParse(User.FindFirst("TenantId")?.Value, out var tenantId)
-            || !Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+        if (!TryGetIdentity(out var tenantId, out var userId))
             return Unauthorized();
 
         try
@@ -44,8 +44,9 @@ public class AgentsController : ControllerBase
 
             return Ok(result);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Agent content-creation pipeline failed for tenant {TenantId} user {UserId}.", tenantId, userId);
             return Problem(statusCode: 500, title: "Agent execution failed.");
         }
     }

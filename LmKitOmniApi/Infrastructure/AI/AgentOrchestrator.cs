@@ -90,10 +90,10 @@ public class AgentOrchestrator : IAgentOrchestrator
 
     // H6 Fix: Regex patterns for robust file path extraction
     private static readonly Regex ImagePathRegex = new(
-        @"(?:^|\s)(?:""([^""]+'\.(jpg|jpeg|png|bmp|webp))""|(\S+\.(jpg|jpeg|png|bmp|webp)))",
+        @"(?:^|\s)(?:""([^""]+\.(jpg|jpeg|png|bmp|webp))""|([^""\s]+\.(jpg|jpeg|png|bmp|webp)))",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex AudioPathRegex = new(
-        @"(?:^|\s)(?:""([^""]+'\.(wav|mp3|flac))""|(\S+\.(wav|mp3|flac)))",
+        @"(?:^|\s)(?:""([^""]+\.(wav|mp3|flac))""|([^""\s]+\.(wav|mp3|flac)))",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public AgentOrchestrator(
@@ -467,7 +467,8 @@ public class AgentOrchestrator : IAgentOrchestrator
             },
             $"[⚡ Resilience fallback: tool '{action}' không khả dụng]",
             ct,
-            retrySafe: IsRetrySafeAction(action));
+            retrySafe: IsRetrySafeAction(action),
+            isolationKey: $"{tenantId:N}:{action}");
 
         var duration = System.Diagnostics.Stopwatch.GetElapsedTime(startedAt);
         _telemetry.RecordToolDuration(action, duration);
@@ -652,7 +653,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                     throw new InvalidOperationException(sandboxResult.ErrorMessage ?? "Approved action failed.");
                 },
                 ct,
-                retrySafe: IsRetrySafeAction(action));
+                retrySafe: IsRetrySafeAction(action),
+                isolationKey: $"{tenantId:N}:{action}");
 
             var duration = System.Diagnostics.Stopwatch.GetElapsedTime(startedAt);
             _telemetry.RecordToolDuration(action, duration);

@@ -2,24 +2,18 @@ using Qdrant.Client;
 using Qdrant.Client.Grpc;
 using LmKitOmniApi.Application.Abstractions;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Caching.Distributed;
-using System.Text.Json;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace LmKitOmniApi.Infrastructure.VectorDb;
 
 public class QdrantVectorService : IVectorStoreService
 {
     private readonly QdrantClient _client;
-    private readonly IDistributedCache _cache;
 
-    public QdrantVectorService(IConfiguration configuration, IDistributedCache cache)
+    public QdrantVectorService(IConfiguration configuration)
     {
         var baseUrl = configuration["VectorStore:BaseUrl"] ?? "http://localhost:6334";
         var uri = new Uri(baseUrl);
         _client = new QdrantClient(uri.Host, uri.Port);
-        _cache = cache;
     }
 
     public async Task EnsureCollectionExistsAsync(string collectionName, ulong vectorSize, CancellationToken ct = default)
@@ -75,69 +69,6 @@ public class QdrantVectorService : IVectorStoreService
     {
         if (ids.Count == 0) return;
         await _client.DeleteAsync(collectionName, ids, cancellationToken: ct);
-    }
-
-    public async Task<List<VectorSearchResult>> SearchSimilarAsync(
-        string collectionName,
-        float[] queryVector,
-        int topK,
-        CancellationToken ct = default)
-    {
-        // Tạo Hash cho câu truy vấn (Vector -> string) để làm Cache Key
-        string vectorHash;
-        using (var sha256 = SHA256.Create())
-        {
-            var bytes = new byte[queryVector.Length * 4];
-            Buffer.BlockCopy(queryVector, 0, bytes, 0, bytes.Length);
-            vectorHash = Convert.ToBase64String(sha256.ComputeHash(bytes));
-        }
-
-        var cacheKey = $"qdrant_{collectionName}_{topK}_{vectorHash}";
-        
-        // Cố gắng lấy từ Cache
-        var cachedData = await _cache.GetStringAsync(cacheKey, ct);
-        if (!string.IsNullOrEmpty(cachedData))
-        {
-            var cachedResult = JsonSerializer.Deserialize<List<VectorSearchResult>>(cachedData);
-            if (cachedResult != null) return cachedResult;
-        }
-        var searchResult = await _client.QueryAsync(
-            collectionName: collectionName,
-            query: queryVector,
-            limit: (ulong)topK,
-            payloadSelector: true,
-            cancellationToken: ct
-        );
-
-        var results = new List<VectorSearchResult>();
-        foreach(var p in searchResult)
-        {
-            var payload = new Dictionary<string, string>();
-            foreach (var kvp in p.Payload)
-            {
-                if (kvp.Value.KindCase == Qdrant.Client.Grpc.Value.KindOneofCase.StringValue)
-                    payload[kvp.Key] = kvp.Value.StringValue;
-                else if (kvp.Value.KindCase == Qdrant.Client.Grpc.Value.KindOneofCase.IntegerValue)
-                    payload[kvp.Key] = kvp.Value.IntegerValue.ToString();
-                else
-                    payload[kvp.Key] = kvp.Value.ToString();
-            }
-
-            results.Add(new VectorSearchResult
-            {
-                Id = Guid.Parse(p.Id.Uuid),
-                Score = p.Score,
-                Payload = payload
-            });
-        }
-
-        // Lưu vào Cache trong 10 phút
-        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(results), new DistributedCacheEntryOptions
-        {
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10)
-        }, ct);
-
-        return results;
     }
 
     public async Task<List<VectorSearchResult>> SearchSimilarWithAnyPayloadAsync(
