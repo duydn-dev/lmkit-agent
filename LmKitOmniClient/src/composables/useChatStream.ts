@@ -1,4 +1,4 @@
-import { onUnmounted } from 'vue';
+import { onUnmounted, ref } from 'vue';
 import type { Ref } from 'vue';
 import { http } from '@/api/http';
 import { errorMessage, readApiError } from '@/api/errors';
@@ -44,6 +44,44 @@ export function getCleanUserContent(content: string): string {
   return content.replace(/\n\n--- Nội dung file đính kèm ---[\s\S]*/g, '').trim();
 }
 
+export interface StoredAssistantContent {
+  /** Message body with all protocol markers removed. */
+  content: string;
+  webUrls?: string[];
+  thinkingSteps?: string[];
+}
+
+/**
+ * Splits a PERSISTED assistant message (as returned by the messages / public
+ * share endpoints) into displayable content plus the `[THINKING]:` /
+ * `[WEB_SEARCH]:` metadata embedded by the backend. `[Agent invoked: ...]`
+ * log lines are dropped entirely. Shared by ChatView's history loader and the
+ * public ShareView so both strip markers identically.
+ */
+export function parseStoredAssistantContent(raw: string): StoredAssistantContent {
+  let content = (raw || '').replace(/\[Agent invoked:.*?\][\n\r]*/g, '');
+  let webUrls: string[] | undefined;
+  let thinkingSteps: string[] | undefined;
+
+  if (content.includes('[THINKING]:')) {
+    const thinkingMatches = content.match(/\[THINKING\]:([^\n\r]+)/g);
+    if (thinkingMatches) {
+      thinkingSteps = thinkingMatches.map((match) => match.replace('[THINKING]:', '').trim());
+      content = content.replace(/\[THINKING\]:[^\n\r]+[\n\r]*/g, '').trimStart();
+    }
+  }
+
+  if (content.includes('[WEB_SEARCH]:')) {
+    const match = content.match(/\[WEB_SEARCH\]:([^\n\r]+)/);
+    if (match) {
+      webUrls = match[1].split('|').filter((url) => url);
+      content = content.replace(/\[WEB_SEARCH\]:[^\n\r]+[\n\r]*/, '').trimStart();
+    }
+  }
+
+  return { content, webUrls, thinkingSteps };
+}
+
 export interface ConsumeStreamOptions {
   /** The streaming `fetch` response whose body is read to completion. */
   response: Response;
@@ -75,10 +113,33 @@ export interface ConsumeStreamOptions {
 export function useChatStream() {
   let controller: AbortController | null = null;
 
+  /**
+   * True while `consumeStream` is actively reading a response body. Views use
+   * this to swap their send button for a Stop button; it is narrower than a
+   * view-level "isGenerating" flag, which also covers the initial POST.
+   */
+  const isStreaming = ref(false);
+
+  /**
+   * Monotonic id of the latest stream. A superseded stream's `finally` must
+   * not clear `isStreaming` for the stream that replaced it.
+   */
+  let streamSeq = 0;
+
   /** Aborts the in-flight stream (if any), cancelling its reader. */
   function abort(): void {
     controller?.abort();
     controller = null;
+  }
+
+  /**
+   * Public "Stop generating" action. Cancelling the reader unblocks the
+   * pending `reader.read()` with `done: true`, so `consumeStream` returns
+   * normally: partial content already appended to the assistant message is
+   * kept and all cleanup (isStreaming, listeners) runs in its `finally`.
+   */
+  function stop(): void {
+    abort();
   }
 
   // Navigating away / unmounting must never leave a reader running.
@@ -104,6 +165,8 @@ export function useChatStream() {
 
     const parser = new ChatSseParser();
     let streamFinished = false;
+    const streamId = ++streamSeq;
+    isStreaming.value = true;
     try {
       while (!streamFinished) {
         const { done, value } = await reader.read();
@@ -149,12 +212,13 @@ export function useChatStream() {
       }
       if (streamFinished) await reader.cancel();
     } finally {
+      if (streamId === streamSeq) isStreaming.value = false;
       localController.signal.removeEventListener('abort', onAbort);
       if (controller === localController) controller = null;
     }
   }
 
-  return { consumeStream, abort };
+  return { consumeStream, abort, stop, isStreaming };
 }
 
 export interface HitlActionOptions {

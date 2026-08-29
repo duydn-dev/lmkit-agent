@@ -1,5 +1,25 @@
 <template>
   <div class="flex-1 flex flex-col relative w-full h-full">
+    <!-- Session Header: share actions for the active session -->
+    <div v-if="currentSessionId" class="flex items-center justify-end gap-2 px-4 py-2 border-b border-gray-200 bg-chatgpt-dark">
+      <button
+        @click="shareSession"
+        :disabled="shareBusy"
+        class="min-h-11 px-3 flex items-center gap-2 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-50 transition-colors"
+        aria-label="Chia sẻ đoạn chat">
+        <i class="pi pi-share-alt text-sm" aria-hidden="true"></i>
+        <span>Chia sẻ</span>
+      </button>
+      <button
+        @click="revokeShare"
+        :disabled="shareBusy"
+        class="min-h-11 px-3 flex items-center gap-2 rounded-lg text-sm font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+        aria-label="Thu hồi liên kết chia sẻ">
+        <i class="pi pi-link text-sm" aria-hidden="true"></i>
+        <span>Thu hồi liên kết</span>
+      </button>
+    </div>
+
     <!-- Chat History -->
     <div ref="chatContainer" class="flex-1 overflow-y-auto scroll-smooth" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Lịch sử trò chuyện">
       <div v-if="messages.length === 0" class="h-full flex flex-col items-center justify-center text-center px-4">
@@ -29,6 +49,7 @@
               <!-- User Action -->
               <div class="flex items-center gap-2 mt-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity text-gray-500">
                 <button @click="copyMessage(getCleanUserContent(msg.content))" class="w-11 h-11 hover:text-gray-900 transition-colors" aria-label="Sao chép tin nhắn của bạn"><i class="pi pi-copy text-sm"></i></button>
+                <button v-if="index === lastUserIndex && !isGenerating" @click="startEditing" class="w-11 h-11 hover:text-gray-900 transition-colors" aria-label="Sửa tin nhắn"><i class="pi pi-pencil text-sm"></i></button>
               </div>
             </div>
           </div>
@@ -108,6 +129,7 @@
               <!-- Assistant Action -->
               <div v-if="!msg.isTyping" class="flex items-center gap-2 mt-3 text-gray-500">
                 <button @click="copyMessage(msg.content)" class="w-11 h-11 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" aria-label="Sao chép câu trả lời"><i class="pi pi-copy text-sm"></i></button>
+                <button v-if="msg.role === 'assistant' && index === messages.length - 1 && !isGenerating" @click="regenerate" class="w-11 h-11 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" aria-label="Tạo lại câu trả lời"><i class="pi pi-refresh text-sm"></i></button>
               </div>
             </div>
           </div>
@@ -125,6 +147,17 @@
       <div class="max-w-3xl mx-auto relative group">
         <div v-if="chatError" role="alert" class="mb-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {{ chatError }}
+        </div>
+        <!-- Edit-last-message mode banner -->
+        <div v-if="isEditing" class="mb-2 flex items-center justify-between gap-3 rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-800">
+          <span class="flex items-center gap-2 min-w-0">
+            <i class="pi pi-pencil text-xs" aria-hidden="true"></i>
+            <span class="truncate">Đang sửa tin nhắn cuối — gửi để thay thế cặp hỏi đáp trước.</span>
+          </span>
+          <button @click="cancelEditing" class="min-h-11 px-2 flex items-center gap-1 font-medium text-sky-800 hover:text-sky-950 transition-colors flex-shrink-0" aria-label="Hủy sửa tin nhắn">
+            <i class="pi pi-times text-xs" aria-hidden="true"></i>
+            <span>Hủy</span>
+          </button>
         </div>
         <div class="relative flex flex-col bg-white border border-gray-200 rounded-[28px] p-2 shadow-sm">
           <!-- Attached Files Preview -->
@@ -149,6 +182,7 @@
             <Textarea
               v-model="inputMessage"
               @keydown.enter.exact.prevent="sendMessage"
+              @keydown.esc="cancelEditing"
               class="w-full max-h-48 !bg-transparent !border-0 resize-none !shadow-none text-gray-800 text-base"
               rows="1"
               autoResize
@@ -160,11 +194,29 @@
           <div class="flex items-center justify-between mt-2 px-1 pb-1">
             <!-- Right Actions -->
             <div class="flex items-center gap-1.5">
+              <button
+                @click="toggleWebSearch"
+                :aria-pressed="webSearchEnabled"
+                aria-label="Tìm kiếm web"
+                class="min-w-11 min-h-11 px-3 flex items-center justify-center rounded-full border transition-colors"
+                :class="webSearchEnabled ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100' : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-100'">
+                <i class="pi pi-globe text-lg" aria-hidden="true"></i>
+              </button>
               <button @click="triggerFileInput" class="w-11 h-11 flex items-center justify-center text-gray-600 hover:text-gray-900 transition-colors rounded-full hover:bg-gray-100" aria-label="Đính kèm file">
                 <i class="pi pi-paperclip text-lg"></i>
               </button>
-              <Button 
-                icon="pi pi-arrow-up" 
+              <Button
+                v-if="isStreaming"
+                icon="pi pi-stop"
+                aria-label="Dừng tạo trả lời"
+                @click="stop"
+                severity="danger"
+                rounded
+                class="!w-11 !h-11"
+              />
+              <Button
+                v-else
+                icon="pi pi-arrow-up"
                 aria-label="Gửi tin nhắn"
                 @click="sendMessage"
                 :disabled="(!inputMessage.trim() && attachedFiles.length === 0) || isGenerating"
@@ -203,14 +255,18 @@
       </div>
     </Drawer>
     
+    <!-- Toast notifications (share confirmations, regenerate warnings) -->
+    <Toast position="bottom-right" />
+
     <!-- Voice to Voice Module -->
     <VoiceWebRtcModule />
   </div>
 </template>
 
 <script setup lang="ts">
-import { defineAsyncComponent, ref, nextTick, watch, onMounted } from 'vue';
+import { computed, defineAsyncComponent, ref, nextTick, watch, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
+import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
@@ -220,6 +276,7 @@ import {
   useHitlActions,
   isSafeWebUrl,
   getCleanUserContent,
+  parseStoredAssistantContent,
   type ChatMessage,
 } from '@/composables/useChatStream';
 const VoiceWebRtcModule = defineAsyncComponent(
@@ -228,7 +285,8 @@ const VoiceWebRtcModule = defineAsyncComponent(
 
 const inputMessage = ref('');
 const messages = ref<ChatMessage[]>([]);
-const { consumeStream } = useChatStream();
+const { consumeStream, stop, isStreaming } = useChatStream();
+const toast = useToast();
 const chatError = ref('');
 const isGenerating = ref(false);
 const chatContainer = ref<HTMLElement | null>(null);
@@ -245,34 +303,14 @@ const loadMessages = async () => {
     if (response.ok) {
       const data = await response.json();
       messages.value = data.map((m: { content: string; role: string }) => {
-        let content = m.content;
-        let webUrls: string[] | undefined = undefined;
-        let thinkingSteps: string[] | undefined = undefined;
-
-        // Xóa các log rác nếu có lưu nhầm
-        content = content.replace(/\[Agent invoked:.*?\][\n\r]*/g, '');
-
-        if (content.includes('[THINKING]:')) {
-          const thinkingMatches = content.match(/\[THINKING\]:([^\n\r]+)/g);
-          if (thinkingMatches) {
-            thinkingSteps = thinkingMatches.map((match: string) => match.replace('[THINKING]:', '').trim());
-            content = content.replace(/\[THINKING\]:[^\n\r]+[\n\r]*/g, '').trimStart();
-          }
-        }
-
-        if (content.includes('[WEB_SEARCH]:')) {
-          const match = content.match(/\[WEB_SEARCH\]:([^\n\r]+)/);
-          if (match) {
-            webUrls = match[1].split('|').filter((u: string) => u);
-            content = content.replace(/\[WEB_SEARCH\]:[^\n\r]+[\n\r]*/, '').trimStart();
-          }
-        }
-
+        // Xóa các marker giao thức ([Agent invoked], [THINKING], [WEB_SEARCH])
+        // bằng đúng tiện ích dùng chung với trang chia sẻ công khai.
+        const parsed = parseStoredAssistantContent(m.content);
         return {
           role: m.role.toLowerCase(),
-          content: content,
-          webUrls: webUrls,
-          thinkingSteps: thinkingSteps
+          content: parsed.content,
+          webUrls: parsed.webUrls,
+          thinkingSteps: parsed.thinkingSteps
         };
       });
       await scrollToBottom();
@@ -304,9 +342,11 @@ onMounted(() => {
 
 watch(() => route.query.id, (newId) => {
   if (newId && typeof newId === 'string') {
+    cancelEditing();
     currentSessionId.value = newId;
     loadMessages();
   } else if (route.query.new) {
+    cancelEditing();
     currentSessionId.value = null;
     messages.value = [];
   }
@@ -361,13 +401,71 @@ const copyMessage = async (content: string) => {
   }
 };
 
+// --- Web-search toggle (persisted, default ON) -------------------------------
+
+const WEB_SEARCH_STORAGE_KEY = 'omni.webSearch';
+
+const loadWebSearchPreference = (): boolean => {
+  try {
+    return localStorage.getItem(WEB_SEARCH_STORAGE_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+};
+
+const webSearchEnabled = ref(loadWebSearchPreference());
+
+const toggleWebSearch = () => {
+  webSearchEnabled.value = !webSearchEnabled.value;
+  try {
+    localStorage.setItem(WEB_SEARCH_STORAGE_KEY, webSearchEnabled.value ? 'on' : 'off');
+  } catch {
+    // Storage may be unavailable (private mode); the toggle still applies to this session.
+  }
+};
+
+// --- Edit last user message ---------------------------------------------------
+
+const isEditing = ref(false);
+
+const lastUserIndex = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    if (messages.value[i].role === 'user') return i;
+  }
+  return -1;
+});
+
+const startEditing = () => {
+  const index = lastUserIndex.value;
+  if (index === -1 || isGenerating.value) return;
+  isEditing.value = true;
+  inputMessage.value = getCleanUserContent(messages.value[index].content);
+};
+
+const cancelEditing = () => {
+  if (!isEditing.value) return;
+  isEditing.value = false;
+  inputMessage.value = '';
+};
+
 const sendMessage = async () => {
   const content = inputMessage.value.trim();
-  const hasFiles = attachedFiles.value.length > 0;
+  const editing = isEditing.value;
+  // Edit mode always replaces via the JSON stream endpoint; any attachments in
+  // the tray are kept for the next normal send instead of being mixed in.
+  const hasFiles = !editing && attachedFiles.value.length > 0;
   if ((!content && !hasFiles) || isGenerating.value) return;
   chatError.value = '';
 
-  const fileNames = attachedFiles.value.map(f => f.name);
+  if (editing) {
+    // Locally drop the last user message plus its assistant reply; the server
+    // does the same because of `replaceLastExchange: true`.
+    const index = lastUserIndex.value;
+    if (index !== -1) messages.value.splice(index);
+    isEditing.value = false;
+  }
+
+  const fileNames = hasFiles ? attachedFiles.value.map(f => f.name) : [];
   messages.value.push({ role: 'user', content: content || `📎 ${fileNames.join(', ')}`, attachedFiles: fileNames.length > 0 ? fileNames : undefined });
   inputMessage.value = '';
   await scrollToBottom();
@@ -407,7 +505,9 @@ const sendMessage = async () => {
       const payload = {
         SessionId: currentSessionId.value || '00000000-0000-0000-0000-000000000000',
         Message: content,
-        ModelId: null
+        ModelId: null,
+        enableWebSearch: webSearchEnabled.value,
+        ...(editing ? { replaceLastExchange: true } : {})
       };
       response = await http.post(ApiFactory.CHAT.STREAM, payload);
     }
@@ -426,6 +526,149 @@ const sendMessage = async () => {
   } finally {
     isGenerating.value = false;
     window.dispatchEvent(new CustomEvent('chat-session-created'));
+  }
+};
+
+// --- Regenerate the last answer ----------------------------------------------
+
+const NO_REGENERATE_TARGET = 'Không có tin nhắn nào để tạo lại';
+
+const regenerate = async () => {
+  if (isGenerating.value || !currentSessionId.value) return;
+  chatError.value = '';
+
+  // Remove the trailing assistant reply locally; the server deletes its copy.
+  const last = messages.value[messages.value.length - 1];
+  if (last && last.role === 'assistant') messages.value.pop();
+
+  isGenerating.value = true;
+  messages.value.push({ role: 'assistant', content: '', isTyping: true });
+  const assistantMsg = messages.value[messages.value.length - 1];
+  await scrollToBottom();
+
+  const discardPlaceholder = () => {
+    const index = messages.value.indexOf(assistantMsg);
+    if (index !== -1) messages.value.splice(index, 1);
+  };
+  const warnNothingToRegenerate = () => {
+    discardPlaceholder();
+    toast.add({ severity: 'warn', summary: 'Không thể tạo lại', detail: `${NO_REGENERATE_TARGET}.`, life: 5000 });
+  };
+
+  try {
+    const response = await http.post(ApiFactory.CHAT.STREAM, {
+      SessionId: currentSessionId.value,
+      Message: '',
+      ModelId: null,
+      regenerate: true,
+      enableWebSearch: webSearchEnabled.value
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Yêu cầu tạo lại thất bại'));
+
+    await consumeStream({
+      response,
+      assistantMsg,
+      scrollToBottom,
+      onWebSearch: (urls) => { assistantMsg.webUrls = urls; },
+    });
+
+    // The "nothing to regenerate" signal may arrive as plain stream content.
+    if (assistantMsg.content.trim() === `[${NO_REGENERATE_TARGET}]`) warnNothingToRegenerate();
+  } catch (error) {
+    const message = errorMessage(error, 'Không thể tạo lại câu trả lời.');
+    if (message.includes(NO_REGENERATE_TARGET)) {
+      warnNothingToRegenerate();
+    } else {
+      assistantMsg.content = `Lỗi: ${message}`;
+      assistantMsg.isTyping = false;
+    }
+  } finally {
+    isGenerating.value = false;
+  }
+};
+
+// --- Share / revoke public link -----------------------------------------------
+
+const shareBusy = ref(false);
+
+const copyToClipboard = async (text: string): Promise<boolean> => {
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Clipboard API can be unavailable/blocked; fall through to the legacy path.
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return copied;
+  } catch {
+    return false;
+  }
+};
+
+const shareSession = async () => {
+  if (!currentSessionId.value || shareBusy.value) return;
+  shareBusy.value = true;
+  chatError.value = '';
+  try {
+    const response = await http.post(ApiFactory.SHARE.CREATE_LINK(currentSessionId.value));
+    if (!response.ok) throw new Error(await readApiError(response, 'Không thể tạo liên kết chia sẻ'));
+    const data = await response.json() as { token?: unknown };
+    if (typeof data.token !== 'string' || !data.token) throw new Error('Máy chủ không trả về token chia sẻ.');
+    const shareUrl = `${window.location.origin}/share/${data.token}`;
+    const copied = await copyToClipboard(shareUrl);
+    if (copied) {
+      toast.add({
+        severity: 'success',
+        summary: 'Đã sao chép liên kết chia sẻ',
+        detail: 'Liên kết chia sẻ cũ của đoạn chat này (nếu có) đã ngừng hoạt động.',
+        life: 7000
+      });
+    } else {
+      toast.add({
+        severity: 'warn',
+        summary: 'Không thể tự động sao chép',
+        detail: `Liên kết chia sẻ: ${shareUrl} (liên kết cũ, nếu có, đã ngừng hoạt động).`,
+        life: 12000
+      });
+    }
+  } catch (error) {
+    chatError.value = errorMessage(error, 'Không thể tạo liên kết chia sẻ.');
+  } finally {
+    shareBusy.value = false;
+  }
+};
+
+const revokeShare = async () => {
+  if (!currentSessionId.value || shareBusy.value) return;
+  shareBusy.value = true;
+  chatError.value = '';
+  try {
+    const response = await http.delete(ApiFactory.SHARE.REVOKE_LINK(currentSessionId.value));
+    if (response.ok) {
+      toast.add({
+        severity: 'info',
+        summary: 'Đã thu hồi liên kết chia sẻ',
+        detail: 'Liên kết chia sẻ của đoạn chat này không còn truy cập được.',
+        life: 6000
+      });
+    } else {
+      chatError.value = await readApiError(response, 'Không thể thu hồi liên kết chia sẻ');
+    }
+  } catch (error) {
+    chatError.value = errorMessage(error, 'Không thể thu hồi liên kết chia sẻ.');
+  } finally {
+    shareBusy.value = false;
   }
 };
 

@@ -103,7 +103,16 @@
           style="scrollbar-width: none;"
         ></textarea>
         
-        <button 
+        <button
+          v-if="isStreaming"
+          @click="stop"
+          aria-label="Dừng tạo trả lời"
+          class="w-11 h-11 flex items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700 transition-colors shrink-0"
+        >
+          <i class="pi pi-stop text-xs"></i>
+        </button>
+        <button
+          v-else
           @click="sendMessage"
           :disabled="!inputMessage.trim() || isGenerating"
           aria-label="Gửi tin nhắn"
@@ -142,7 +151,8 @@ const messages = ref<ChatMessage[]>([
 const isGenerating = ref(false);
 const chatContainer = ref<HTMLElement | null>(null);
 const currentSessionId = ref<string | null>(null);
-const { consumeStream } = useChatStream();
+// `stop` keeps whatever partial text has streamed in and ends the stream cleanly.
+const { consumeStream, stop, isStreaming } = useChatStream();
 
 const closeWidget = () => {
     if (window.parent && document.referrer) {

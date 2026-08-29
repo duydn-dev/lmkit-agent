@@ -25,6 +25,16 @@ public class ChatCompletionResponse
     public string StopReason { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// Body of <c>PATCH /api/chat/sessions/{id}</c>. Wire shape: <c>{ "title": string }</c>.
+/// Validation (non-empty, max 100 chars after trimming) lives in ChatController so the
+/// error payload matches the codebase's Vietnamese <c>{ message }</c> convention.
+/// </summary>
+public class RenameChatSessionRequest
+{
+    public string? Title { get; set; }
+}
+
 public class DocumentConversionRequest
 {
     [Required]

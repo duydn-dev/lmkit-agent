@@ -33,18 +33,46 @@
             <i class="pi pi-plus"></i>
           </button>
         </div>
-        <div v-if="chatSessions.length === 0" class="px-3 py-2 text-xs text-gray-500 italic">
-          Chưa có phiên chat nào.
+        <div class="relative mb-2 px-1">
+          <i class="pi pi-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-xs" aria-hidden="true"></i>
+          <input
+            v-model="searchQuery"
+            type="search"
+            class="w-full min-h-11 rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-900 placeholder:text-gray-500 focus:border-sky-500"
+            placeholder="Tìm kiếm đoạn chat"
+            aria-label="Tìm kiếm đoạn chat" />
         </div>
-        <div v-for="session in chatSessions" :key="session.id" class="w-full flex items-center justify-between gap-3 px-3 py-2 text-gray-700 hover:text-gray-900 font-medium hover:bg-chatgpt-light rounded-md transition-colors text-sm truncate group mt-1">
-          <button type="button" class="flex items-center gap-3 truncate flex-1 cursor-pointer text-left min-h-11" @click="selectSession(session.id)">
-            <i class="pi pi-message text-gray-500 group-hover:text-gray-700"></i>
-            <span class="truncate text-left flex-1">{{ session.title || 'Đoạn chat mới' }}</span>
-          </button>
-          <button @click.stop="deleteSession(session.id)" class="text-gray-500 hover:text-red-600 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 w-11 h-11 rounded hover:bg-gray-200/50 transition-all flex-shrink-0 cursor-pointer" :aria-label="`Xóa đoạn chat ${session.title || 'mới'}`">
-            <i class="pi pi-trash text-xs"></i>
-          </button>
-        </div>
+        <div v-if="searchLoading" class="px-3 py-2 text-xs text-gray-500 italic" role="status">Đang tìm kiếm...</div>
+        <template v-else>
+          <div v-if="displayedSessions.length === 0" class="px-3 py-2 text-xs text-gray-500 italic">
+            {{ isSearching ? 'Không tìm thấy đoạn chat nào.' : 'Chưa có phiên chat nào.' }}
+          </div>
+          <div v-for="session in displayedSessions" :key="session.id" class="w-full flex items-center justify-between gap-3 px-3 py-2 text-gray-700 hover:text-gray-900 font-medium hover:bg-chatgpt-light rounded-md transition-colors text-sm truncate group mt-1">
+            <template v-if="editingSessionId === session.id">
+              <input
+                :ref="focusRenameInput"
+                v-model="editingTitle"
+                type="text"
+                class="flex-1 min-w-0 min-h-11 rounded-md border border-sky-500 bg-white px-2 text-sm text-gray-900"
+                :aria-label="`Tên mới cho đoạn chat ${session.title || 'mới'}`"
+                @keydown.enter.prevent="saveRename(session.id)"
+                @keydown.esc.prevent="cancelRename"
+                @blur="cancelRename" />
+            </template>
+            <template v-else>
+              <button type="button" class="flex items-center gap-3 truncate flex-1 cursor-pointer text-left min-h-11" @click="selectSession(session.id)">
+                <i class="pi pi-message text-gray-500 group-hover:text-gray-700"></i>
+                <span class="truncate text-left flex-1">{{ session.title || 'Đoạn chat mới' }}</span>
+              </button>
+              <button @click.stop="startRename(session)" class="text-gray-500 hover:text-gray-900 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 w-11 h-11 rounded hover:bg-gray-200/50 transition-all flex-shrink-0 cursor-pointer" :aria-label="`Đổi tên đoạn chat ${session.title || 'mới'}`">
+                <i class="pi pi-pencil text-xs"></i>
+              </button>
+              <button @click.stop="deleteSession(session.id)" class="text-gray-500 hover:text-red-600 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 w-11 h-11 rounded hover:bg-gray-200/50 transition-all flex-shrink-0 cursor-pointer" :aria-label="`Xóa đoạn chat ${session.title || 'mới'}`">
+                <i class="pi pi-trash text-xs"></i>
+              </button>
+            </template>
+          </div>
+        </template>
       </div>
       
       <div class="p-3 border-t border-gray-200 flex items-center gap-1">
@@ -162,7 +190,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
@@ -194,6 +222,100 @@ const mcpForm = ref({ name: '', url: '', headersJson: '', isActive: true, trustR
 
 const chatSessions = ref<ChatSession[]>([]);
 const mobileNavOpen = ref(false);
+
+// --- Session history search -------------------------------------------------
+
+const searchQuery = ref('');
+/** `null` = no active search: the sidebar shows the normal session list. */
+const searchResults = ref<ChatSession[] | null>(null);
+const searchLoading = ref(false);
+let searchDebounce: ReturnType<typeof setTimeout> | undefined;
+/** Monotonic id so a stale response can never overwrite a newer search. */
+let searchRequestId = 0;
+
+const isSearching = computed(() => searchQuery.value.trim().length > 0);
+const displayedSessions = computed(() => searchResults.value ?? chatSessions.value);
+
+const runSearch = async (query: string) => {
+  const requestId = ++searchRequestId;
+  try {
+    const response = await http.get(ApiFactory.CHAT.SEARCH_SESSIONS(query));
+    if (requestId !== searchRequestId) return;
+    if (response.ok) {
+      searchResults.value = await response.json();
+    } else {
+      searchResults.value = [];
+      appError.value = await readApiError(response, 'Không thể tìm kiếm đoạn chat');
+    }
+  } catch (error) {
+    if (requestId !== searchRequestId) return;
+    searchResults.value = [];
+    appError.value = errorMessage(error, 'Không thể tìm kiếm đoạn chat.');
+  } finally {
+    if (requestId === searchRequestId) searchLoading.value = false;
+  }
+};
+
+watch(searchQuery, (query) => {
+  if (searchDebounce) clearTimeout(searchDebounce);
+  const trimmed = query.trim();
+  if (!trimmed) {
+    // Clearing the box restores the normal list and invalidates in-flight results.
+    searchRequestId += 1;
+    searchResults.value = null;
+    searchLoading.value = false;
+    return;
+  }
+  searchLoading.value = true;
+  searchDebounce = setTimeout(() => { void runSearch(trimmed); }, 300);
+});
+
+// --- Inline session rename ----------------------------------------------------
+
+const editingSessionId = ref<string | null>(null);
+const editingTitle = ref('');
+
+const startRename = (session: ChatSession) => {
+  editingSessionId.value = session.id;
+  editingTitle.value = session.title || '';
+};
+
+const cancelRename = () => {
+  editingSessionId.value = null;
+  editingTitle.value = '';
+};
+
+/** Template function-ref: focuses the rename input as soon as it mounts. */
+const focusRenameInput = (el: unknown) => {
+  if (el instanceof HTMLInputElement && document.activeElement !== el) el.focus();
+};
+
+const saveRename = async (id: string) => {
+  if (editingSessionId.value !== id) return;
+  const title = editingTitle.value.trim();
+  // Close the editor synchronously so the pending blur can't double-fire.
+  cancelRename();
+  const current = displayedSessions.value.find((session) => session.id === id);
+  if (!title || !current || title === current.title) return;
+  appError.value = '';
+  try {
+    const response = await http.patch(ApiFactory.CHAT.RENAME_SESSION(id), { title });
+    if (response.ok) {
+      // 204: reflect the new title locally in both the full and search lists.
+      const apply = (sessions: ChatSession[]) => {
+        for (const session of sessions) {
+          if (session.id === id) session.title = title;
+        }
+      };
+      apply(chatSessions.value);
+      if (searchResults.value) apply(searchResults.value);
+    } else {
+      appError.value = await readApiError(response, 'Không thể đổi tên đoạn chat');
+    }
+  } catch (error) {
+    appError.value = errorMessage(error, 'Không thể đổi tên đoạn chat.');
+  }
+};
 
 const openSettings = async () => {
   showSettingsModal.value = true;
@@ -309,6 +431,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('chat-session-created', loadChatSessions);
+  if (searchDebounce) clearTimeout(searchDebounce);
 });
 
 const logout = async () => {

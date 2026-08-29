@@ -16,6 +16,7 @@ using Microsoft.Extensions.Logging;
 using LmKitOmniApi.Infrastructure.AI.Tools;
 using LmKitOmniApi.Infrastructure.Security;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 
 namespace LmKitOmniApi.Infrastructure.AI;
 
@@ -42,6 +43,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly AgentFilterPipeline _filterPipeline;
     private readonly IToolPermissionService _toolPermission;
     private readonly ToolSandboxService _sandbox;
+    private readonly IPromptGuardService _promptGuard;
 
     // ── Memory ──
     private readonly IAgentMemoryService _memoryService;
@@ -101,6 +103,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         ITokenManagementService tokenManagement,
         IToolPermissionService toolPermission,
         ToolSandboxService sandbox,
+        IPromptGuardService promptGuard,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
         McpClientService mcpClient,
@@ -119,6 +122,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         _tokenManagement = tokenManagement;
         _toolPermission = toolPermission;
         _sandbox = sandbox;
+        _promptGuard = promptGuard;
         _mcpClient = mcpClient;
         _telemetry = telemetry;
         _toolAudit = toolAudit;
@@ -147,16 +151,25 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly LmKitOmniApi.Infrastructure.Data.HermesDbContext _dbContext;
 
     /// <summary>
-    /// STREAMING version — every step yields SSE events to the client.
-    /// ALL services integrated: security, memory, ReAct, multi-agent, MCP, telemetry, resilience.
+    /// STREAMING version — every step yields SSE events to the client, and the
+    /// synthesis pass streams answer tokens live through a guardrail holdback gate
+    /// (see <see cref="StreamingGuardrailGate"/>) instead of buffering the whole
+    /// answer. Concatenated chunks are byte-identical to the guardrail-processed
+    /// full response. ALL services integrated: security, memory, ReAct,
+    /// multi-agent, MCP, telemetry, resilience.
     /// </summary>
     public async IAsyncEnumerable<string> StreamProcessQueryAsync(
         Guid tenantId, Guid sessionId, Guid userId, string userRole, string query, ChatHistory history,
+        AgentRequestOptions? options,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         // ── Telemetry: Start trace ──
         using var activity = _telemetry.StartAgentExecution("StreamProcessQuery", tenantId, query);
         _sandbox.ResetForNewRequest();
+
+        // Per-request toggles. Null options (or AllowWebSearch=true) preserves the
+        // default behavior exactly; false removes web search from this request only.
+        var allowWebSearch = options?.AllowWebSearch ?? true;
 
         // ── Step 1: Security Check ──
         yield return "[THINKING]: 🛡️ Kiểm tra bảo mật đầu vào...\\n";
@@ -198,7 +211,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(cancellationToken);
         _telemetry.RecordReActIteration(activity, 1, "native-react", query);
         var nativeRun = await ExecuteNativeReActAsync(
-            tenantId, userId, userRole, sessionId, query, memoryContext, cancellationToken);
+            tenantId, userId, userRole, sessionId, query, memoryContext, allowWebSearch, cancellationToken);
 
         if (nativeRun.PendingApprovalId is Guid approvalId)
         {
@@ -220,9 +233,12 @@ public class AgentOrchestrator : IAgentOrchestrator
         _defaultToolCatalog.RegisterSafeDefaults(chat);
         chat.SystemPrompt = BuildSystemPrompt(fullContext, memoryContext);
 
-        // Streaming LLM response
+        // Streaming LLM response — TRUE token streaming through a guardrail gate.
+        // UserVisible tokens are forwarded to the client as they are generated,
+        // after passing the same redaction the output guardrail applies, evaluated
+        // incrementally with a holdback window (see StreamingGuardrailGate).
         var channel = System.Threading.Channels.Channel.CreateUnbounded<string>();
-        var fullResponseBuilder = new System.Text.StringBuilder();
+        var streamGate = new StreamingGuardrailGate(_promptGuard);
 
         chat.AfterTextCompletion += (sender, e) =>
         {
@@ -255,11 +271,13 @@ public class AgentOrchestrator : IAgentOrchestrator
 
         await foreach (var text in channel.Reader.ReadAllAsync(cancellationToken))
         {
-            fullResponseBuilder.Append(text);
+            var chunk = await streamGate.AppendAndTryEmitAsync(text, cancellationToken);
+            if (chunk.Length > 0)
+                yield return chunk;
         }
 
         // ── Step 6: Post-processing ──
-        var fullResponse = fullResponseBuilder.ToString();
+        var fullResponse = streamGate.RawText;
         _telemetry.RecordTokenUsage(_tokenManagement.EstimateTokenCount(fullResponse));
 
         filterContext.Output = fullResponse;
@@ -286,10 +304,34 @@ public class AgentOrchestrator : IAgentOrchestrator
             _logger.LogWarning(ex, "Failed to persist user-scoped agent memory.");
         }
 
-        // Safety invariant: no model-generated final content is emitted before the
-        // complete response has passed the output guardrail.
-        if (!string.IsNullOrEmpty(outputResult.ProcessedContent))
-            yield return outputResult.ProcessedContent;
+        // Safety invariant (streaming): every chunk already emitted above passed the
+        // SAME redaction patterns the output guardrail applies (shared with
+        // OutputGuardrailFilter — one source of truth), evaluated with a holdback
+        // window so patterns spanning chunk boundaries are caught; while a threat
+        // class is still undetected, emission halts before any span its redaction
+        // could rewrite. The full-text guardrail pass above still runs on the
+        // COMPLETE response — for warnings/telemetry and for the ProcessedContent
+        // persisted to memory — and here we release only the not-yet-emitted tail
+        // (holdback remainder, truncation marker, leakage disclaimer). Streamed
+        // chunks + this tail concatenate to exactly ProcessedContent; nothing is
+        // emitted twice.
+        var finalContent = outputResult.ProcessedContent ?? string.Empty;
+        var emittedContent = streamGate.EmittedText;
+        if (finalContent.StartsWith(emittedContent, StringComparison.Ordinal))
+        {
+            var remainder = finalContent[emittedContent.Length..];
+            if (remainder.Length > 0)
+                yield return remainder;
+        }
+        else
+        {
+            // Unreachable by construction (see StreamingGuardrailGate remarks).
+            // Streamed text cannot be recalled and re-emitting would duplicate
+            // content, so emit nothing further and surface the bug loudly.
+            _logger.LogError(
+                "Streaming guardrail divergence: emitted prefix ({EmittedLength} chars) is not a prefix of the guardrail-processed response ({FinalLength} chars); tail suppressed.",
+                emittedContent.Length, finalContent.Length);
+        }
     }
 
     // ═══════════════════════════════════════════
@@ -303,6 +345,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         Guid sessionId,
         string query,
         string existingContext,
+        bool allowWebSearch,
         CancellationToken ct)
     {
         var model = await _modelManager.GetChatModelAsync(ct: ct);
@@ -311,7 +354,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         async Task<string> InvokeActionAsync(string action, string toolQuery, CancellationToken toolCt)
         {
             var output = await ExecuteActionWithResilienceAsync(
-                tenantId, userId, userRole, sessionId, toolQuery, action, toolCt);
+                tenantId, userId, userRole, sessionId, toolQuery, action, allowWebSearch, toolCt);
 
             const string approvalPrefix = "[HITL_APPROVAL_REQUIRED:";
             if (output.StartsWith(approvalPrefix, StringComparison.Ordinal)
@@ -328,6 +371,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             tenantId,
             query,
             InvokeActionAsync,
+            allowWebSearch,
             ct);
         var agent = LMKit.Agents.Agent.CreateBuilder(model)
             .WithPersona("Hermes")
@@ -363,6 +407,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         Guid tenantId,
         string query,
         Func<string, string, CancellationToken, Task<string>> invoke,
+        bool allowWebSearch,
         CancellationToken ct)
     {
         var profile = AgentToolProfileResolver.Resolve(query);
@@ -390,7 +435,10 @@ public class AgentOrchestrator : IAgentOrchestrator
                 (q, ct) => invoke("SPEECH", q, ct)));
         }
 
-        if (profile.HasFlag(AgentToolProfile.Research))
+        // Per-request web-search switch: when disabled, the tool is simply never
+        // offered to the ReAct planner for this request. The tool list is built
+        // fresh per request, so no shared/singleton state is mutated here.
+        if (profile.HasFlag(AgentToolProfile.Research) && allowWebSearch)
         {
             tools.Add(new DelegatedActionTool("search_web", "Search approved web sources for current external information.",
                 (q, ct) => invoke("WEB_SEARCH", q, ct)));
@@ -420,7 +468,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// </summary>
     private async Task<string> ExecuteActionWithResilienceAsync(
         Guid tenantId, Guid? userId, string userRole, Guid sessionId,
-        string query, string action, CancellationToken ct)
+        string query, string action, bool allowWebSearch, CancellationToken ct)
     {
         var toolCallId = Guid.NewGuid();
         var startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -472,7 +520,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             {
                 var sandboxResult = await _sandbox.ExecuteInSandboxAsync(action, async (sandboxCt) =>
                 {
-                    return await ExecuteActionCoreAsync(tenantId, userId, userRole, query, action, sandboxCt);
+                    return await ExecuteActionCoreAsync(tenantId, userId, userRole, query, action, allowWebSearch, sandboxCt);
                 }, resCt);
 
                 if (sandboxResult.IsSuccess) return sandboxResult.Output;
@@ -505,8 +553,8 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// point invoked inside the sandbox/resilience layers.
     /// </summary>
     private Task<string> ExecuteActionCoreAsync(
-        Guid tenantId, Guid? userId, string userRole, string query, string action, CancellationToken ct)
-        => _actionDispatcher.ExecuteAsync(tenantId, userId, userRole, query, action, ct);
+        Guid tenantId, Guid? userId, string userRole, string query, string action, bool allowWebSearch, CancellationToken ct)
+        => _actionDispatcher.ExecuteAsync(tenantId, userId, userRole, query, action, allowWebSearch, ct);
 
     /// <summary>
     /// Executes an approved action without repeating the approval check, while still
@@ -539,9 +587,11 @@ public class AgentOrchestrator : IAgentOrchestrator
                 action,
                 async resilienceCt =>
                 {
+                    // Approved (HITL) executions carry no per-request options; web
+                    // search stays available here, matching pre-switch behavior.
                     var sandboxResult = await _sandbox.ExecuteInSandboxAsync(
                         action,
-                        sandboxCt => ExecuteActionCoreAsync(tenantId, userId, currentRole, query, action, sandboxCt),
+                        sandboxCt => ExecuteActionCoreAsync(tenantId, userId, currentRole, query, action, allowWebSearch: true, sandboxCt),
                         resilienceCt);
 
                     if (sandboxResult.IsSuccess) return sandboxResult.Output;
@@ -585,5 +635,193 @@ public class AgentOrchestrator : IAgentOrchestrator
             ["context"] = context ?? "",
             ["memory"] = memory ?? ""
         });
+    }
+
+    // ═══════════════════════════════════════════
+    // STREAMING GUARDRAIL GATE
+    // ═══════════════════════════════════════════
+
+    /// <summary>
+    /// Incremental redaction gate that makes true token streaming safe.
+    ///
+    /// The output guardrail's redaction is conditional: a threat class detected
+    /// ANYWHERE in the response applies that class's redaction to the WHOLE
+    /// response. Streamed tokens cannot be recalled, so this gate guarantees, by
+    /// construction, that everything emitted is a byte-exact prefix of what the
+    /// end-of-stream full pass (RunOutputFiltersAsync → OutputGuardrailFilter)
+    /// produces:
+    ///
+    ///  1. Holdback window — the last <see cref="HoldbackChars"/> chars of the
+    ///     redacted view are never emitted, so a pattern still forming at the live
+    ///     edge (partial SSN/email/credential) can never be partially released.
+    ///     512 is far above the longest realistic redactable span (RFC caps an
+    ///     email local-part at 64 chars and a whole address at 320; SSNs span 11;
+    ///     credential keywords ~14) and above the guardrail's end-of-text notices.
+    ///  2. Class latching — the stable region (everything except the holdback
+    ///     tail) is re-analyzed with the SAME detector the full pass uses
+    ///     (IPromptGuardService.AnalyzeOutputAsync). A detected class latches
+    ///     permanently and its redaction — shared with OutputGuardrailFilter, one
+    ///     source of truth — is applied to the whole view from then on, in the
+    ///     same order the full pass applies it (credentials, then PII). Interior
+    ///     matches are append-stable, so latched classes are (modulo harmless
+    ///     boundary false-positives whose redactions are no-ops) the classes the
+    ///     full pass will detect.
+    ///  3. Hold rule — while a class is NOT latched, emission stops before the
+    ///     earliest span its redaction could rewrite: for credentials before the
+    ///     keyword itself (the value may trail beyond any window), for PII before
+    ///     an SSN/email-shaped span. If the class later latches, the span is
+    ///     redacted and released; if it never does, the full pass leaves it
+    ///     untouched and the end-of-stream reconciliation releases it verbatim.
+    ///     Either way the emitted text equals the full-pass prefix.
+    ///
+    /// The caller releases the final piece (holdback tail, truncation marker,
+    /// system-prompt-leak disclaimer) from the full pass's ProcessedContent, so
+    /// the concatenation of all yielded chunks is byte-identical to the response
+    /// the pre-streaming implementation yielded as a single chunk.
+    ///
+    /// Known residual (accepted, logged fail-safe by the caller's prefix check):
+    /// degenerate constructs whose pattern membership is only decidable more than
+    /// <see cref="HoldbackChars"/> chars later — e.g. a 512+ char unbroken run
+    /// that finally turns out to be an "email", or a credential keyword followed
+    /// by 512+ chars of pure whitespace before its value. Real model output does
+    /// not produce these; if one ever occurs the caller suppresses the tail
+    /// rather than risking a leak or duplicate.
+    /// </summary>
+    private sealed class StreamingGuardrailGate
+    {
+        /// <summary>Unemitted tail always retained (see class remarks, point 1).</summary>
+        private const int HoldbackChars = 512;
+
+        /// <summary>
+        /// Emit attempts run once at least this much new raw text has arrived.
+        /// The LM-Kit callback delivers a few characters per segment; batching
+        /// ~32 chars per flush keeps the O(text) view rebuild off the per-token
+        /// hot path while still flushing several times per second.
+        /// </summary>
+        private const int EmitStrideChars = 32;
+
+        /// <summary>
+        /// Detector re-scan cadence over the stable region. The hold rule — not
+        /// this cadence — is what prevents premature emission, so lag here only
+        /// delays the release of held spans, never safety.
+        /// </summary>
+        private const int DetectionStrideChars = 256;
+
+        /// <summary>
+        /// Keyword-only prefix of <see cref="OutputGuardrailFilter.CredentialRedactionPattern"/>:
+        /// the full pattern's trailing "\s*[:=]?\s*\S+" may only complete long
+        /// after the keyword has left the holdback window, so the hold rule
+        /// anchors on the keyword itself.
+        /// </summary>
+        private static readonly Regex CredentialHoldPattern = new(
+            @"(?i)API[-_\s]?KEY|SECRET[-_\s]?KEY|PASSWORD|TOKEN|BEARER",
+            RegexOptions.Compiled);
+
+        private readonly IPromptGuardService _promptGuard;
+        private readonly System.Text.StringBuilder _raw = new();
+        private readonly System.Text.StringBuilder _emitted = new();
+        private int _lastEmitAttemptRawLength;
+        private int _lastAnalyzedStableLength;
+        private bool _credentialClassLatched;
+        private bool _piiClassLatched;
+
+        public StreamingGuardrailGate(IPromptGuardService promptGuard)
+        {
+            _promptGuard = promptGuard;
+        }
+
+        /// <summary>Complete raw model output accumulated so far (pre-redaction).</summary>
+        public string RawText => _raw.ToString();
+
+        /// <summary>Everything emitted downstream so far (a post-redaction prefix).</summary>
+        public string EmittedText => _emitted.ToString();
+
+        /// <summary>
+        /// Appends one model segment and returns the next chunk that is safe to
+        /// emit (empty when nothing new can be released yet).
+        /// </summary>
+        public async Task<string> AppendAndTryEmitAsync(string text, CancellationToken ct)
+        {
+            _raw.Append(text);
+            if (_raw.Length - _lastEmitAttemptRawLength < EmitStrideChars)
+                return string.Empty;
+            _lastEmitAttemptRawLength = _raw.Length;
+
+            var raw = _raw.ToString();
+
+            // 1. Latch threat classes from the stable region only — a match fully
+            //    inside it cannot be altered or dissolved by later appends, so a
+            //    latched class is also detected by the end-of-stream full pass.
+            var stableLength = raw.Length - HoldbackChars;
+            if (!(_credentialClassLatched && _piiClassLatched)
+                && stableLength - _lastAnalyzedStableLength >= DetectionStrideChars)
+            {
+                _lastAnalyzedStableLength = stableLength;
+                var guard = await _promptGuard.AnalyzeOutputAsync(raw[..stableLength], ct);
+                foreach (var detection in guard.Detections)
+                {
+                    if (detection.ThreatType == "CredentialLeakage") _credentialClassLatched = true;
+                    else if (detection.ThreatType == "PIILeakage") _piiClassLatched = true;
+                    // SystemPromptLeakage only appends an end-of-text disclaimer;
+                    // the full pass owns the text end, so nothing to do mid-stream.
+                }
+            }
+
+            // 2. Conditionally redacted view — the same class transforms, in the
+            //    same order, that OutputGuardrailFilter applies to the full text.
+            //    Credential replacements are append-stable as-is (they keep the
+            //    keyword and never dissolve). SSN/email matches ending exactly at
+            //    the live edge could still dissolve or extend, so those stay
+            //    unreplaced until settled — they sit inside the holdback window,
+            //    which keeps them unemittable meanwhile.
+            var view = raw;
+            if (_credentialClassLatched)
+                view = OutputGuardrailFilter.RedactCredentialContent(view);
+            if (_piiClassLatched)
+            {
+                view = ReplaceSettledMatches(OutputGuardrailFilter.SsnRedactionPattern, view, "[SSN REDACTED]");
+                view = ReplaceSettledMatches(OutputGuardrailFilter.EmailRedactionPattern, view, "[EMAIL REDACTED]");
+            }
+
+            // 3. Emission cap: holdback from the live edge, plus the full pass's
+            //    truncation cap (the caller releases the truncation marker).
+            var safeLength = Math.Min(view.Length - HoldbackChars, OutputGuardrailFilter.MaxOutputLength);
+            if (safeLength <= _emitted.Length)
+                return string.Empty;
+
+            // 4. Hold rule (see class remarks, point 3). The credential keyword
+            //    hold applies only while unlatched: once latched, every keyword
+            //    reaching the emit zone is part of a completed "$1: [REDACTED]"
+            //    replacement in the view.
+            if (!_credentialClassLatched)
+                safeLength = CapBeforeEarliestMatch(view, CredentialHoldPattern, safeLength);
+            if (!_piiClassLatched)
+            {
+                safeLength = CapBeforeEarliestMatch(view, OutputGuardrailFilter.SsnRedactionPattern, safeLength);
+                safeLength = CapBeforeEarliestMatch(view, OutputGuardrailFilter.EmailRedactionPattern, safeLength);
+            }
+            if (safeLength <= _emitted.Length)
+                return string.Empty;
+
+            var chunk = view.Substring(_emitted.Length, safeLength - _emitted.Length);
+            _emitted.Append(chunk);
+            return chunk;
+        }
+
+        /// <summary>
+        /// Applies <paramref name="pattern"/> replacements except for a match
+        /// touching the very end of the text, where an append could still extend
+        /// or dissolve it (e.g. "123-45-6789" gaining another digit). Such a
+        /// match lies inside the holdback window, so deferring it never delays
+        /// emittable content.
+        /// </summary>
+        private static string ReplaceSettledMatches(Regex pattern, string text, string replacement)
+            => pattern.Replace(text, m => m.Index + m.Length >= text.Length ? m.Value : replacement);
+
+        private int CapBeforeEarliestMatch(string view, Regex pattern, int currentCap)
+        {
+            var match = pattern.Match(view, _emitted.Length);
+            return match.Success && match.Index < currentCap ? match.Index : currentCap;
+        }
     }
 }

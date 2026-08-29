@@ -15,6 +15,7 @@ public class HermesDbContext : DbContext
     
     // New Entities
     public DbSet<AgentMemory> AgentMemories { get; set; } = null!;
+    public DbSet<ChatShareLink> ChatShareLinks { get; set; } = null!;
     public DbSet<ExternalMcpServer> ExternalMcpServers { get; set; } = null!;
     public DbSet<GraphEntity> GraphEntities { get; set; } = null!;
     public DbSet<GraphRelationship> GraphRelationships { get; set; } = null!;
@@ -80,6 +81,17 @@ public class HermesDbContext : DbContext
             .WithMany(s => s.Messages)
             .HasForeignKey(m => m.ChatSessionId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ChatShareLink>()
+            .HasOne(l => l.ChatSession)
+            .WithMany()
+            .HasForeignKey(l => l.ChatSessionId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<ChatShareLink>()
+            .HasIndex(l => l.TokenHash)
+            .IsUnique();
+        modelBuilder.Entity<ChatShareLink>()
+            .HasIndex(l => l.ChatSessionId);
 
         // New Entity Relationships
         modelBuilder.Entity<AgentMemory>()

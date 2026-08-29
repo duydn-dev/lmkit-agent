@@ -42,6 +42,16 @@ const router = createRouter({
       meta: { requiresAuth: false }
     },
     {
+      path: '/share/:token',
+      name: 'SharedChat',
+      component: () => import('../views/share/ShareView.vue'),
+      // PUBLIC read-only page for shared conversations. `skipAuthCheck` keeps
+      // the guard from calling /api/auth/me for anonymous viewers: that call
+      // goes through `http`, whose failed-refresh handling would hard-redirect
+      // them to /login before the shared content could render.
+      meta: { requiresAuth: false, skipAuthCheck: true }
+    },
+    {
       path: '/widget/chat',
       name: 'WidgetChat',
       component: () => import('../views/widget/ChatWidgetView.vue'),
@@ -58,8 +68,9 @@ router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore();
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth !== false);
   const requiresAdmin = to.matched.some(record => record.meta.requiresAdmin === true);
+  const skipAuthCheck = to.matched.some(record => record.meta.skipAuthCheck === true);
 
-  if (!isAuthChecked) {
+  if (!isAuthChecked && !skipAuthCheck) {
     await authStore.fetchCurrentUser();
     isAuthChecked = true;
   }

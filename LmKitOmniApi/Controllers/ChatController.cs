@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using LmKitOmniApi.Application.Chat.Commands;
 using LmKitOmniApi.Application.Chat.Queries;
 using LmKitOmniApi.Infrastructure.AI;
+using LmKitOmniApi.Models;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Text.Json;
 using LmKitOmniApi.Infrastructure.Security;
@@ -47,7 +48,15 @@ public class ChatController : ApiControllerBase
     [HttpPost("stream")]
     public async Task StreamChatCompletion([FromBody] StreamChatCommand request, CancellationToken cancellationToken)
     {
-        if (request.SessionId == Guid.Empty || string.IsNullOrWhiteSpace(request.Message) || request.Message.Length > MaxMessageCharacters)
+        if (request.Regenerate && request.ReplaceLastExchange)
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await Response.WriteAsJsonAsync(new { message = "Không thể vừa tạo lại câu trả lời vừa chỉnh sửa tin nhắn cuối trong cùng một yêu cầu." }, cancellationToken);
+            return;
+        }
+        // With regenerate the incoming message is ignored (the last user message is
+        // re-run), so only require/validate it for normal and edit-last sends.
+        if (request.SessionId == Guid.Empty || (!request.Regenerate && (string.IsNullOrWhiteSpace(request.Message) || request.Message.Length > MaxMessageCharacters)))
         {
             Response.StatusCode = StatusCodes.Status400BadRequest;
             await Response.WriteAsJsonAsync(new { message = $"SessionId and a message up to {MaxMessageCharacters} characters are required." }, cancellationToken);
@@ -319,5 +328,55 @@ public class ChatController : ApiControllerBase
         var result = await _mediator.Send(command, cancellationToken);
         if (!result) return NotFound();
         return Ok(true);
+    }
+
+    /// <summary>
+    /// Rename a chat session. 204 on success; 404 when the session does not exist
+    /// or belongs to another tenant/user (never 403, so ids are not enumerable).
+    /// </summary>
+    [Authorize]
+    [HttpPatch("sessions/{id}")]
+    public async Task<IActionResult> RenameSession(Guid id, [FromBody] RenameChatSessionRequest request, CancellationToken cancellationToken)
+    {
+        if (!TryGetIdentity(out var tenantId, out var currentUserId)) return Unauthorized();
+
+        var title = request.Title?.Trim();
+        if (string.IsNullOrWhiteSpace(title))
+            return BadRequest(new { message = "Tiêu đề đoạn chat không được để trống." });
+        if (title.Length > 100)
+            return BadRequest(new { message = "Tiêu đề đoạn chat không được vượt quá 100 ký tự." });
+
+        var command = new RenameChatSessionCommand
+        {
+            SessionId = id,
+            TenantId = tenantId,
+            UserId = currentUserId,
+            Title = title
+        };
+        var renamed = await _mediator.Send(command, cancellationToken);
+        return renamed ? NoContent() : NotFound();
+    }
+
+    /// <summary>
+    /// Search the caller's chat sessions by title or message content.
+    /// Empty/whitespace <paramref name="q"/> returns the normal full list.
+    /// </summary>
+    [Authorize]
+    [HttpGet("sessions/search")]
+    public async Task<IActionResult> SearchSessions([FromQuery] string? q, CancellationToken cancellationToken)
+    {
+        if (!TryGetIdentity(out var tenantId, out var currentUserId)) return Unauthorized();
+
+        if (q is { Length: > 200 })
+            return BadRequest(new { message = "Từ khóa tìm kiếm không được vượt quá 200 ký tự." });
+
+        var query = new GetChatSessionsSearchQuery
+        {
+            TenantId = tenantId,
+            UserId = currentUserId,
+            Q = q ?? string.Empty
+        };
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
     }
 }

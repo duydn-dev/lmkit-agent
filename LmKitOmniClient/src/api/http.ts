@@ -1,4 +1,11 @@
-const BASE_URL = import.meta.env.VITE_API_URL || '';
+/**
+ * API origin shared by every request. Also exported for the few surfaces (the
+ * public share page) that must call the API with a PLAIN fetch — no refresh /
+ * login-redirect machinery — but still target the same backend.
+ */
+export const API_BASE_URL: string = import.meta.env.VITE_API_URL || '';
+
+const BASE_URL = API_BASE_URL;
 
 class Http {
   private prepareHeaders(headers: HeadersInit = {}, isFormData: boolean = false): HeadersInit {
@@ -115,6 +122,16 @@ class Http {
     const isFormData = body instanceof FormData;
     return this._request(url, {
       method: 'PUT',
+      headers: this.prepareHeaders(headers, isFormData),
+      body: this.serializeBody(body),
+      credentials: 'include'
+    });
+  }
+
+  async patch(url: string, body?: unknown, headers: HeadersInit = {}): Promise<Response> {
+    const isFormData = body instanceof FormData;
+    return this._request(url, {
+      method: 'PATCH',
       headers: this.prepareHeaders(headers, isFormData),
       body: this.serializeBody(body),
       credentials: 'include'

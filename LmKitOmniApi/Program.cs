@@ -396,6 +396,19 @@ builder.Services.AddRateLimiter(options =>
                 QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst,
                 QueueLimit = 0
             }));
+
+    // Anonymous share-link reads: per-IP fixed window so a single host cannot scan
+    // for tokens, while legitimate viewers stay comfortably under the limit.
+    options.AddPolicy("SharePolicy", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromSeconds(60),
+                QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0
+            }));
 });
 
 var app = builder.Build();

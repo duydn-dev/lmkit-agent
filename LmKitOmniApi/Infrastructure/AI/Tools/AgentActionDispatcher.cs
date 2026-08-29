@@ -83,9 +83,14 @@ public sealed class AgentActionDispatcher
     /// Dispatches one action to its handler. Signature mirrors the orchestrator's
     /// ExecuteActionCoreAsync; the caller is responsible for permission checks,
     /// sandboxing, resilience and audit.
+    /// <paramref name="allowWebSearch"/> is the per-request web-search switch
+    /// (AgentRequestOptions.AllowWebSearch), threaded through as a call argument —
+    /// this dispatcher is constructed once per orchestrator and must hold no
+    /// per-request state. When false, WEB_SEARCH refuses instead of executing:
+    /// defense-in-depth behind the planner-level tool exclusion.
     /// </summary>
     public async Task<string> ExecuteAsync(
-        Guid tenantId, Guid? userId, string userRole, string query, string action, CancellationToken ct)
+        Guid tenantId, Guid? userId, string userRole, string query, string action, bool allowWebSearch, CancellationToken ct)
     {
         switch (action)
         {
@@ -102,6 +107,8 @@ public sealed class AgentActionDispatcher
                 return await ExecuteTextAnalysisAsync(tenantId, userId, query, ct);
 
             case "WEB_SEARCH":
+                if (!allowWebSearch)
+                    return "[Tìm kiếm web đang tắt cho phiên này]";
                 return await ExecuteWebSearchAsync(tenantId, userId, query, ct);
 
             // ── Multi-Agent Delegation ──
