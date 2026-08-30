@@ -1,23 +1,45 @@
 <template>
   <div class="flex-1 flex flex-col relative w-full h-full">
-    <!-- Session Header: share actions for the active session -->
-    <div v-if="currentSessionId" class="flex items-center justify-end gap-2 px-4 py-2 border-b border-gray-200 bg-chatgpt-dark">
-      <button
-        @click="shareSession"
-        :disabled="shareBusy"
-        class="min-h-11 px-3 flex items-center gap-2 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-50 transition-colors"
-        aria-label="Chia sẻ đoạn chat">
-        <i class="pi pi-share-alt text-sm" aria-hidden="true"></i>
-        <span>Chia sẻ</span>
-      </button>
-      <button
-        @click="revokeShare"
-        :disabled="shareBusy"
-        class="min-h-11 px-3 flex items-center gap-2 rounded-lg text-sm font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
-        aria-label="Thu hồi liên kết chia sẻ">
-        <i class="pi pi-link text-sm" aria-hidden="true"></i>
-        <span>Thu hồi liên kết</span>
-      </button>
+    <!-- Session Header: agent badge + canvas / share actions for the active session -->
+    <div v-if="currentSessionId" class="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-gray-200 bg-chatgpt-dark">
+      <div class="flex items-center min-w-0">
+        <span
+          v-if="activeAgentName"
+          role="note"
+          class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-violet-50 border border-violet-200 text-sm text-violet-700 max-w-[240px]"
+          :title="`Đang chat với agent ${activeAgentName}`"
+          :aria-label="`Đang chat với agent ${activeAgentName}`">
+          <span aria-hidden="true">{{ activeAgentIcon || '🤖' }}</span>
+          <span class="truncate font-medium">{{ activeAgentName }}</span>
+        </span>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          @click="toggleCanvasPanel"
+          aria-label="Mở Canvas"
+          :aria-expanded="canvasPanelOpen"
+          class="min-h-11 px-3 flex items-center gap-2 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-900 transition-colors">
+          <i class="pi pi-palette text-sm" aria-hidden="true"></i>
+          <span>Canvas</span>
+          <span v-if="canvasCount > 0" class="min-w-5 h-5 px-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold flex items-center justify-center">{{ canvasCount }}</span>
+        </button>
+        <button
+          @click="shareSession"
+          :disabled="shareBusy"
+          class="min-h-11 px-3 flex items-center gap-2 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-50 transition-colors"
+          aria-label="Chia sẻ đoạn chat">
+          <i class="pi pi-share-alt text-sm" aria-hidden="true"></i>
+          <span>Chia sẻ</span>
+        </button>
+        <button
+          @click="revokeShare"
+          :disabled="shareBusy"
+          class="min-h-11 px-3 flex items-center gap-2 rounded-lg text-sm font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+          aria-label="Thu hồi liên kết chia sẻ">
+          <i class="pi pi-link text-sm" aria-hidden="true"></i>
+          <span>Thu hồi liên kết</span>
+        </button>
+      </div>
     </div>
 
     <!-- Chat History -->
@@ -130,6 +152,10 @@
               <div v-if="!msg.isTyping" class="flex items-center gap-2 mt-3 text-gray-500">
                 <button @click="copyMessage(msg.content)" class="w-11 h-11 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" aria-label="Sao chép câu trả lời"><i class="pi pi-copy text-sm"></i></button>
                 <button v-if="msg.role === 'assistant' && index === messages.length - 1 && !isGenerating" @click="regenerate" class="w-11 h-11 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" aria-label="Tạo lại câu trả lời"><i class="pi pi-refresh text-sm"></i></button>
+                <button v-if="hasCanvasBlock(msg.content)" @click="openMessageInCanvas(msg.content)" class="min-h-11 px-2 flex items-center gap-1.5 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors text-sm" aria-label="Mở trong Canvas">
+                  <i class="pi pi-palette text-sm" aria-hidden="true"></i>
+                  <span>Mở trong Canvas</span>
+                </button>
               </div>
             </div>
           </div>
@@ -180,6 +206,7 @@
           <!-- Text Area -->
           <div class="px-3 pt-2">
             <Textarea
+              ref="composerRef"
               v-model="inputMessage"
               @keydown.enter.exact.prevent="sendMessage"
               @keydown.esc="cancelEditing"
@@ -204,6 +231,17 @@
               </button>
               <button @click="triggerFileInput" class="w-11 h-11 flex items-center justify-center text-gray-600 hover:text-gray-900 transition-colors rounded-full hover:bg-gray-100" aria-label="Đính kèm file">
                 <i class="pi pi-paperclip text-lg"></i>
+              </button>
+              <button
+                v-if="voiceSupported"
+                @click="toggleVoiceInput"
+                :aria-pressed="isRecording"
+                aria-label="Nhập bằng giọng nói"
+                :disabled="isTranscribing"
+                class="min-w-11 min-h-11 px-2 flex items-center justify-center gap-1.5 rounded-full border transition-colors disabled:opacity-50"
+                :class="isRecording ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100' : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-100'">
+                <i :class="[isTranscribing ? 'pi pi-spin pi-spinner' : 'pi pi-microphone', isRecording ? 'animate-pulse' : '']" class="text-lg" aria-hidden="true"></i>
+                <span v-if="isRecording" class="text-xs font-medium tabular-nums">{{ voiceElapsedLabel }}</span>
               </button>
               <Button
                 v-if="isStreaming"
@@ -255,6 +293,15 @@
       </div>
     </Drawer>
     
+    <!-- Canvas slide-over panel (session artifacts editor) -->
+    <CanvasPanel
+      ref="canvasPanelRef"
+      :visible="canvasPanelOpen"
+      :session-id="currentSessionId"
+      @close="canvasPanelOpen = false"
+      @insert="insertIntoComposer"
+      @count-changed="canvasCount = $event" />
+
     <!-- Toast notifications (share confirmations, regenerate warnings) -->
     <Toast position="bottom-right" />
 
@@ -264,13 +311,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, nextTick, watch, onMounted } from 'vue';
+import { computed, defineAsyncComponent, ref, nextTick, watch, onMounted, type ComponentPublicInstance } from 'vue';
 import { useRoute } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import GenerativeUiRenderer from '@/components/chat/GenerativeUiRenderer.vue';
+import CanvasPanel from '@/components/canvas/CanvasPanel.vue';
+import { largestCodeFence } from '@/components/canvas/codeFence';
+import { useVoiceInput } from '@/composables/useVoiceInput';
 import {
   useChatStream,
   useHitlActions,
@@ -294,6 +344,117 @@ const currentSessionId = ref<string | null>(null);
 const attachedFiles = ref<File[]>([]);
 const saveAttachmentsToKnowledge = ref(false);
 const fileInputRef = ref<HTMLInputElement | null>(null);
+
+// --- Composer helpers (canvas insert + voice input target) --------------------
+
+const composerRef = ref<ComponentPublicInstance | null>(null);
+
+const focusComposer = () => {
+  const el = composerRef.value?.$el as unknown;
+  if (el instanceof HTMLTextAreaElement) el.focus();
+};
+
+/** "Chèn vào chat" from the Canvas panel: appends a fenced block to the composer. */
+const insertIntoComposer = (text: string) => {
+  inputMessage.value = inputMessage.value ? `${inputMessage.value}\n${text}` : text;
+  focusComposer();
+};
+
+// --- Canvas panel -------------------------------------------------------------
+
+const canvasPanelOpen = ref(false);
+const canvasCount = ref(0);
+const canvasPanelRef = ref<InstanceType<typeof CanvasPanel> | null>(null);
+
+const toggleCanvasPanel = () => {
+  canvasPanelOpen.value = !canvasPanelOpen.value;
+};
+
+const hasCanvasBlock = (content: string): boolean => largestCodeFence(content) !== null;
+
+/** "Mở trong Canvas": creates a code artifact from the message's largest fence. */
+const openMessageInCanvas = async (content: string) => {
+  const block = largestCodeFence(content);
+  if (!block) return;
+  canvasPanelOpen.value = true;
+  await nextTick();
+  await canvasPanelRef.value?.createFromChat({
+    title: 'Đoạn mã từ chat',
+    kind: 'code',
+    language: block.language,
+    content: block.content,
+  });
+};
+
+/** Silent header-badge refresh; failures just leave the badge hidden. */
+const refreshCanvasCount = async () => {
+  const id = currentSessionId.value;
+  if (!id) return;
+  try {
+    const response = await http.get(ApiFactory.CANVAS.LIST(id));
+    if (!response.ok || currentSessionId.value !== id) return;
+    const data = await response.json() as unknown;
+    if (currentSessionId.value !== id) return;
+    canvasCount.value = Array.isArray(data) ? data.length : 0;
+  } catch {
+    // Display-only badge: never surface list errors outside the panel.
+  }
+};
+
+// --- Agent badge (display only) -----------------------------------------------
+
+const activeAgentName = ref<string | null>(null);
+const activeAgentIcon = ref<string | null>(null);
+
+/** Resolves agentName/agentIcon of the active session from the sessions list. */
+const loadSessionMeta = async () => {
+  const id = currentSessionId.value;
+  activeAgentName.value = null;
+  activeAgentIcon.value = null;
+  if (!id) return;
+  try {
+    const response = await http.get(ApiFactory.CHAT.SESSIONS);
+    if (!response.ok || currentSessionId.value !== id) return;
+    const sessions = await response.json() as Array<{ id?: unknown; agentName?: unknown; agentIcon?: unknown }>;
+    if (!Array.isArray(sessions) || currentSessionId.value !== id) return;
+    const active = sessions.find((session) => session.id === id);
+    if (!active) return;
+    activeAgentName.value = typeof active.agentName === 'string' && active.agentName.trim() ? active.agentName : null;
+    activeAgentIcon.value = typeof active.agentIcon === 'string' && active.agentIcon.trim() ? active.agentIcon : null;
+  } catch {
+    // Display-only badge: sessions without resolvable metadata look as today.
+  }
+};
+
+watch(currentSessionId, (id) => {
+  canvasCount.value = 0;
+  if (id) {
+    void refreshCanvasCount();
+    void loadSessionMeta();
+  } else {
+    canvasPanelOpen.value = false;
+    activeAgentName.value = null;
+    activeAgentIcon.value = null;
+  }
+});
+
+// --- Push-to-talk voice input -------------------------------------------------
+
+const {
+  isSupported: voiceSupported,
+  isRecording,
+  isTranscribing,
+  elapsedLabel: voiceElapsedLabel,
+  toggle: toggleVoiceInput,
+} = useVoiceInput({
+  onTranscript: (text) => {
+    inputMessage.value = inputMessage.value ? `${inputMessage.value} ${text}` : text;
+    focusComposer();
+  },
+  onError: (message) => {
+    toast.add({ severity: 'error', summary: 'Nhập bằng giọng nói', detail: message, life: 6000 });
+  },
+});
 
 const loadMessages = async () => {
   if (!currentSessionId.value) return;

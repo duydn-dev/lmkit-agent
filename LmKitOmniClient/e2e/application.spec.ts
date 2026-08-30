@@ -83,6 +83,10 @@ async function mockAuthenticatedApi(page: Page) {
       return json(route, [{ ...user, isActive: true }]);
     }
     if (path === '/api/mcp-servers') return json(route, []);
+    // The notification bell polls this from the app shell on every view.
+    if (path === '/api/notifications' && method === 'GET') return json(route, []);
+    // ChatView refreshes the Canvas count badge whenever a session activates.
+    if (path === '/api/canvas' && method === 'GET') return json(route, []);
 
     return json(route, { message: `E2E mock chưa khai báo ${method} ${path}` }, 501);
   });

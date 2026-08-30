@@ -206,6 +206,8 @@ builder.Services.AddScoped<IRagPipelineService, RagPipelineService>();
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DocumentVectorizationWorker>();
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DataRetentionWorker>();
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ModelWarmupWorker>();
+// Tier 2: user-defined recurring prompts delivered as notifications.
+builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ScheduledTaskWorker>();
 
 // ============================================================
 // 🔄 Multi-Agent System (Phase 3)
@@ -320,6 +322,25 @@ builder.Services.AddHttpClient("MCP", client =>
 });
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.IMcpProtocolClient, LmKitOmniApi.Infrastructure.AI.Mcp.McpProtocolClient>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.McpClientService>();
+
+// ============================================================
+// 🔬 Deep Research (Tier 2)
+// ============================================================
+// Scoped: wraps the scoped ToolSandboxService SSRF gate.
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Research.IResearchUrlValidator,
+    LmKitOmniApi.Infrastructure.AI.Research.SandboxResearchUrlValidator>();
+builder.Services.AddHttpClient<LmKitOmniApi.Infrastructure.AI.Research.ResearchContentFetcher>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.MaxResponseContentBufferSize = 512 * 1024;
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("LmKitOmniAgent/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    // Redirect targets have not passed the research URL/DNS sandbox checks; the
+    // fetcher treats 3xx as skip. ValidateUrlAsync re-vets DNS per fetch.
+    AllowAutoRedirect = false
+});
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Research.DeepResearchService>();
 
 // ============================================================
 // 📋 Skill Registry & Prompt Templates

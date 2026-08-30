@@ -5,6 +5,7 @@ using LMKit.TextGeneration;
 using LMKit.TextGeneration.Chat;
 using LmKitOmniApi.Application.Chat.Commands;
 using LmKitOmniApi.Application.Abstractions;
+using LmKitOmniApi.Application.CustomAgents;
 using LmKitOmniApi.Services;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Domain.Entities;
@@ -219,7 +220,41 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         // re-run last user message when regenerating) — used for the cache entry.
         var userTurnCreatedAt = userMsg?.CreatedAt ?? regeneratedUserCreatedAt!.Value;
 
-        var options = new AgentRequestOptions { AllowWebSearch = request.EnableWebSearch };
+        // ── Custom-agent options (Gems-style persona/tool/knowledge scope) ──
+        // A bound agent must still be visible to the caller (owner or tenant-shared);
+        // if it is not (unshared or deleted since binding), the request proceeds
+        // WITHOUT it — byte-identical to an unbound session.
+        CustomAgent? customAgent = null;
+        if (session.CustomAgentId is Guid customAgentId)
+        {
+            customAgent = await _dbContext.CustomAgents
+                .AsNoTracking()
+                .FirstOrDefaultAsync(a => a.Id == customAgentId
+                    && a.TenantId == request.TenantId
+                    && (a.OwnerUserId == request.UserId || a.IsSharedWithTenant),
+                    cancellationToken);
+        }
+
+        AgentRequestOptions options;
+        if (customAgent is null)
+        {
+            options = new AgentRequestOptions { AllowWebSearch = request.EnableWebSearch };
+        }
+        else
+        {
+            var allowedTools = CustomAgentRules.ParseToolsCsv(customAgent.AllowedToolsCsv);
+            options = new AgentRequestOptions
+            {
+                // The user-facing toggle composes with the agent whitelist: web
+                // search runs only when the request enables it AND the agent
+                // either has no whitelist or whitelists SearchWeb.
+                AllowWebSearch = request.EnableWebSearch
+                    && (allowedTools is null || allowedTools.Contains("SearchWeb", StringComparer.OrdinalIgnoreCase)),
+                PersonaPrompt = customAgent.PersonaPrompt,
+                AllowedTools = allowedTools,
+                KnowledgeDocumentIds = CustomAgentRules.ParseDocumentIdsCsv(customAgent.KnowledgeDocumentIdsCsv)
+            };
+        }
 
         var fullResponseBuilder = new System.Text.StringBuilder();
         ChatMessage? botMsg = null;

@@ -15,7 +15,10 @@ public class HermesDbContext : DbContext
     
     // New Entities
     public DbSet<AgentMemory> AgentMemories { get; set; } = null!;
+    public DbSet<CanvasArtifact> CanvasArtifacts { get; set; } = null!;
     public DbSet<ChatShareLink> ChatShareLinks { get; set; } = null!;
+    public DbSet<CustomAgent> CustomAgents { get; set; } = null!;
+    public DbSet<ScheduledTask> ScheduledTasks { get; set; } = null!;
     public DbSet<ExternalMcpServer> ExternalMcpServers { get; set; } = null!;
     public DbSet<GraphEntity> GraphEntities { get; set; } = null!;
     public DbSet<GraphRelationship> GraphRelationships { get; set; } = null!;
@@ -81,6 +84,43 @@ public class HermesDbContext : DbContext
             .WithMany(s => s.Messages)
             .HasForeignKey(m => m.ChatSessionId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<CustomAgent>()
+            .HasOne(a => a.Tenant).WithMany().HasForeignKey(a => a.TenantId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<CustomAgent>()
+            .HasOne(a => a.OwnerUser).WithMany().HasForeignKey(a => a.OwnerUserId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<CustomAgent>()
+            .HasIndex(a => new { a.TenantId, a.OwnerUserId });
+        modelBuilder.Entity<CustomAgent>()
+            .HasIndex(a => new { a.TenantId, a.IsSharedWithTenant });
+
+        // An agent deletion must not break its sessions; they fall back to the default assistant.
+        modelBuilder.Entity<ChatSession>()
+            .HasOne(s => s.CustomAgent)
+            .WithMany()
+            .HasForeignKey(s => s.CustomAgentId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<CanvasArtifact>()
+            .HasOne(c => c.Tenant).WithMany().HasForeignKey(c => c.TenantId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<CanvasArtifact>()
+            .HasOne(c => c.User).WithMany().HasForeignKey(c => c.UserId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<CanvasArtifact>()
+            .HasOne(c => c.ChatSession).WithMany().HasForeignKey(c => c.ChatSessionId).OnDelete(DeleteBehavior.SetNull);
+        modelBuilder.Entity<CanvasArtifact>()
+            .HasIndex(c => new { c.TenantId, c.UserId, c.RootId, c.Version });
+
+        modelBuilder.Entity<ScheduledTask>()
+            .HasOne(t => t.Tenant).WithMany().HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<ScheduledTask>()
+            .HasOne(t => t.User).WithMany().HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<ScheduledTask>()
+            .HasIndex(t => new { t.Enabled, t.NextRunUtc });
+        modelBuilder.Entity<ScheduledTask>()
+            .HasIndex(t => new { t.TenantId, t.UserId });
+
+        modelBuilder.Entity<Notification>()
+            .HasIndex(n => new { n.UserId, n.IsRead, n.CreatedAtUtc });
 
         modelBuilder.Entity<ChatShareLink>()
             .HasOne(l => l.ChatSession)

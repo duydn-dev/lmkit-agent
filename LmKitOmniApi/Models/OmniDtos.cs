@@ -35,6 +35,17 @@ public class RenameChatSessionRequest
     public string? Title { get; set; }
 }
 
+/// <summary>
+/// OPTIONAL body of <c>POST /api/chat/sessions</c>. Wire shape:
+/// <c>{ "customAgentId": guid? }</c>. Omitting the body (or the field) creates a
+/// plain session exactly as before; ChatController reads it manually so
+/// empty-body requests stay valid.
+/// </summary>
+public class CreateChatSessionRequest
+{
+    public Guid? CustomAgentId { get; set; }
+}
+
 public class DocumentConversionRequest
 {
     [Required]

@@ -136,6 +136,59 @@ namespace LmKitOmniApi.Migrations
                     b.ToTable("audit_logs");
                 });
 
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.CanvasArtifact", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ChatSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("Language")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid>("RootId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChatSessionId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("TenantId", "UserId", "RootId", "Version");
+
+                    b.ToTable("canvas_artifacts");
+                });
+
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.ChatMessage", b =>
                 {
                     b.Property<Guid>("Id")
@@ -172,6 +225,9 @@ namespace LmKitOmniApi.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("CustomAgentId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Summary")
                         .HasColumnType("text");
 
@@ -186,6 +242,8 @@ namespace LmKitOmniApi.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CustomAgentId");
 
                     b.HasIndex("TenantId");
 
@@ -225,6 +283,63 @@ namespace LmKitOmniApi.Migrations
                         .IsUnique();
 
                     b.ToTable("chat_share_links");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.CustomAgent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AllowedToolsCsv")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("Icon")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<bool>("IsSharedWithTenant")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("KnowledgeDocumentIdsCsv")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PersonaPrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.HasIndex("TenantId", "IsSharedWithTenant");
+
+                    b.HasIndex("TenantId", "OwnerUserId");
+
+                    b.ToTable("custom_agents");
                 });
 
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.Document", b =>
@@ -468,9 +583,78 @@ namespace LmKitOmniApi.Migrations
 
                     b.HasIndex("TenantId");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("UserId", "IsRead", "CreatedAtUtc");
 
                     b.ToTable("notifications");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.ScheduledTask", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ClaimedUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("DayOfWeek")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<int?>("IntervalMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("LastRunUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastStatus")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("NextRunUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Prompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ScheduleKind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("TimeOfDayMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("Enabled", "NextRunUtc");
+
+                    b.HasIndex("TenantId", "UserId");
+
+                    b.ToTable("scheduled_tasks");
                 });
 
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.TaskApproval", b =>
@@ -816,6 +1000,32 @@ namespace LmKitOmniApi.Migrations
                     b.Navigation("ActorUser");
                 });
 
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.CanvasArtifact", b =>
+                {
+                    b.HasOne("LmKitOmniApi.Domain.Entities.ChatSession", "ChatSession")
+                        .WithMany()
+                        .HasForeignKey("ChatSessionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("LmKitOmniApi.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ChatSession");
+
+                    b.Navigation("Tenant");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.ChatMessage", b =>
                 {
                     b.HasOne("LmKitOmniApi.Domain.Entities.ChatSession", "ChatSession")
@@ -829,6 +1039,11 @@ namespace LmKitOmniApi.Migrations
 
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.ChatSession", b =>
                 {
+                    b.HasOne("LmKitOmniApi.Domain.Entities.CustomAgent", "CustomAgent")
+                        .WithMany()
+                        .HasForeignKey("CustomAgentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
                         .WithMany("ChatSessions")
                         .HasForeignKey("TenantId")
@@ -839,6 +1054,8 @@ namespace LmKitOmniApi.Migrations
                         .WithMany("ChatSessions")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("CustomAgent");
 
                     b.Navigation("Tenant");
 
@@ -854,6 +1071,25 @@ namespace LmKitOmniApi.Migrations
                         .IsRequired();
 
                     b.Navigation("ChatSession");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.CustomAgent", b =>
+                {
+                    b.HasOne("LmKitOmniApi.Domain.Entities.User", "OwnerUser")
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("OwnerUser");
+
+                    b.Navigation("Tenant");
                 });
 
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.Document", b =>
@@ -935,6 +1171,25 @@ namespace LmKitOmniApi.Migrations
                 });
 
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.Notification", b =>
+                {
+                    b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("LmKitOmniApi.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.ScheduledTask", b =>
                 {
                     b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
                         .WithMany()

@@ -28,6 +28,24 @@ const router = createRouter({
           meta: { requiresAuth: true }
         },
         {
+          path: '/agents',
+          name: 'Agents',
+          component: () => import('../views/agents/AgentsView.vue'),
+          meta: { requiresAuth: true }
+        },
+        {
+          path: '/schedules',
+          name: 'Schedules',
+          component: () => import('../views/schedules/SchedulesView.vue'),
+          meta: { requiresAuth: true }
+        },
+        {
+          path: '/research',
+          name: 'Research',
+          component: () => import('../views/research/ResearchView.vue'),
+          meta: { requiresAuth: true }
+        },
+        {
           path: '/admin/users',
           name: 'AdminUsers',
           component: () => import('../views/admin/UserManager.vue'),

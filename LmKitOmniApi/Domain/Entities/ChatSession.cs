@@ -9,8 +9,12 @@ public class ChatSession
     public string? Summary { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>Optional custom agent this session chats with (persona + tool/knowledge scope).</summary>
+    public Guid? CustomAgentId { get; set; }
+
     public Tenant? Tenant { get; set; }
     public User? User { get; set; }
+    public CustomAgent? CustomAgent { get; set; }
     public ICollection<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
 }
 

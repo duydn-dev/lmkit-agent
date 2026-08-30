@@ -41,7 +41,10 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                     {
                         Id = s.Id,
                         Title = s.Title,
-                        CreatedAt = s.CreatedAt
+                        CreatedAt = s.CreatedAt,
+                        CustomAgentId = s.CustomAgentId,
+                        AgentName = s.CustomAgent != null ? s.CustomAgent.Name : null,
+                        AgentIcon = s.CustomAgent != null ? s.CustomAgent.Icon : null
                     })
                     .ToListAsync(cancellationToken);
             }
@@ -57,7 +60,10 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                 {
                     Id = s.Id,
                     Title = s.Title,
-                    CreatedAt = s.CreatedAt
+                    CreatedAt = s.CreatedAt,
+                    CustomAgentId = s.CustomAgentId,
+                    AgentName = s.CustomAgent != null ? s.CustomAgent.Name : null,
+                    AgentIcon = s.CustomAgent != null ? s.CustomAgent.Icon : null
                 })
                 .ToListAsync(cancellationToken);
         }

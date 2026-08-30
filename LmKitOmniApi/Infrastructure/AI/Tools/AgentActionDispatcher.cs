@@ -83,19 +83,26 @@ public sealed class AgentActionDispatcher
     /// Dispatches one action to its handler. Signature mirrors the orchestrator's
     /// ExecuteActionCoreAsync; the caller is responsible for permission checks,
     /// sandboxing, resilience and audit.
-    /// <paramref name="allowWebSearch"/> is the per-request web-search switch
-    /// (AgentRequestOptions.AllowWebSearch), threaded through as a call argument —
-    /// this dispatcher is constructed once per orchestrator and must hold no
-    /// per-request state. When false, WEB_SEARCH refuses instead of executing:
-    /// defense-in-depth behind the planner-level tool exclusion.
+    /// <paramref name="options"/> carries the per-request switches
+    /// (AgentRequestOptions: web-search toggle, custom-agent tool whitelist and
+    /// knowledge scope), threaded through as a call argument — this dispatcher is
+    /// constructed once per orchestrator and must hold no per-request state.
+    /// AllowWebSearch=false makes WEB_SEARCH refuse instead of executing, and a
+    /// non-null AllowedTools whitelist refuses any action whose mapped permission
+    /// name is not whitelisted: defense-in-depth behind the planner-level tool
+    /// exclusion, and a pure narrowing of (never a substitute for) the RBAC check
+    /// the orchestrator already ran.
     /// </summary>
     public async Task<string> ExecuteAsync(
-        Guid tenantId, Guid? userId, string userRole, string query, string action, bool allowWebSearch, CancellationToken ct)
+        Guid tenantId, Guid? userId, string userRole, string query, string action, AgentRequestOptions? options, CancellationToken ct)
     {
+        if (options?.AllowedTools is { } whitelist && !IsActionWhitelisted(action, whitelist))
+            return "[Công cụ này không khả dụng cho agent hiện tại]";
+
         switch (action)
         {
             case "RAG":
-                return await ExecuteRagQueryAsync(tenantId, userId, query, ct);
+                return await ExecuteRagQueryAsync(tenantId, userId, query, options?.KnowledgeDocumentIds, ct);
 
             case "VISION":
                 return await ExecuteVisionAnalysisAsync(tenantId, userId, query, ct);
@@ -107,7 +114,7 @@ public sealed class AgentActionDispatcher
                 return await ExecuteTextAnalysisAsync(tenantId, userId, query, ct);
 
             case "WEB_SEARCH":
-                if (!allowWebSearch)
+                if (!(options?.AllowWebSearch ?? true))
                     return "[Tìm kiếm web đang tắt cho phiên này]";
                 return await ExecuteWebSearchAsync(tenantId, userId, query, ct);
 
@@ -128,7 +135,23 @@ public sealed class AgentActionDispatcher
         }
     }
 
-    private async Task<string> ExecuteRagQueryAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
+    /// <summary>
+    /// Maps the action to its permission tool name (same table the orchestrator
+    /// uses for RBAC — <see cref="AgentOrchestrator.ActionToToolMap"/>) and checks
+    /// it against the custom agent's whitelist. Unmapped actions (dynamic
+    /// "MCP:server:tool" names) fall back to the raw action name, which a curated
+    /// whitelist never contains — so MCP is excluded whenever a whitelist is set.
+    /// </summary>
+    private static bool IsActionWhitelisted(string action, IReadOnlyCollection<string> whitelist)
+    {
+        var permissionName = AgentOrchestrator.ActionToToolMap.TryGetValue(action, out var mapped)
+            ? mapped
+            : action;
+        return whitelist.Contains(permissionName, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private async Task<string> ExecuteRagQueryAsync(
+        Guid tenantId, Guid? userId, string query, IReadOnlyCollection<Guid>? documentIds, CancellationToken ct)
     {
         var ragResult = await _ragService.QueryKnowledgeBaseAsync(
             tenantId,
@@ -136,7 +159,8 @@ public sealed class AgentActionDispatcher
             query,
             topK: KnowledgeBaseTopK,
             ct: ct,
-            chatInferenceLeaseAlreadyHeld: true);
+            chatInferenceLeaseAlreadyHeld: true,
+            documentIds: documentIds);
         await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "QueryKnowledgeBase", query, ct);
         return ragResult;
     }

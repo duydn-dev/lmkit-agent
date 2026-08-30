@@ -115,6 +115,73 @@ public class QdrantVectorService : IVectorStoreService
     }
 
     /// <summary>
+    /// Dense search with a compound filter: (scope IN allowedScopeValues) AND
+    /// (documentId IN documentIds). Each allowlist is an OR-group of keyword
+    /// matches (same style as <see cref="SearchSimilarWithAnyPayloadAsync"/>);
+    /// the two groups are ANDed via nested filters under <c>Must</c> — Qdrant
+    /// combines clauses of one filter with AND, so a single top-level
+    /// <c>Should</c> could not express both allowlists at once.
+    /// </summary>
+    public async Task<List<VectorSearchResult>> SearchSimilarWithinDocumentsAsync(
+        string collectionName,
+        float[] queryVector,
+        string scopeField,
+        IReadOnlyList<string> allowedScopeValues,
+        string documentIdField,
+        IReadOnlyList<string> documentIds,
+        int topK,
+        CancellationToken ct = default)
+    {
+        if (allowedScopeValues.Count == 0 || documentIds.Count == 0)
+            return new List<VectorSearchResult>();
+
+        static Filter AnyKeywordMatch(string field, IReadOnlyList<string> values)
+        {
+            var group = new Filter();
+            group.Should.AddRange(values.Select(value => new Condition
+            {
+                Field = new FieldCondition
+                {
+                    Key = field,
+                    Match = new Match { Keyword = value }
+                }
+            }));
+            return group;
+        }
+
+        var filter = new Filter
+        {
+            Must =
+            {
+                new Condition { Filter = AnyKeywordMatch(scopeField, allowedScopeValues) },
+                new Condition { Filter = AnyKeywordMatch(documentIdField, documentIds) }
+            }
+        };
+
+        var queryResult = await _client.QueryAsync(
+            collectionName: collectionName,
+            query: queryVector,
+            filter: filter,
+            limit: (ulong)topK,
+            payloadSelector: true,
+            cancellationToken: ct);
+
+        return queryResult.Select(point => new VectorSearchResult
+        {
+            Id = Guid.Parse(point.Id.Uuid),
+            Score = point.Score,
+            Payload = point.Payload.ToDictionary(
+                item => item.Key,
+                item => item.Value.KindCase switch
+                {
+                    Value.KindOneofCase.StringValue => item.Value.StringValue,
+                    Value.KindOneofCase.IntegerValue => item.Value.IntegerValue.ToString(),
+                    _ => item.Value.ToString()
+                })
+        }).ToList();
+    }
+
+    /// <summary>
     /// H3 Fix: True payload-based keyword search using Qdrant's Scroll API with filters.
     /// Independent of vector similarity — finds documents by keyword presence.
     /// </summary>

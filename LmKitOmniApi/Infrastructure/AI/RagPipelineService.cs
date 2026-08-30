@@ -92,10 +92,22 @@ public class RagPipelineService : IRagPipelineService
         string query,
         int topK = 3,
         CancellationToken ct = default,
-        bool chatInferenceLeaseAlreadyHeld = false)
+        bool chatInferenceLeaseAlreadyHeld = false,
+        IReadOnlyCollection<Guid>? documentIds = null)
     {
         _logger.LogInformation("Hybrid search starting for tenant {TenantId}; query length {QueryLength}",
             tenantId, query.Length);
+
+        // Custom-agent knowledge pinning: chunks written by the document
+        // vectorization worker carry a "DocumentId" payload key; when an
+        // allowlist is provided, retrieval keeps only chunks of those documents
+        // IN ADDITION to the access-scope filter (chunks without a DocumentId —
+        // e.g. ad-hoc chat-attachment ingestion — are excluded by definition).
+        var documentIdAllowlist = documentIds is { Count: > 0 }
+            ? new HashSet<string>(
+                documentIds.Where(id => id != Guid.Empty).Select(id => id.ToString()),
+                StringComparer.OrdinalIgnoreCase)
+            : null;
 
         var embeddingModel = await _modelManager.GetEmbeddingModelAsync(ct: ct);
         var embedder = new LMKit.Embeddings.Embedder(embeddingModel);
@@ -139,13 +151,23 @@ public class RagPipelineService : IRagPipelineService
             float[] queryVector;
             await using (var inferenceLease = await _modelManager.AcquireEmbeddingInferenceAsync(ct))
                 queryVector = embedder.GetEmbeddings(expandedQuery);
-            var tenantResults = await _vectorStore.SearchSimilarWithAnyPayloadAsync(
-                _collectionName,
-                queryVector,
-                "AccessScope",
-                new[] { BuildPrivateAccessScope(tenantId, userId) },
-                initialTopK,
-                ct);
+            var tenantResults = documentIdAllowlist is null
+                ? await _vectorStore.SearchSimilarWithAnyPayloadAsync(
+                    _collectionName,
+                    queryVector,
+                    "AccessScope",
+                    new[] { BuildPrivateAccessScope(tenantId, userId) },
+                    initialTopK,
+                    ct)
+                : await _vectorStore.SearchSimilarWithinDocumentsAsync(
+                    _collectionName,
+                    queryVector,
+                    "AccessScope",
+                    new[] { BuildPrivateAccessScope(tenantId, userId) },
+                    "DocumentId",
+                    documentIdAllowlist.ToList(),
+                    initialTopK,
+                    ct);
 
             foreach (var r in tenantResults)
             {
@@ -158,7 +180,7 @@ public class RagPipelineService : IRagPipelineService
         }
 
         // === Stage 3: Sparse Retrieval (Keyword Matching — BM25-like) ===
-        var sparseResults = await PerformKeywordSearchAsync(tenantId, userId, query, ct);
+        var sparseResults = await PerformKeywordSearchAsync(tenantId, userId, query, documentIdAllowlist, ct);
 
         // === Stage 4: Reciprocal Rank Fusion (RRF) ===
         var fusedResults = ReciprocalRankFusion(allDenseResults, sparseResults, topK * 3);
@@ -214,15 +236,20 @@ public class RagPipelineService : IRagPipelineService
     /// Previously this was faked by doing a vector search (top 50) then post-filtering by keywords,
     /// which meant documents outside the vector top-50 were invisible to keyword search.
     /// Now uses Qdrant's native payload filter — completely independent of vector similarity.
+    /// A non-null <paramref name="documentIdAllowlist"/> is applied by post-filtering
+    /// the returned chunks on their "DocumentId" payload (the scroll filter's Should
+    /// group is already occupied by the keyword OR-conditions); the allowlist can
+    /// only remove results, never add any, so access scoping is unaffected.
     /// </summary>
     private async Task<List<(string Content, float Score, string Source)>> PerformKeywordSearchAsync(
         Guid tenantId,
         Guid userId,
         string query,
+        IReadOnlySet<string>? documentIdAllowlist,
         CancellationToken ct)
     {
         var results = new List<(string Content, float Score, string Source)>();
-        
+
         try
         {
             var keywords = _queryExpansion.ExtractKeywords(query);
@@ -242,6 +269,7 @@ public class RagPipelineService : IRagPipelineService
             foreach (var r in payloadResults)
             {
                 if (!r.Payload.ContainsKey("Content")) continue;
+                if (!MatchesDocumentAllowlist(r.Payload, documentIdAllowlist)) continue;
                 var source = BuildSourceLabel(r.Payload);
                 results.Add((r.Payload["Content"], r.Score, source));
             }
@@ -256,22 +284,39 @@ public class RagPipelineService : IRagPipelineService
         catch (Exception ex)
         {
             _logger.LogWarning("Keyword search failed, falling back to vector+filter: {Error}", ex.Message);
-            
+
             // Fallback: original vector-based keyword filtering (graceful degradation)
-            results = await PerformKeywordSearchFallbackAsync(tenantId, userId, query, ct);
+            results = await PerformKeywordSearchFallbackAsync(tenantId, userId, query, documentIdAllowlist, ct);
         }
 
         return results;
     }
 
     /// <summary>
+    /// True when no document allowlist is active, or when the chunk's "DocumentId"
+    /// payload is in it. Chunks without a DocumentId (ad-hoc knowledge ingestion)
+    /// never match an active allowlist.
+    /// </summary>
+    private static bool MatchesDocumentAllowlist(
+        IReadOnlyDictionary<string, string> payload,
+        IReadOnlySet<string>? documentIdAllowlist)
+    {
+        if (documentIdAllowlist is null) return true;
+        return payload.TryGetValue("DocumentId", out var documentId)
+            && documentIdAllowlist.Contains(documentId);
+    }
+
+    /// <summary>
     /// Fallback sparse search — original vector-then-filter approach.
-    /// Used when Qdrant payload index is not available.
+    /// Used when Qdrant payload index is not available. An active document
+    /// allowlist rides on the doc-constrained dense search, so the fallback
+    /// honors it natively too.
     /// </summary>
     private async Task<List<(string Content, float Score, string Source)>> PerformKeywordSearchFallbackAsync(
         Guid tenantId,
         Guid userId,
         string query,
+        IReadOnlySet<string>? documentIdAllowlist,
         CancellationToken ct)
     {
         var results = new List<(string Content, float Score, string Source)>();
@@ -283,14 +328,24 @@ public class RagPipelineService : IRagPipelineService
         float[] queryVector;
         await using (var inferenceLease = await _modelManager.AcquireEmbeddingInferenceAsync(ct))
             queryVector = embedder.GetEmbeddings(query);
-        
-        var tenantResults = await _vectorStore.SearchSimilarWithAnyPayloadAsync(
-            _collectionName,
-            queryVector,
-            "AccessScope",
-            new[] { BuildPrivateAccessScope(tenantId, userId) },
-            50,
-            ct);
+
+        var tenantResults = documentIdAllowlist is null
+            ? await _vectorStore.SearchSimilarWithAnyPayloadAsync(
+                _collectionName,
+                queryVector,
+                "AccessScope",
+                new[] { BuildPrivateAccessScope(tenantId, userId) },
+                50,
+                ct)
+            : await _vectorStore.SearchSimilarWithinDocumentsAsync(
+                _collectionName,
+                queryVector,
+                "AccessScope",
+                new[] { BuildPrivateAccessScope(tenantId, userId) },
+                "DocumentId",
+                documentIdAllowlist.ToList(),
+                50,
+                ct);
 
         foreach (var r in tenantResults)
         {

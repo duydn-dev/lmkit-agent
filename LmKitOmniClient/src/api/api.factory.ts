@@ -21,5 +21,33 @@ export const ApiFactory = {
   DOCUMENT: {
     BASE: '/api/document',
     UPLOAD: '/api/document/upload'
+  },
+  AGENTS: {
+    CUSTOM: '/api/agents/custom',
+    CUSTOM_BY_ID: (id: string) => `/api/agents/custom/${id}`,
+    TOOL_CATALOG: '/api/agents/custom/tools'
+  },
+  CANVAS: {
+    LIST: (sessionId?: string) => sessionId ? `/api/canvas?sessionId=${sessionId}` : '/api/canvas',
+    CREATE: '/api/canvas',
+    BY_ROOT: (rootId: string) => `/api/canvas/${rootId}`,
+    VERSION: (rootId: string, version: number) => `/api/canvas/${rootId}?version=${version}`,
+    VERSIONS: (rootId: string) => `/api/canvas/${rootId}/versions`
+  },
+  RESEARCH: {
+    RUN: '/api/research'
+  },
+  SCHEDULES: {
+    BASE: '/api/schedules',
+    BY_ID: (id: string) => `/api/schedules/${id}`,
+    TOGGLE: (id: string) => `/api/schedules/${id}/toggle`
+  },
+  NOTIFICATIONS: {
+    LIST: (unreadOnly = false) => unreadOnly ? '/api/notifications?unreadOnly=true' : '/api/notifications',
+    MARK_READ: (id: string) => `/api/notifications/${id}/read`,
+    READ_ALL: '/api/notifications/read-all'
+  },
+  SPEECH: {
+    TRANSCRIBE_UPLOAD: '/api/speech/transcribe-upload'
   }
 };

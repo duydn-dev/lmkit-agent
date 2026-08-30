@@ -296,15 +296,38 @@ public class ChatController : ApiControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// Creates a chat session. Accepts an OPTIONAL JSON body
+    /// <c>{ "customAgentId": guid }</c> to bind a custom agent; the body is read
+    /// manually so legacy no-body clients keep working unchanged (a [FromBody]
+    /// parameter would reject empty requests with an automatic 400).
+    /// </summary>
     [Authorize]
     [HttpPost("sessions")]
     public async Task<IActionResult> CreateSession(CancellationToken cancellationToken)
     {
         if (!TryGetUserId(out var currentUserId)) return Unauthorized();
 
-        var command = new CreateChatSessionCommand { UserId = currentUserId };
+        Guid? customAgentId = null;
+        if (Request.ContentLength is > 0 && Request.HasJsonContentType())
+        {
+            CreateChatSessionRequest? body;
+            try
+            {
+                body = await Request.ReadFromJsonAsync<CreateChatSessionRequest>(cancellationToken);
+            }
+            catch (JsonException)
+            {
+                return BadRequest(new { message = "Nội dung yêu cầu không hợp lệ." });
+            }
+            customAgentId = body?.CustomAgentId;
+        }
+
+        var command = new CreateChatSessionCommand { UserId = currentUserId, CustomAgentId = customAgentId };
         var result = await _mediator.Send(command, cancellationToken);
-        return Ok(result);
+        if (result.ErrorMessage is not null)
+            return BadRequest(new { message = result.ErrorMessage });
+        return Ok(result.Session);
     }
 
     [Authorize]

@@ -20,6 +20,21 @@
           <span>Bộ nhớ trợ lý</span>
         </router-link>
 
+        <router-link to="/agents" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
+          <i class="pi pi-microchip-ai"></i>
+          <span>Agents</span>
+        </router-link>
+
+        <router-link to="/schedules" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
+          <i class="pi pi-calendar-clock"></i>
+          <span>Lịch tác vụ</span>
+        </router-link>
+
+        <router-link to="/research" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
+          <i class="pi pi-compass"></i>
+          <span>Nghiên cứu</span>
+        </router-link>
+
         <router-link v-if="isAdmin" to="/admin/users" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
           <i class="pi pi-users"></i>
           <span>Quản lý User</span>
@@ -96,17 +111,69 @@
     <!-- Main Content Area -->
     <main class="flex-1 flex flex-col relative bg-chatgpt-dark min-w-0">
       
-      <!-- Header (Mobile Toggle) -->
-      <header class="md:hidden flex items-center justify-between p-4 border-b border-gray-200 bg-gray-100">
-        <button @click="mobileNavOpen = !mobileNavOpen" :aria-expanded="mobileNavOpen" aria-controls="mobile-navigation" class="w-11 h-11" :aria-label="mobileNavOpen ? 'Đóng menu điều hướng' : 'Mở menu điều hướng'"><i class="pi pi-bars text-xl"></i></button>
+      <!-- Header (mobile toggle + notification bell) -->
+      <header class="flex items-center justify-between gap-2 p-4 border-b border-gray-200 bg-gray-100">
+        <button @click="mobileNavOpen = !mobileNavOpen" :aria-expanded="mobileNavOpen" aria-controls="mobile-navigation" class="w-11 h-11 md:hidden" :aria-label="mobileNavOpen ? 'Đóng menu điều hướng' : 'Mở menu điều hướng'"><i class="pi pi-bars text-xl"></i></button>
         <span class="font-medium">Nền tảng Trợ lý AI</span>
-        <button @click="newChat" class="w-11 h-11" aria-label="Tạo phiên chat mới"><i class="pi pi-plus text-xl"></i></button>
+        <div class="flex items-center gap-1">
+          <div ref="notificationRoot" class="relative" @keydown.escape="closeNotifications(true)">
+            <button
+              ref="notificationButton"
+              @click="toggleNotifications"
+              :aria-expanded="notificationsOpen"
+              aria-haspopup="true"
+              aria-controls="notification-panel"
+              aria-label="Thông báo"
+              class="relative w-11 h-11 flex items-center justify-center rounded-md hover:bg-gray-200 transition-colors cursor-pointer">
+              <i class="pi pi-bell text-xl"></i>
+              <span v-if="unreadCount > 0" aria-hidden="true" class="absolute top-1 right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
+            </button>
+
+            <div v-if="notificationsOpen" id="notification-panel" role="region" aria-label="Danh sách thông báo" class="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
+              <div class="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-100">
+                <span class="text-sm font-semibold text-gray-900">Thông báo</span>
+                <button
+                  @click="markAllNotificationsRead"
+                  :disabled="notificationsBusy || unreadCount === 0"
+                  class="min-h-11 px-2 text-xs font-medium text-sky-700 hover:text-sky-900 disabled:text-gray-400 disabled:cursor-not-allowed rounded-md hover:bg-gray-100 transition-colors cursor-pointer">
+                  Đọc tất cả
+                </button>
+              </div>
+              <div class="max-h-80 overflow-y-auto">
+                <div v-if="notificationsLoading" class="px-4 py-6 text-sm text-gray-500 text-center" role="status">Đang tải thông báo...</div>
+                <div v-else-if="notifications.length === 0" class="px-4 py-8 text-center">
+                  <i class="pi pi-bell-slash text-2xl text-gray-300 mb-2" aria-hidden="true"></i>
+                  <p class="text-sm text-gray-500">Không có thông báo nào.</p>
+                </div>
+                <template v-else>
+                  <button
+                    v-for="notification in notifications"
+                    :key="notification.id"
+                    @click="markNotificationRead(notification)"
+                    :title="notification.isRead ? undefined : 'Đánh dấu đã đọc'"
+                    class="w-full min-h-11 flex items-start gap-3 px-4 py-3 text-left border-b border-gray-100 last:border-b-0 hover:bg-gray-50 transition-colors cursor-pointer">
+                    <span class="mt-1.5 w-2 h-2 rounded-full flex-shrink-0" :class="notification.isRead ? 'bg-transparent' : 'bg-sky-600'" aria-hidden="true"></span>
+                    <span class="min-w-0 flex-1">
+                      <span class="block text-sm truncate" :class="notification.isRead ? 'text-gray-500' : 'font-semibold text-gray-900'">{{ notification.title }}</span>
+                      <span v-if="notification.body" class="block text-xs text-gray-500 line-clamp-2 mt-0.5">{{ notification.body }}</span>
+                      <span class="block text-[11px] text-gray-400 mt-1">{{ relativeTime(notification.createdAt) }}<template v-if="!notification.isRead"> · Nhấn để đánh dấu đã đọc</template></span>
+                    </span>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </div>
+          <button @click="newChat" class="w-11 h-11 md:hidden" aria-label="Tạo phiên chat mới"><i class="pi pi-plus text-xl"></i></button>
+        </div>
       </header>
 
       <nav v-if="mobileNavOpen" id="mobile-navigation" class="md:hidden bg-gray-100 border-b border-gray-200 p-3 grid gap-1" aria-label="Điều hướng di động">
         <router-link to="/chat" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-sparkles mr-2"></i>Trợ lý AI</router-link>
         <router-link to="/documents" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-file-pdf mr-2"></i>Kho tài liệu</router-link>
         <router-link to="/memory" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-history mr-2"></i>Bộ nhớ trợ lý</router-link>
+        <router-link to="/agents" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-microchip-ai mr-2"></i>Agents</router-link>
+        <router-link to="/schedules" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-calendar-clock mr-2"></i>Lịch tác vụ</router-link>
+        <router-link to="/research" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-compass mr-2"></i>Nghiên cứu</router-link>
         <router-link v-if="isAdmin" to="/admin/users" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-users mr-2"></i>Quản lý User</router-link>
         <button @click="openMobileSettings" class="min-h-11 text-left px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-cog mr-2"></i>Cấu hình</button>
         <button @click="logout" class="min-h-11 text-left px-3 py-2 rounded text-red-700 hover:bg-red-50"><i class="pi pi-sign-out mr-2"></i>Đăng xuất</button>
@@ -222,6 +289,125 @@ const mcpForm = ref({ name: '', url: '', headersJson: '', isActive: true, trustR
 
 const chatSessions = ref<ChatSession[]>([]);
 const mobileNavOpen = ref(false);
+
+// --- Notification bell ------------------------------------------------------
+// The bell must NEVER break the app shell: every network failure here is
+// swallowed and logged with console.warn (not console.error, so browser
+// error-free quality gates stay green).
+
+interface AppNotification {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+const NOTIFICATION_POLL_MS = 60_000;
+
+const notifications = ref<AppNotification[]>([]);
+const unreadCount = ref(0);
+const notificationsOpen = ref(false);
+const notificationsLoading = ref(false);
+const notificationsBusy = ref(false);
+const notificationRoot = ref<HTMLElement | null>(null);
+const notificationButton = ref<HTMLButtonElement | null>(null);
+let notificationTimer: ReturnType<typeof setInterval> | undefined;
+
+/** 60s background poll: only refreshes the unread badge (LIST(unreadOnly)). */
+const pollUnreadNotifications = async () => {
+  try {
+    const response = await http.get(ApiFactory.NOTIFICATIONS.LIST(true));
+    if (response.ok) {
+      const items = await response.json() as AppNotification[];
+      unreadCount.value = items.length;
+    } else {
+      console.warn('[notifications] không thể tải số thông báo chưa đọc', response.status);
+    }
+  } catch (cause) {
+    console.warn('[notifications] không thể tải số thông báo chưa đọc', cause);
+  }
+};
+
+/** Full refresh used when the dropdown is open: latest list + unread badge. */
+const refreshNotifications = async () => {
+  notificationsLoading.value = notifications.value.length === 0;
+  try {
+    const response = await http.get(ApiFactory.NOTIFICATIONS.LIST());
+    if (response.ok) {
+      notifications.value = await response.json() as AppNotification[];
+      unreadCount.value = notifications.value.filter((item) => !item.isRead).length;
+    } else {
+      console.warn('[notifications] không thể tải danh sách thông báo', response.status);
+    }
+  } catch (cause) {
+    console.warn('[notifications] không thể tải danh sách thông báo', cause);
+  } finally {
+    notificationsLoading.value = false;
+  }
+};
+
+const toggleNotifications = async () => {
+  notificationsOpen.value = !notificationsOpen.value;
+  if (notificationsOpen.value) await refreshNotifications();
+};
+
+const closeNotifications = (focusButton = false) => {
+  if (!notificationsOpen.value) return;
+  notificationsOpen.value = false;
+  if (focusButton) notificationButton.value?.focus();
+};
+
+const markNotificationRead = async (notification: AppNotification) => {
+  if (notification.isRead || notificationsBusy.value) return;
+  notificationsBusy.value = true;
+  try {
+    const response = await http.post(ApiFactory.NOTIFICATIONS.MARK_READ(notification.id));
+    if (response.ok) await refreshNotifications();
+    else console.warn('[notifications] không thể đánh dấu đã đọc', response.status);
+  } catch (cause) {
+    console.warn('[notifications] không thể đánh dấu đã đọc', cause);
+  } finally {
+    notificationsBusy.value = false;
+  }
+};
+
+const markAllNotificationsRead = async () => {
+  if (notificationsBusy.value) return;
+  notificationsBusy.value = true;
+  try {
+    const response = await http.post(ApiFactory.NOTIFICATIONS.READ_ALL);
+    if (response.ok) await refreshNotifications();
+    else console.warn('[notifications] không thể đọc tất cả thông báo', response.status);
+  } catch (cause) {
+    console.warn('[notifications] không thể đọc tất cả thông báo', cause);
+  } finally {
+    notificationsBusy.value = false;
+  }
+};
+
+/** Closes the dropdown when the user clicks anywhere outside the bell. */
+const onDocumentClick = (event: MouseEvent) => {
+  if (!notificationsOpen.value) return;
+  const root = notificationRoot.value;
+  if (root && event.target instanceof Node && !root.contains(event.target)) {
+    closeNotifications();
+  }
+};
+
+const relativeTime = (iso: string): string => {
+  const time = new Date(iso).getTime();
+  if (Number.isNaN(time)) return '';
+  const minutes = Math.floor((Date.now() - time) / 60_000);
+  if (minutes < 1) return 'Vừa xong';
+  if (minutes < 60) return `${minutes} phút trước`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} giờ trước`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} ngày trước`;
+  return new Date(iso).toLocaleDateString('vi-VN');
+};
 
 // --- Session history search -------------------------------------------------
 
@@ -427,10 +613,15 @@ const userInitials = computed(() => {
 onMounted(() => {
   loadChatSessions();
   window.addEventListener('chat-session-created', loadChatSessions);
+  document.addEventListener('click', onDocumentClick);
+  void pollUnreadNotifications();
+  notificationTimer = setInterval(() => { void pollUnreadNotifications(); }, NOTIFICATION_POLL_MS);
 });
 
 onUnmounted(() => {
   window.removeEventListener('chat-session-created', loadChatSessions);
+  document.removeEventListener('click', onDocumentClick);
+  if (notificationTimer) clearInterval(notificationTimer);
   if (searchDebounce) clearTimeout(searchDebounce);
 });
 

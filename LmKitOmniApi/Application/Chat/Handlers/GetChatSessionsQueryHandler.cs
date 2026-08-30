@@ -27,7 +27,10 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                 {
                     Id = x.Id,
                     Title = x.Title,
-                    CreatedAt = x.CreatedAt
+                    CreatedAt = x.CreatedAt,
+                    CustomAgentId = x.CustomAgentId,
+                    AgentName = x.CustomAgent != null ? x.CustomAgent.Name : null,
+                    AgentIcon = x.CustomAgent != null ? x.CustomAgent.Icon : null
                 })
                 .ToListAsync(cancellationToken);
 
