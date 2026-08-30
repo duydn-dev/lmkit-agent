@@ -162,8 +162,8 @@ public class RagPipelineService : IRagPipelineService
                 : await _vectorStore.SearchSimilarWithinDocumentsAsync(
                     _collectionName,
                     queryVector,
-                    "AccessScope",
-                    new[] { BuildPrivateAccessScope(tenantId, userId) },
+                    "TenantId",
+                    BuildTenantScope(tenantId),
                     "DocumentId",
                     documentIdAllowlist.ToList(),
                     initialTopK,
@@ -236,9 +236,11 @@ public class RagPipelineService : IRagPipelineService
     /// Previously this was faked by doing a vector search (top 50) then post-filtering by keywords,
     /// which meant documents outside the vector top-50 were invisible to keyword search.
     /// Now uses Qdrant's native payload filter — completely independent of vector similarity.
-    /// A non-null <paramref name="documentIdAllowlist"/> is applied by post-filtering
-    /// the returned chunks on their "DocumentId" payload (the scroll filter's Should
-    /// group is already occupied by the keyword OR-conditions); the allowlist can
+    /// When a <paramref name="documentIdAllowlist"/> is active (custom-agent knowledge
+    /// pinning, possibly a SHARED agent), retrieval is tenant-scoped and constrained
+    /// to the allowlist in-query via SearchByPayloadWithinDocumentsAsync; the ordinary
+    /// (non-pinned) path stays private-scoped to the caller's AccessScope. The
+    /// post-filter below on "DocumentId" is kept as a defensive backstop — it can
     /// only remove results, never add any, so access scoping is unaffected.
     /// </summary>
     private async Task<List<(string Content, float Score, string Source)>> PerformKeywordSearchAsync(
@@ -255,16 +257,29 @@ public class RagPipelineService : IRagPipelineService
             var keywords = _queryExpansion.ExtractKeywords(query);
             if (!keywords.Any()) return results;
 
-            // H3 Fix: Use Qdrant's native payload filter for true sparse retrieval
-            var payloadResults = await _vectorStore.SearchByPayloadFilterAsync(
-                _collectionName,
-                payloadField: "Keywords",
-                keywords: keywords.ToList(),
-                tenantFilterField: "AccessScope",
-                tenantId: BuildPrivateAccessScope(tenantId, userId),
-                topK: 20,
-                ct: ct
-            );
+            // H3 Fix: Use Qdrant's native payload filter for true sparse retrieval.
+            // Non-pinned chat retrieval stays private-scoped (caller's AccessScope);
+            // the pinned-knowledge path (shared custom agent) is tenant-scoped +
+            // document-allowlisted so docs owned by another tenant member resolve.
+            var payloadResults = documentIdAllowlist is null
+                ? await _vectorStore.SearchByPayloadFilterAsync(
+                    _collectionName,
+                    payloadField: "Keywords",
+                    keywords: keywords.ToList(),
+                    tenantFilterField: "AccessScope",
+                    tenantId: BuildPrivateAccessScope(tenantId, userId),
+                    topK: 20,
+                    ct: ct)
+                : await _vectorStore.SearchByPayloadWithinDocumentsAsync(
+                    _collectionName,
+                    payloadField: "Keywords",
+                    keywords: keywords.ToList(),
+                    tenantField: "TenantId",
+                    tenantId: BuildTenantScope(tenantId),
+                    documentIdField: "DocumentId",
+                    documentIds: documentIdAllowlist.ToList(),
+                    topK: 20,
+                    ct: ct);
 
             foreach (var r in payloadResults)
             {
@@ -340,8 +355,8 @@ public class RagPipelineService : IRagPipelineService
             : await _vectorStore.SearchSimilarWithinDocumentsAsync(
                 _collectionName,
                 queryVector,
-                "AccessScope",
-                new[] { BuildPrivateAccessScope(tenantId, userId) },
+                "TenantId",
+                BuildTenantScope(tenantId),
                 "DocumentId",
                 documentIdAllowlist.ToList(),
                 50,
@@ -433,6 +448,12 @@ public class RagPipelineService : IRagPipelineService
 
     private static string BuildPrivateAccessScope(Guid tenantId, Guid userId) =>
         $"private:{tenantId:N}:{userId:N}";
+
+    // Tenant-wide scope value for the pinned-knowledge (shared-agent) path.
+    // Must match the "TenantId" payload the vectorization worker writes, which is
+    // the Guid default ("D") format WITH hyphens — NOT the ":N" format used
+    // inside the private AccessScope composite.
+    private static string BuildTenantScope(Guid tenantId) => tenantId.ToString();
 
     private static string BuildSourceLabel(IReadOnlyDictionary<string, string> payload)
     {

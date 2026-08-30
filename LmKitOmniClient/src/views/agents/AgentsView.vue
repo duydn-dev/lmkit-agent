@@ -394,7 +394,16 @@ const startChatWithAgent = async (agent: CustomAgent) => {
     }
     // Same event name AppLayout/ChatView already listen for to refresh history.
     window.dispatchEvent(new CustomEvent('chat-session-created'));
-    await router.push('/');
+    // Activate the newly-created session by id so ChatView binds the agent's
+    // persona/tools/knowledge. Without ?id= the first message would spawn a fresh,
+    // un-bound session. Fall back to the previous behavior if the id is missing.
+    const created = await response.json().catch(() => null);
+    if (created && typeof created.id === 'string' && created.id) {
+      await router.push('/chat?id=' + created.id);
+    } else {
+      pageError.value = 'Không thể mở phiên chat vừa tạo với agent.';
+      await router.push('/');
+    }
   } catch (cause) {
     pageError.value = errorMessage(cause, 'Không thể tạo phiên chat với agent.');
   } finally {

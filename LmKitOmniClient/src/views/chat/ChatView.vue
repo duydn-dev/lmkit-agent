@@ -655,6 +655,9 @@ const sendMessage = async () => {
       formData.append('sessionId', currentSessionId.value || '00000000-0000-0000-0000-000000000000');
       formData.append('message', content || 'Hãy phân tích nội dung file đính kèm.');
       formData.append('saveToKnowledge', String(saveAttachmentsToKnowledge.value));
+      // Mirror the JSON branch so an OFF web-search toggle reaches the endpoint
+      // instead of defaulting back to on when a file is attached.
+      formData.append('enableWebSearch', String(webSearchEnabled.value));
       for (const file of attachedFiles.value) {
         formData.append('files', file);
       }

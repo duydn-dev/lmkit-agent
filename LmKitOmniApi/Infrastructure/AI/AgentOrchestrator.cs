@@ -258,16 +258,36 @@ public class AgentOrchestrator : IAgentOrchestrator
         // C1 Fix: Use dedicated thread instead of Task.Run to avoid ThreadPool starvation.
         // chat.Submit() is a BLOCKING call that holds a thread for the entire LLM inference.
         // Using ThreadPool (Task.Run) under high concurrency leads to thread pool exhaustion.
+        //
+        // BUG 1 fix: the single-permit chat-inference lease (inferenceLease) must NOT be
+        // released while native Submit is still executing on llmThread — otherwise a
+        // concurrent caller could start a second inference on the same shared LM instance,
+        // which the single-slot gate exists to serialize. The consumer loop below throws on
+        // client abort/cancellation and unwinds, which would dispose the lease while Submit
+        // is mid-flight. So the thread sets llmThreadDone in a finally — only after Submit
+        // has returned (or observed cancellation) and the channel is completed — and the
+        // finally around the consumer loop awaits that signal before the lease scope exits.
+        var llmThreadDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var llmThread = new Thread(() =>
         {
-            try { chat.Submit(query, cancellationToken); }
-            catch (Exception ex)
+            try
             {
-                _logger.LogError(ex, "Error during chat.Submit in streaming");
-                channel.Writer.TryComplete(ex);
-                return;
+                try { chat.Submit(query, cancellationToken); }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error during chat.Submit in streaming");
+                    channel.Writer.TryComplete(ex);
+                    return;
+                }
+                channel.Writer.TryComplete();
             }
-            channel.Writer.TryComplete();
+            finally
+            {
+                // Signals that native inference has fully unwound (Submit returned or
+                // observed cancellation, and the channel is completed). Awaited before
+                // the inference lease is released — see the consumer loop's finally.
+                llmThreadDone.TrySetResult();
+            }
         })
         {
             IsBackground = true,
@@ -275,11 +295,27 @@ public class AgentOrchestrator : IAgentOrchestrator
         };
         llmThread.Start();
 
-        await foreach (var text in channel.Reader.ReadAllAsync(cancellationToken))
+        try
         {
-            var chunk = await streamGate.AppendAndTryEmitAsync(text, cancellationToken);
-            if (chunk.Length > 0)
-                yield return chunk;
+            await foreach (var text in channel.Reader.ReadAllAsync(cancellationToken))
+            {
+                var chunk = await streamGate.AppendAndTryEmitAsync(text, cancellationToken);
+                if (chunk.Length > 0)
+                    yield return chunk;
+            }
+        }
+        finally
+        {
+            // BUG 1 fix: do not free the single-slot inference gate until native
+            // inference has truly unwound. This runs on every exit path — normal
+            // completion, client abort/cancellation, and enumerator disposal — and
+            // executes BEFORE the `await using inferenceLease` scope disposes, because
+            // that using declaration is registered outside this try. Cancellation is
+            // still forwarded into Submit cooperatively via the shared token; we only
+            // delay lease RELEASE until the thread exits. The thread signals via
+            // TrySetResult only, so awaiting cannot fault; the catch is defensive so
+            // lease release never surfaces a background-thread error.
+            try { await llmThreadDone.Task; } catch { /* swallow */ }
         }
 
         // ── Step 6: Post-processing ──
@@ -337,6 +373,13 @@ public class AgentOrchestrator : IAgentOrchestrator
             _logger.LogError(
                 "Streaming guardrail divergence: emitted prefix ({EmittedLength} chars) is not a prefix of the guardrail-processed response ({FinalLength} chars); tail suppressed.",
                 emittedContent.Length, finalContent.Length);
+
+            // BUG 2 fix: never end on a silent mid-sentence cutoff. We still must NOT
+            // re-emit the diverged tail — the emitted/raw text may contain exactly the
+            // content the full guardrail pass would have redacted — so we release ONLY
+            // this short safety notice, never the unredacted content, giving the client
+            // a clear end instead of a silent truncation.
+            yield return "\n\n[Một phần phản hồi đã được lược bỏ vì lý do an toàn.]";
         }
     }
 

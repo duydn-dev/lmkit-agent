@@ -137,7 +137,15 @@ public class ScheduledTaskWorker : BackgroundService
         task.ClaimedUntilUtc = null;
         try
         {
-            task.NextRunUtc = ScheduleCalculator.ComputeNextRun(task, DateTime.UtcNow);
+            var now = DateTime.UtcNow;
+            var scheduledNextRun = ScheduleCalculator.ComputeNextRun(task, now);
+            // A Skipped outcome means the model was only transiently unavailable, so retry within
+            // ~10 minutes instead of advancing the whole cycle (a daily task would otherwise jump
+            // to tomorrow and silently drop this run). Cap at the normal next run so an interval
+            // task shorter than 10 minutes is never pushed LATER than its regular cadence.
+            task.NextRunUtc = status == SkippedStatus
+                ? (now.AddMinutes(10) < scheduledNextRun ? now.AddMinutes(10) : scheduledNextRun)
+                : scheduledNextRun;
         }
         catch (InvalidOperationException scheduleError)
         {
@@ -191,7 +199,21 @@ public class ScheduledTaskWorker : BackgroundService
             string completion;
             await using (var inferenceLease = await modelManager.AcquireChatInferenceAsync(runCts.Token))
             {
-                completion = await RunSingleTurnCompletionAsync(model, task.Prompt, runCts.Token);
+                var (resultTask, threadCompleted) = StartSingleTurnCompletion(model, task.Prompt, runCts.Token);
+                try
+                {
+                    completion = await resultTask.WaitAsync(runCts.Token);
+                }
+                finally
+                {
+                    // Hold the single-slot inference lease until the dedicated thread has fully
+                    // unwound out of the native Submit call. On the timeout path WaitAsync above
+                    // abandons resultTask while Submit is still running on the shared model, so
+                    // releasing the lease now would let a concurrent inference start. The run CTS
+                    // has already signalled Submit to cancel cooperatively — here we only wait for
+                    // it to return. Any fault on the completion signal is irrelevant to the join.
+                    try { await threadCompleted; } catch { /* best-effort join before release */ }
+                }
             }
 
             var body = string.IsNullOrWhiteSpace(completion)
@@ -237,15 +259,19 @@ public class ScheduledTaskWorker : BackgroundService
     }
 
     /// <summary>
-    /// Single-turn completion on a dedicated thread. <c>SingleTurnConversation.Submit</c> is a
-    /// blocking call that holds a thread for the entire inference, so — mirroring the
-    /// orchestrator's C1 pattern — it must not run on the ThreadPool where it could contribute
-    /// to pool starvation. The cancellation token is passed into Submit (LMKit honors it) and
-    /// also guards the await so a stuck inference is abandoned rather than awaited forever.
+    /// Starts a single-turn completion on a dedicated thread and returns two tasks: the completion
+    /// <c>Result</c>, and a <c>Completed</c> signal that fires once the thread has unwound out of
+    /// the native call. <c>SingleTurnConversation.Submit</c> is a blocking call that holds a thread
+    /// for the entire inference, so — mirroring the orchestrator's C1 pattern — it must not run on
+    /// the ThreadPool where it could contribute to pool starvation. The cancellation token is
+    /// passed into Submit (LMKit honors it cooperatively). The caller awaits <c>Result</c> with a
+    /// timeout, but MUST await <c>Completed</c> before releasing the inference lease so a timed-out
+    /// run cannot leave native inference running on the shared model past lease release.
     /// </summary>
-    private static async Task<string> RunSingleTurnCompletionAsync(LM model, string prompt, CancellationToken ct)
+    private static (Task<string> Result, Task Completed) StartSingleTurnCompletion(LM model, string prompt, CancellationToken ct)
     {
         var completionSource = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var threadCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var llmThread = new Thread(() =>
         {
             try
@@ -265,6 +291,14 @@ public class ScheduledTaskWorker : BackgroundService
             {
                 completionSource.TrySetException(ex);
             }
+            finally
+            {
+                // Fires once Submit has returned or observed cancellation — i.e. the thread is no
+                // longer inside native inference. The caller awaits this before releasing the
+                // inference lease, so the single-slot gate is never freed while Submit is still
+                // running on the shared model.
+                threadCompleted.TrySetResult();
+            }
         })
         {
             IsBackground = true,
@@ -272,7 +306,7 @@ public class ScheduledTaskWorker : BackgroundService
         };
         llmThread.Start();
 
-        return await completionSource.Task.WaitAsync(ct);
+        return (completionSource.Task, threadCompleted.Task);
     }
 
     private static Notification BuildErrorNotification(ScheduledTask task) => new()

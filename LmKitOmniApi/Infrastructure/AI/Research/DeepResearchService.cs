@@ -50,6 +50,12 @@ public class DeepResearchService
     private const string SynthesisFailedMessage =
         "\n\n⚠️ Đã xảy ra lỗi khi tổng hợp báo cáo. Vui lòng thử lại sau.";
 
+    /// <summary>
+    /// Bounded concurrency for the parallel page-fetch batch (Step 3). Kept small
+    /// so the fetcher never fans out beyond a handful of simultaneous connections.
+    /// </summary>
+    private const int MaxParallelFetches = 3;
+
     private readonly LmModelManager _modelManager;
     private readonly IWebSearchService _webSearch;
     private readonly ResearchContentFetcher _contentFetcher;
@@ -122,26 +128,68 @@ public class DeepResearchService
         }
         yield return $"[THINKING]: 🌐 Tìm thấy {candidates.Count} địa chỉ nguồn tiềm năng\\n";
 
-        // ── Step 3: fetch (SSRF-gated, capped attempts, per-source skip on failure) ──
-        var sources = new List<ResearchSource>();
-        var attempts = 0;
-        foreach (var (url, _) in candidates)
-        {
-            if (sources.Count >= maxSources || attempts >= ResearchLimits.MaxTotalFetchAttempts) break;
-            if (ct.IsCancellationRequested) break;
-            attempts++;
+        // ── Step 3: fetch (SSRF-gated, bounded-parallel, per-source skip on failure) ──
+        // Fetches run concurrently with bounded parallelism — sequential fetching of
+        // up to MaxTotalFetchAttempts pages (each up to a 15 s timeout) dominated the
+        // wall-clock time. Every existing cap is preserved: at most
+        // MaxTotalFetchAttempts candidates are attempted (total attempt cap), each
+        // fetch keeps its own per-fetch timeout/size (typed HttpClient) and SSRF
+        // re-validation (FetchSafelyAsync → IResearchUrlValidator), and at most
+        // maxSources successful sources are kept. Determinism is restored by ordering
+        // the kept sources by their original candidate index before synthesis.
+        var attemptCandidates = candidates.Take(ResearchLimits.MaxTotalFetchAttempts).ToList();
+        yield return $"[THINKING]: 📖 Đang đọc song song {attemptCandidates.Count} nguồn tiềm năng...\\n";
 
-            var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
-            yield return $"[THINKING]: 📖 Đang đọc nguồn {sources.Count + 1}: {host}...\\n";
-
-            var source = await FetchSafelyAsync(url, ct, cancellationToken);
-            if (source is null)
+        using var fetchGate = new SemaphoreSlim(MaxParallelFetches);
+        var fetchTasks = attemptCandidates
+            .Select(async (candidate, index) =>
             {
-                yield return $"[THINKING]: ⚠️ Bỏ qua nguồn không đọc được: {host}\\n";
-                continue;
-            }
-            sources.Add(source);
+                await fetchGate.WaitAsync(ct);
+                try
+                {
+                    var fetched = await FetchSafelyAsync(candidate.Url, ct, cancellationToken);
+                    return (Index: index, Source: fetched);
+                }
+                finally
+                {
+                    fetchGate.Release();
+                }
+            })
+            .ToList();
+
+        (int Index, ResearchSource? Source)[] fetchResults;
+        try
+        {
+            fetchResults = await Task.WhenAll(fetchTasks);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw; // client abort — propagate; the controller closes the stream
+        }
+        catch (OperationCanceledException)
+        {
+            // Budget expired mid-batch: Task.WhenAll only completes once every task
+            // has settled, so salvage the ones that already finished successfully;
+            // queued/cancelled fetches are treated as skipped sources.
+            fetchResults = fetchTasks
+                .Where(task => task.IsCompletedSuccessfully)
+                .Select(task => task.Result)
+                .ToArray();
+        }
+
+        // Deterministic report ordering: keep successful sources in their original
+        // candidate order, then apply the maxSources cap.
+        var successfulSources = fetchResults
+            .Where(result => result.Source is not null)
+            .OrderBy(result => result.Index)
+            .Select(result => result.Source!)
+            .ToList();
+        var sources = successfulSources.Take(maxSources).ToList();
+
+        var skippedCount = attemptCandidates.Count - successfulSources.Count;
+        if (skippedCount > 0)
+            yield return $"[THINKING]: ⚠️ Đã bỏ qua {skippedCount} nguồn không đọc được\\n";
+        yield return $"[THINKING]: 📚 Đã thu thập được {sources.Count} nguồn khả dụng\\n";
 
         if (sources.Count == 0)
         {
@@ -180,15 +228,34 @@ public class DeepResearchService
 
             // C1 pattern: chat.Submit is a BLOCKING call holding a thread for the
             // whole inference — run it on a dedicated thread, never the pool.
+            //
+            // Lease-hold fix: the single-permit chat-inference lease (synthesisLease)
+            // must NOT be released while native Submit is still executing on the
+            // dedicated thread. The consumer loop below breaks out on budget timeout
+            // or client abort while the thread may still be inside chat.Submit, and
+            // the `await using (synthesisLease)` scope would then dispose the lease
+            // mid-inference — letting a concurrent caller start a second inference on
+            // the shared LM instance the single-slot gate exists to serialize. The
+            // thread therefore signals llmThreadDone in a finally (only after Submit
+            // returned or observed cancellation and the channel is completed), and the
+            // consumer loop's finally awaits that signal before this scope exits.
+            var llmThreadDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var llmThread = new Thread(() =>
             {
-                try { chat.Submit(synthesisPrompt, ct); }
-                catch (Exception ex)
+                try
                 {
-                    channel.Writer.TryComplete(ex);
-                    return;
+                    try { chat.Submit(synthesisPrompt, ct); }
+                    catch (Exception ex)
+                    {
+                        channel.Writer.TryComplete(ex);
+                        return;
+                    }
+                    channel.Writer.TryComplete();
                 }
-                channel.Writer.TryComplete();
+                finally
+                {
+                    llmThreadDone.TrySetResult();
+                }
             })
             {
                 IsBackground = true,
@@ -196,26 +263,38 @@ public class DeepResearchService
             };
             llmThread.Start();
 
-            while (true)
+            try
             {
-                string? chunk = null;
-                try
+                while (true)
                 {
-                    // `ct` (budget + request) cancels the wait promptly even if
-                    // the inference thread is slow to observe cancellation.
-                    if (!await channel.Reader.WaitToReadAsync(ct)) break;
-                    if (!channel.Reader.TryRead(out chunk)) continue;
-                }
-                catch (Exception ex)
-                {
-                    // Budget timeout, client abort, or a mid-inference model
-                    // failure completed the channel with an error.
-                    streamError = ex;
-                    break;
-                }
+                    string? chunk = null;
+                    try
+                    {
+                        // `ct` (budget + request) cancels the wait promptly even if
+                        // the inference thread is slow to observe cancellation.
+                        if (!await channel.Reader.WaitToReadAsync(ct)) break;
+                        if (!channel.Reader.TryRead(out chunk)) continue;
+                    }
+                    catch (Exception ex)
+                    {
+                        // Budget timeout, client abort, or a mid-inference model
+                        // failure completed the channel with an error.
+                        streamError = ex;
+                        break;
+                    }
 
-                reportBuilder.Append(chunk);
-                yield return chunk;
+                    reportBuilder.Append(chunk);
+                    yield return chunk;
+                }
+            }
+            finally
+            {
+                // Do not release the inference lease until native Submit has fully
+                // unwound. Runs on every exit path — normal completion, break on
+                // cancel/error, and enumerator disposal — and executes BEFORE the
+                // `await using (synthesisLease)` scope disposes. TrySetResult only,
+                // so the await cannot fault; the catch is defensive.
+                try { await llmThreadDone.Task; } catch { /* swallow */ }
             }
         }
 

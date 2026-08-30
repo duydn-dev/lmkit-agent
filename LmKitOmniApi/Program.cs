@@ -313,44 +313,11 @@ builder.Services.AddHttpClient("MCP", client =>
     // DNS-rebinding TOCTOU fix: the pre-invocation URL check resolves DNS once, and a
     // plain handler would resolve it AGAIN for the actual request — a malicious
     // resolver can answer with a public IP during validation and rebind to
-    // 169.254.169.254 / RFC1918 space for the connection. Resolve here, re-vet every
-    // address with the sandbox's authoritative classifier, and connect only to a
-    // vetted public IP (TLS still validates against the original hostname via SNI).
-    ConnectCallback = static async (context, ct) =>
-    {
-        var host = context.DnsEndPoint.Host;
-        var addresses = IPAddress.TryParse(host, out var literal)
-            ? new[] { literal }
-            : await Dns.GetHostAddressesAsync(host, ct);
-        var vetted = addresses
-            .Where(address => !ToolSandboxService.IsPrivateOrLocalAddress(address))
-            .ToArray();
-        if (vetted.Length == 0)
-            throw new HttpRequestException(
-                $"MCP host '{host}' does not resolve to any allowed public address.");
-
-        Exception? lastFailure = null;
-        foreach (var address in vetted)
-        {
-            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
-            {
-                NoDelay = true
-            };
-            try
-            {
-                await socket.ConnectAsync(new IPEndPoint(address, context.DnsEndPoint.Port), ct);
-                return new NetworkStream(socket, ownsSocket: true);
-            }
-            catch (Exception ex)
-            {
-                socket.Dispose();
-                lastFailure = ex;
-            }
-        }
-
-        throw new HttpRequestException(
-            $"Unable to connect to MCP host '{host}' on any vetted public address.", lastFailure);
-    }
+    // 169.254.169.254 / RFC1918 space for the connection. The shared factory
+    // re-resolves, re-vets every address with the sandbox's authoritative
+    // classifier, and connects only to a vetted public IP (TLS still validates
+    // against the original hostname via SNI). See SsrfSafeConnect.
+    ConnectCallback = SsrfSafeConnect.CreateVettedConnectCallback()
 });
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.IMcpProtocolClient, LmKitOmniApi.Infrastructure.AI.Mcp.McpProtocolClient>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.McpClientService>();
@@ -370,7 +337,13 @@ builder.Services.AddHttpClient<LmKitOmniApi.Infrastructure.AI.Research.ResearchC
 {
     // Redirect targets have not passed the research URL/DNS sandbox checks; the
     // fetcher treats 3xx as skip. ValidateUrlAsync re-vets DNS per fetch.
-    AllowAutoRedirect = false
+    AllowAutoRedirect = false,
+    // Same DNS-rebinding TOCTOU defense as the MCP handler: ValidateUrlAsync
+    // resolves DNS during validation, and without this the handler would resolve
+    // AGAIN at connect time — a rebinding resolver could then point the socket at
+    // internal/metadata IPs. Re-vet every resolved address and connect only to a
+    // vetted public IP. See SsrfSafeConnect.
+    ConnectCallback = SsrfSafeConnect.CreateVettedConnectCallback()
 });
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Research.DeepResearchService>();
 

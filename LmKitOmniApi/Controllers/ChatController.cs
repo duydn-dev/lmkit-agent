@@ -101,6 +101,7 @@ public class ChatController : ApiControllerBase
         [FromForm] string? modelId,
         [FromForm] List<IFormFile>? files,
         [FromForm] bool saveToKnowledge,
+        [FromForm] bool? enableWebSearch,
         CancellationToken cancellationToken)
     {
         Response.Headers.Append("Content-Type", "text/event-stream");
@@ -248,7 +249,11 @@ public class ChatController : ApiControllerBase
             UserId = currentUserId,
             TenantId = tenantId,
             Message = augmentedMessage,
-            ModelId = string.Empty
+            ModelId = string.Empty,
+            // Honor the composer's web-search toggle on the multipart path too.
+            // Nullable → omitting the field preserves today's default-on behavior;
+            // an explicit false now reaches the orchestrator instead of being ignored.
+            EnableWebSearch = enableWebSearch ?? true
         };
 
         var chatStream = _mediator.CreateStream(command, cancellationToken);

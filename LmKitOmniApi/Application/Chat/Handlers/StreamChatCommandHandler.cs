@@ -12,6 +12,7 @@ using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Domain.Entities;
 using Microsoft.Extensions.Caching.Distributed;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace LmKitOmniApi.Application.Chat.Handlers;
 
@@ -343,10 +344,17 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         }
         finally
         {
-            if (!assistantPersisted && fullResponseBuilder.Length > 0 && cancellationToken.IsCancellationRequested)
+            if (!assistantPersisted && cancellationToken.IsCancellationRequested
+                && !string.IsNullOrWhiteSpace(StripProtocolMarkers(fullResponseBuilder.ToString())))
             {
                 // Best-effort: persist whatever was generated before the stop, using
                 // CancellationToken.None because the request token is already canceled.
+                // Guarded on the STRIPPED view so a stop after only status markers
+                // ([THINKING]/[WEB_SEARCH]/[Agent invoked]) with no real answer does not
+                // persist a marker-only row that renders as a permanent blank bubble.
+                // The row that IS stored keeps the original markers verbatim
+                // (PersistAssistantMessageAsync stores fullResponseBuilder.ToString()),
+                // so the history loader can still re-extract the thinking steps.
                 try
                 {
                     var savedAssistant = await PersistAssistantMessageAsync(CancellationToken.None);
@@ -357,6 +365,48 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
                     _logger.LogWarning(ex, "Failed to persist the partial assistant response for chat session {SessionId} after cancellation.", request.SessionId);
                 }
             }
+            else if (!assistantPersisted && !cancellationToken.IsCancellationRequested)
+            {
+                // Mid-stream error (non-cancellation) with nothing persisted. The user
+                // turn was committed to the DB before streaming, but the 2h history cache
+                // still holds the pre-send snapshot that predates it — and the next send
+                // prefers that cache over the DB, silently losing this turn for up to 2h.
+                // Best-effort drop the cache key so the next send rebuilds from the DB
+                // (which has the committed user turn). Never throw from the finally.
+                try
+                {
+                    await _cache.RemoveAsync(cacheKey, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to invalidate the history cache for chat session {SessionId} after a mid-stream error.", request.SessionId);
+                }
+            }
         }
+    }
+
+    // ── Orchestrator status-marker stripping ──────────────────────────────
+    // The orchestrator interleaves status markers into the streamed/persisted
+    // assistant body — "[Agent invoked: ...]", "[THINKING]: ..." and
+    // "[WEB_SEARCH]: ..." lines — which the frontend strips back out for display
+    // (parseStoredAssistantContent in src/composables/useChatStream.ts). These
+    // patterns mirror those regexes so we can tell a real answer apart from a
+    // marker-only response. This stripped view decides ONLY whether to persist;
+    // the value actually stored keeps the original markers so the history loader
+    // can re-extract the thinking steps and web references.
+    private static readonly Regex AgentInvokedMarker =
+        new Regex(@"\[Agent invoked:.*?\][\n\r]*", RegexOptions.Compiled);
+    private static readonly Regex ThinkingMarker =
+        new Regex(@"\[THINKING\]:[^\n\r]+[\n\r]*", RegexOptions.Compiled);
+    private static readonly Regex WebSearchMarker =
+        new Regex(@"\[WEB_SEARCH\]:[^\n\r]+[\n\r]*", RegexOptions.Compiled);
+
+    private static string StripProtocolMarkers(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return string.Empty;
+        var stripped = AgentInvokedMarker.Replace(raw, string.Empty);
+        stripped = ThinkingMarker.Replace(stripped, string.Empty);
+        stripped = WebSearchMarker.Replace(stripped, string.Empty);
+        return stripped;
     }
 }

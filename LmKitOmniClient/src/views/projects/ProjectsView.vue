@@ -306,7 +306,16 @@ const startChatInProject = async (project: Project) => {
     }
     // Same event name AppLayout/ChatView already listen for to refresh history.
     window.dispatchEvent(new CustomEvent('chat-session-created'));
-    await router.push('/');
+    // Activate the newly-created session by id so ChatView binds the project's
+    // instructions. Without ?id= the first message would spawn a fresh, un-bound
+    // session. Fall back to the previous behavior if the id is missing.
+    const created = await response.json().catch(() => null);
+    if (created && typeof created.id === 'string' && created.id) {
+      await router.push('/chat?id=' + created.id);
+    } else {
+      pageError.value = 'Không thể mở đoạn chat vừa tạo trong dự án.';
+      await router.push('/');
+    }
   } catch (cause) {
     pageError.value = errorMessage(cause, 'Không thể tạo đoạn chat trong dự án.');
   } finally {

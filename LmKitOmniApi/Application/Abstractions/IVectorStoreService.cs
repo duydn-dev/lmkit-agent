@@ -29,18 +29,41 @@ public interface IVectorStoreService
         string tenantFilterField, string tenantId, int topK, CancellationToken ct = default);
 
     /// <summary>
-    /// Dense search constrained by BOTH an access-scope allowlist AND a
-    /// document-id allowlist at once (custom-agent knowledge pinning):
-    /// (<paramref name="scopeField"/> IN <paramref name="allowedScopeValues"/>)
+    /// Dense search for the custom-agent knowledge-pinning path, constrained by
+    /// BOTH the owning TENANT AND a document-id allowlist at once:
+    /// (<paramref name="tenantField"/> == <paramref name="tenantId"/>)
     /// AND (<paramref name="documentIdField"/> IN <paramref name="documentIds"/>).
-    /// Both filters are mandatory here — callers without a document restriction
-    /// use <see cref="SearchSimilarWithAnyPayloadAsync"/> instead.
+    /// Pinned documents may belong to a DIFFERENT user in the same tenant (a
+    /// shared agent), so scoping here is tenant-wide, NOT the caller's private
+    /// access scope. Callers without a document restriction use
+    /// <see cref="SearchSimilarWithAnyPayloadAsync"/> (private access scope) instead.
     /// </summary>
     Task<List<VectorSearchResult>> SearchSimilarWithinDocumentsAsync(
         string collectionName,
         float[] queryVector,
-        string scopeField,
-        IReadOnlyList<string> allowedScopeValues,
+        string tenantField,
+        string tenantId,
+        string documentIdField,
+        IReadOnlyList<string> documentIds,
+        int topK,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Sparse (keyword) equivalent of <see cref="SearchSimilarWithinDocumentsAsync"/>
+    /// for the pinned-knowledge path: payload-filter search constrained by
+    /// (<paramref name="tenantField"/> == <paramref name="tenantId"/>) AND
+    /// (<paramref name="documentIdField"/> IN <paramref name="documentIds"/>) AND
+    /// (any of <paramref name="keywords"/> present). Tenant-scoped, so a shared
+    /// agent's pinned docs owned by another tenant member are reachable; the
+    /// non-pinned keyword path keeps using <see cref="SearchByPayloadFilterAsync"/>
+    /// with the caller's private access scope.
+    /// </summary>
+    Task<List<VectorSearchResult>> SearchByPayloadWithinDocumentsAsync(
+        string collectionName,
+        string payloadField,
+        List<string> keywords,
+        string tenantField,
+        string tenantId,
         string documentIdField,
         IReadOnlyList<string> documentIds,
         int topK,

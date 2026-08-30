@@ -28,8 +28,10 @@ public class ToolPermissionService : IToolPermissionService
     private static readonly Dictionary<string, HashSet<string>> RoleToolPermissions = new()
     {
         // RunCode (sandboxed Jint JS interpreter — side-effect-free, no CLR/network/
-        // filesystem) mirrors AnalyzeText: every role that can analyze text can run
-        // code. It intentionally stays OUT of ApprovalRequiredTools below.
+        // filesystem) is granted to authenticated User and Admin roles only. Least
+        // privilege keeps the untrusted Guest role out of code execution even though
+        // the interpreter is sandboxed. It intentionally stays OUT of
+        // ApprovalRequiredTools below and carries a tight per-tool rate limit.
         ["Admin"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
@@ -45,7 +47,7 @@ public class ToolPermissionService : IToolPermissionService
         },
         ["Guest"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "SearchWeb", "AnalyzeText", "RunCode"
+            "SearchWeb", "AnalyzeText"
         }
     };
 
@@ -65,6 +67,9 @@ public class ToolPermissionService : IToolPermissionService
         ["IngestDocument"] = 5,
         ["QueryKnowledgeBase"] = 30,
         ["AnalyzeText"] = 20,
+        // Code execution is the most sensitive tool — a tight limit well below the
+        // default, and unavailable to Guests entirely (see RoleToolPermissions).
+        ["RunCode"] = 5,
         ["ReadWordDocument"] = 15,
         ["ReadExcelDocument"] = 15,
     };
