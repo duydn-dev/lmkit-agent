@@ -190,13 +190,13 @@ const startResearch = async () => {
             thinkingSteps.value.push(event.value);
             continue;
           }
-          if (event.type !== 'content') continue;
-
-          const savedMatch = event.value.match(/^\[RESEARCH_SAVED:(.+)\]$/);
-          if (savedMatch) {
-            savedRootId.value = savedMatch[1] ?? '';
+          if (event.type === 'saved') {
+            // Parser decodes the "[RESEARCH_SAVED:<rootId>]" marker for us.
+            savedRootId.value = event.value;
             continue;
           }
+          if (event.type !== 'content') continue;
+
           reportContent.value += event.value;
         }
         if (done) break;

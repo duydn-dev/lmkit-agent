@@ -3,6 +3,7 @@ export type ChatStreamEvent =
   | { type: 'thinking'; value: string }
   | { type: 'web-search'; value: string }
   | { type: 'approval'; value: string }
+  | { type: 'saved'; value: string }
   | { type: 'error'; value: string }
   | { type: 'agent-log'; value: string }
   | { type: 'done'; value: '' };
@@ -55,6 +56,8 @@ function parseDataLine(line: string): ChatStreamEvent | null {
     return { type: 'web-search', value: value.slice('[WEB_SEARCH]:'.length) };
   if (value.startsWith('[HITL_APPROVAL_REQUIRED:') && value.endsWith(']'))
     return { type: 'approval', value: value.slice('[HITL_APPROVAL_REQUIRED:'.length, -1).trim() };
+  if (value.startsWith('[RESEARCH_SAVED:') && value.endsWith(']'))
+    return { type: 'saved', value: value.slice('[RESEARCH_SAVED:'.length, -1).trim() };
   if (value.startsWith('[Agent invoked:')) return { type: 'agent-log', value };
   return { type: 'content', value };
 }

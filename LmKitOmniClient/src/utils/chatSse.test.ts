@@ -29,6 +29,20 @@ describe('ChatSseParser', () => {
     ]);
   });
 
+  it('decodes the research-saved marker instead of leaking it as content', () => {
+    const parser = new ChatSseParser();
+    const events = parser.push([
+      'data: "Báo cáo nghiên cứu..."',
+      'data: "[RESEARCH_SAVED:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb]"',
+      ''
+    ].join('\n'));
+
+    expect(events).toEqual([
+      { type: 'content', value: 'Báo cáo nghiên cứu...' },
+      { type: 'saved', value: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' }
+    ]);
+  });
+
   it('returns server errors and flushes a final line without newline', () => {
     const parser = new ChatSseParser();
 
