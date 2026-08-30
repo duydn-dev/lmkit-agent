@@ -6,6 +6,7 @@ using LMKit.TextGeneration.Chat;
 using LmKitOmniApi.Application.Chat.Commands;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Application.CustomAgents;
+using LmKitOmniApi.Application.Projects;
 using LmKitOmniApi.Services;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Domain.Entities;
@@ -254,6 +255,31 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
                 AllowedTools = allowedTools,
                 KnowledgeDocumentIds = CustomAgentRules.ParseDocumentIdsCsv(customAgent.KnowledgeDocumentIdsCsv)
             };
+        }
+
+        // ── Project instructions (ChatGPT-Projects style shared context) ──
+        // A session inside a project prepends the project's instructions to the
+        // persona prompt. Tenant+owner scoped; a missing/foreign project or
+        // empty/whitespace instructions means the request proceeds WITHOUT them —
+        // and with no project anywhere, `options` is left untouched, so behavior
+        // stays byte-identical to a project-less session.
+        if (session.ProjectId is Guid sessionProjectId)
+        {
+            var projectInstructions = await _dbContext.Projects
+                .AsNoTracking()
+                .Where(p => p.Id == sessionProjectId
+                    && p.TenantId == request.TenantId
+                    && p.UserId == request.UserId)
+                .Select(p => p.Instructions)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (!string.IsNullOrWhiteSpace(projectInstructions))
+            {
+                options = options with
+                {
+                    PersonaPrompt = ProjectRules.ComposePersonaPrompt(projectInstructions, options.PersonaPrompt)
+                };
+            }
         }
 
         var fullResponseBuilder = new System.Text.StringBuilder();

@@ -82,6 +82,8 @@ async function mockAuthenticatedApi(page: Page) {
     if (path === '/api/users') {
       return json(route, [{ ...user, isActive: true }]);
     }
+    // The settings dialog fetches connection suggestions when an admin opens it.
+    if (path === '/api/mcp-servers/catalog') return json(route, []);
     if (path === '/api/mcp-servers') return json(route, []);
     // The notification bell polls this from the app shell on every view.
     if (path === '/api/notifications' && method === 'GET') return json(route, []);

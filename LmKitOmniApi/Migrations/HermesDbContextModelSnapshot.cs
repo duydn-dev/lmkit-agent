@@ -228,6 +228,9 @@ namespace LmKitOmniApi.Migrations
                     b.Property<Guid?>("CustomAgentId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("ProjectId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Summary")
                         .HasColumnType("text");
 
@@ -244,6 +247,8 @@ namespace LmKitOmniApi.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CustomAgentId");
+
+                    b.HasIndex("ProjectId");
 
                     b.HasIndex("TenantId");
 
@@ -588,6 +593,50 @@ namespace LmKitOmniApi.Migrations
                     b.ToTable("notifications");
                 });
 
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.Project", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("Icon")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Instructions")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("TenantId", "UserId");
+
+                    b.ToTable("projects");
+                });
+
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.ScheduledTask", b =>
                 {
                     b.Property<Guid>("Id")
@@ -775,6 +824,11 @@ namespace LmKitOmniApi.Migrations
                     b.Property<int>("MaxRequests")
                         .HasColumnType("integer");
 
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTime?>("RevokedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -789,9 +843,12 @@ namespace LmKitOmniApi.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId");
+                    b.HasIndex("ApiKey")
+                        .IsUnique();
 
                     b.HasIndex("UserId");
+
+                    b.HasIndex("TenantId", "UserId");
 
                     b.ToTable("tenant_api_keys");
                 });
@@ -1044,6 +1101,11 @@ namespace LmKitOmniApi.Migrations
                         .HasForeignKey("CustomAgentId")
                         .OnDelete(DeleteBehavior.SetNull);
 
+                    b.HasOne("LmKitOmniApi.Domain.Entities.Project", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
                         .WithMany("ChatSessions")
                         .HasForeignKey("TenantId")
@@ -1056,6 +1118,8 @@ namespace LmKitOmniApi.Migrations
                         .OnDelete(DeleteBehavior.SetNull);
 
                     b.Navigation("CustomAgent");
+
+                    b.Navigation("Project");
 
                     b.Navigation("Tenant");
 
@@ -1171,6 +1235,25 @@ namespace LmKitOmniApi.Migrations
                 });
 
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.Notification", b =>
+                {
+                    b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("LmKitOmniApi.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.Project", b =>
                 {
                     b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
                         .WithMany()

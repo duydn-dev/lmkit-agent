@@ -90,6 +90,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["WEB_SEARCH"] = "SearchWeb",
         ["DELEGATE"] = "Delegate",
         ["SUMMARIZE"] = "AnalyzeText",
+        ["CODE"] = "RunCode",
     };
 
     // H6 path-extraction regexes moved to AgentActionDispatcher alongside the
@@ -106,6 +107,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         IToolPermissionService toolPermission,
         ToolSandboxService sandbox,
         IPromptGuardService promptGuard,
+        IExecutionSandboxEngine executionSandbox,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
         McpClientService mcpClient,
@@ -143,6 +145,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             mediator,
             webSearch,
             toolPermission,
+            executionSandbox,
             resources,
             multiAgent,
             mcpClient,
@@ -469,6 +472,20 @@ public class AgentOrchestrator : IAgentOrchestrator
                 (q, ct) => invoke("SUMMARIZE", q, ct)));
         }
 
+        // Code interpreter (v1: sandboxed JavaScript via Jint). Same gating as
+        // every other action: the whitelist filters registration here, and the
+        // invoke path still runs the full RBAC check on the mapped "RunCode"
+        // permission (ActionToToolMap) before anything executes.
+        if (ActionAllowed("CODE"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "run_javascript",
+                "Chạy một đoạn mã JavaScript ngắn, tự chứa để tính toán hoặc biến đổi dữ liệu; "
+                    + "giá trị của BIỂU THỨC CUỐI CÙNG là kết quả trả về (console.log cũng được ghi lại). "
+                    + "Không có mạng, không có hệ thống tệp; giới hạn 2 giây / 4MB bộ nhớ.",
+                (q, ct) => invoke("CODE", q, ct)));
+        }
+
         if (profile.HasFlag(AgentToolProfile.ImageRead) && ActionAllowed("VISION"))
         {
             tools.Add(new DelegatedActionTool("analyze_image", "Analyze an allowlisted local image with OCR or vision.",
@@ -674,8 +691,10 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
     }
 
+    // CODE is retry-safe: the Jint sandbox is side-effect-free (no network, no
+    // filesystem, no CLR), so re-running a snippet cannot double-apply anything.
     private static bool IsRetrySafeAction(string action) => action is
-        "RAG" or "VISION" or "SPEECH" or "NLP" or "WEB_SEARCH" or "DELEGATE" or "SUMMARIZE";
+        "RAG" or "VISION" or "SPEECH" or "NLP" or "WEB_SEARCH" or "DELEGATE" or "SUMMARIZE" or "CODE";
 
     /// <summary>
     /// Build system prompt using template engine. A custom-agent persona, when

@@ -3,7 +3,9 @@ using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Infrastructure.VectorDb;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Services;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
 using System.Net;
 using System.Net.Sockets;
@@ -155,7 +157,37 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 if (!sessionIsActive) context.Fail("Session is inactive or revoked");
             }
         };
-    });
+
+        // Requests presenting X-Api-Key are handed to the ApiKey scheme for every
+        // default authenticate/challenge, so HttpContext.User is populated from the
+        // key even on surfaces that bypass endpoint policies (the /metrics admin
+        // gate, [Authorize(Roles = ...)] policies without explicit schemes, and the
+        // rate-limiter partitions). Requests WITHOUT the header keep the exact
+        // JWT pipeline above — cookie extraction, OnTokenValidated session
+        // revocation — untouched. When both credentials are present the explicit
+        // API key wins by design.
+        options.ForwardDefaultSelector = context =>
+            context.Request.Headers.TryGetValue(ApiKeyAuthenticationHandler.HeaderName, out var apiKeyHeader)
+                && !string.IsNullOrWhiteSpace(apiKeyHeader)
+                ? ApiKeyAuthenticationHandler.SchemeName
+                : null;
+    })
+    // Programmatic access: X-Api-Key header validated against hashed TenantApiKeys.
+    .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+        ApiKeyAuthenticationHandler.SchemeName, null);
+
+// Plain [Authorize] must accept BOTH schemes: the default policy authenticates the
+// JWT cookie/bearer scheme AND the ApiKey scheme and merges their principals. The
+// JWT scheme stays the default authenticate/challenge scheme, so anonymous requests
+// still get the same 401 challenge as before.
+builder.Services.AddAuthorization(options =>
+{
+    options.DefaultPolicy = new AuthorizationPolicyBuilder(
+            JwtBearerDefaults.AuthenticationScheme,
+            ApiKeyAuthenticationHandler.SchemeName)
+        .RequireAuthenticatedUser()
+        .Build();
+});
 
 // 1. Cấu hình DbContext (PostgreSQL) đọc từ AppSettings
 builder.Services.AddHttpContextAccessor();

@@ -41,6 +41,25 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                 }
             }
 
+            // Optional project binding: projects are strictly per-user, so the
+            // project must be the caller's own (tenant+user scoped).
+            if (request.ProjectId is Guid projectId)
+            {
+                var projectExists = await _dbContext.Projects
+                    .AsNoTracking()
+                    .AnyAsync(candidate => candidate.Id == projectId
+                        && candidate.TenantId == user.TenantId
+                        && candidate.UserId == request.UserId,
+                        cancellationToken);
+                if (!projectExists)
+                {
+                    return new CreateChatSessionResult
+                    {
+                        ErrorMessage = "Dự án không tồn tại hoặc bạn không có quyền dùng"
+                    };
+                }
+            }
+
             var session = new ChatSession
             {
                 Id = Guid.NewGuid(),
@@ -48,7 +67,8 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                 TenantId = user.TenantId,
                 Title = string.IsNullOrWhiteSpace(request.Title) ? CreateChatSessionCommand.DefaultChatTitle : request.Title,
                 CreatedAt = DateTime.UtcNow,
-                CustomAgentId = agent?.Id
+                CustomAgentId = agent?.Id,
+                ProjectId = request.ProjectId
             };
 
             _dbContext.ChatSessions.Add(session);
@@ -63,7 +83,8 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                     CreatedAt = session.CreatedAt,
                     CustomAgentId = agent?.Id,
                     AgentName = agent?.Name,
-                    AgentIcon = agent?.Icon
+                    AgentIcon = agent?.Icon,
+                    ProjectId = session.ProjectId
                 }
             };
         }

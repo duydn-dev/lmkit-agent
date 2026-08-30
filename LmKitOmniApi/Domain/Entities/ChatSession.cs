@@ -12,9 +12,13 @@ public class ChatSession
     /// <summary>Optional custom agent this session chats with (persona + tool/knowledge scope).</summary>
     public Guid? CustomAgentId { get; set; }
 
+    /// <summary>Optional project this session belongs to (shared instructions + grouping).</summary>
+    public Guid? ProjectId { get; set; }
+
     public Tenant? Tenant { get; set; }
     public User? User { get; set; }
     public CustomAgent? CustomAgent { get; set; }
+    public Project? Project { get; set; }
     public ICollection<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
 }
 

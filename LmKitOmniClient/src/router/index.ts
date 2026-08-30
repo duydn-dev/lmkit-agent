@@ -46,6 +46,18 @@ const router = createRouter({
           meta: { requiresAuth: true }
         },
         {
+          path: '/projects',
+          name: 'Projects',
+          component: () => import('../views/projects/ProjectsView.vue'),
+          meta: { requiresAuth: true }
+        },
+        {
+          path: '/api-keys',
+          name: 'ApiKeys',
+          component: () => import('../views/apikeys/ApiKeysView.vue'),
+          meta: { requiresAuth: true }
+        },
+        {
           path: '/admin/users',
           name: 'AdminUsers',
           component: () => import('../views/admin/UserManager.vue'),

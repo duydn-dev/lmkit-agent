@@ -49,5 +49,17 @@ export const ApiFactory = {
   },
   SPEECH: {
     TRANSCRIBE_UPLOAD: '/api/speech/transcribe-upload'
+  },
+  PROJECTS: {
+    BASE: '/api/projects',
+    BY_ID: (id: string) => `/api/projects/${id}`,
+    SESSIONS: (id: string) => `/api/projects/${id}/sessions`
+  },
+  APIKEYS: {
+    BASE: '/api/api-keys',
+    BY_ID: (id: string) => `/api/api-keys/${id}`
+  },
+  MCP: {
+    CATALOG: '/api/mcp-servers/catalog'
   }
 };

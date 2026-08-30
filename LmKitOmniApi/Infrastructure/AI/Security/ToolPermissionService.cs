@@ -27,22 +27,25 @@ public class ToolPermissionService : IToolPermissionService
     // Role-based tool whitelist
     private static readonly Dictionary<string, HashSet<string>> RoleToolPermissions = new()
     {
+        // RunCode (sandboxed Jint JS interpreter — side-effect-free, no CLR/network/
+        // filesystem) mirrors AnalyzeText: every role that can analyze text can run
+        // code. It intentionally stays OUT of ApprovalRequiredTools below.
         ["Admin"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
             "AnalyzeText", "QueryKnowledgeBase", "IngestDocument",
-            "ReadWordDocument", "ReadExcelDocument",
+            "ReadWordDocument", "ReadExcelDocument", "RunCode",
             "Delegate", "MCP" // C3 Fix: added for action→tool mapping
         },
         ["User"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
-            "AnalyzeText", "QueryKnowledgeBase",
+            "AnalyzeText", "QueryKnowledgeBase", "RunCode",
             "Delegate" // C3 Fix: Users can delegate but not use MCP
         },
         ["Guest"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "SearchWeb", "AnalyzeText"
+            "SearchWeb", "AnalyzeText", "RunCode"
         }
     };
 

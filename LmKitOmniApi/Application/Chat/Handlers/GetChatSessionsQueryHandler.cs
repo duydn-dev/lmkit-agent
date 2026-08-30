@@ -20,8 +20,16 @@ namespace LmKitOmniApi.Application.Chat.Handlers
 
         public async Task<List<ChatSessionDto>> Handle(GetChatSessionsQuery request, CancellationToken cancellationToken)
         {
-            var sessions = await _dbContext.ChatSessions
-                .Where(x => x.UserId == request.UserId)
+            var scopedSessions = _dbContext.ChatSessions
+                .Where(x => x.UserId == request.UserId);
+
+            // Optional exact-match project filter; absent = unchanged full list.
+            if (request.ProjectId is Guid projectId)
+            {
+                scopedSessions = scopedSessions.Where(x => x.ProjectId == projectId);
+            }
+
+            var sessions = await scopedSessions
                 .OrderByDescending(x => x.CreatedAt)
                 .Select(x => new ChatSessionDto
                 {
@@ -30,7 +38,8 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                     CreatedAt = x.CreatedAt,
                     CustomAgentId = x.CustomAgentId,
                     AgentName = x.CustomAgent != null ? x.CustomAgent.Name : null,
-                    AgentIcon = x.CustomAgent != null ? x.CustomAgent.Icon : null
+                    AgentIcon = x.CustomAgent != null ? x.CustomAgent.Icon : null,
+                    ProjectId = x.ProjectId
                 })
                 .ToListAsync(cancellationToken);
 

@@ -49,6 +49,12 @@ public static class CustomAgentRules
         },
         new()
         {
+            Name = "RunCode",
+            Label = "Chạy mã JavaScript",
+            Description = "Thực thi đoạn mã JavaScript ngắn trong sandbox an toàn để tính toán và biến đổi dữ liệu (không mạng, không truy cập tệp)."
+        },
+        new()
+        {
             Name = "AnalyzeImage",
             Label = "Phân tích hình ảnh",
             Description = "Đọc OCR và phân tích nội dung hình ảnh được phép truy cập."

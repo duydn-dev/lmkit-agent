@@ -9,7 +9,12 @@
           <i class="pi pi-sparkles"></i>
           <span>Trợ lý AI</span>
         </router-link>
-        
+
+        <router-link to="/projects" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
+          <i class="pi pi-folder"></i>
+          <span>Dự án</span>
+        </router-link>
+
         <router-link to="/documents" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
           <i class="pi pi-file-pdf"></i>
           <span>Kho tài liệu (RAG)</span>
@@ -33,6 +38,11 @@
         <router-link to="/research" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
           <i class="pi pi-compass"></i>
           <span>Nghiên cứu</span>
+        </router-link>
+
+        <router-link to="/api-keys" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
+          <i class="pi pi-key"></i>
+          <span>API Keys</span>
         </router-link>
 
         <router-link v-if="isAdmin" to="/admin/users" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
@@ -169,11 +179,13 @@
 
       <nav v-if="mobileNavOpen" id="mobile-navigation" class="md:hidden bg-gray-100 border-b border-gray-200 p-3 grid gap-1" aria-label="Điều hướng di động">
         <router-link to="/chat" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-sparkles mr-2"></i>Trợ lý AI</router-link>
+        <router-link to="/projects" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-folder mr-2"></i>Dự án</router-link>
         <router-link to="/documents" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-file-pdf mr-2"></i>Kho tài liệu</router-link>
         <router-link to="/memory" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-history mr-2"></i>Bộ nhớ trợ lý</router-link>
         <router-link to="/agents" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-microchip-ai mr-2"></i>Agents</router-link>
         <router-link to="/schedules" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-calendar-clock mr-2"></i>Lịch tác vụ</router-link>
         <router-link to="/research" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-compass mr-2"></i>Nghiên cứu</router-link>
+        <router-link to="/api-keys" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-key mr-2"></i>API Keys</router-link>
         <router-link v-if="isAdmin" to="/admin/users" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-users mr-2"></i>Quản lý User</router-link>
         <button @click="openMobileSettings" class="min-h-11 text-left px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-cog mr-2"></i>Cấu hình</button>
         <button @click="logout" class="min-h-11 text-left px-3 py-2 rounded text-red-700 hover:bg-red-50"><i class="pi pi-sign-out mr-2"></i>Đăng xuất</button>
@@ -233,6 +245,29 @@
                     <Button type="submit" label="Thêm máy chủ" icon="pi pi-plus" :loading="mcpSaving" class="!min-h-11 !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
                   </div>
                 </form>
+                <!-- Quick-add suggestions from the tenant MCP catalog (hidden when the catalog is empty or failed to load). -->
+                <section v-if="mcpCatalog.length > 0" aria-labelledby="mcp-catalog-heading" class="mb-5">
+                  <h4 id="mcp-catalog-heading" class="text-sm font-semibold text-gray-900 mb-2">Gợi ý kết nối</h4>
+                  <div class="grid gap-2">
+                    <div v-for="entry in mcpCatalog" :key="entry.name" class="flex items-center justify-between gap-3 p-3 bg-white border border-gray-200 rounded-xl">
+                      <div class="min-w-0">
+                        <div class="text-sm font-medium text-gray-900 truncate">{{ entry.name }}</div>
+                        <div class="text-xs text-gray-500 truncate">{{ entry.description }}</div>
+                        <div class="text-xs text-gray-400 truncate">{{ entry.baseUrl }}</div>
+                      </div>
+                      <Button
+                        type="button"
+                        label="Điền nhanh"
+                        icon="pi pi-bolt"
+                        outlined
+                        :aria-label="`Điền nhanh ${entry.name} vào biểu mẫu`"
+                        class="!min-h-11 !px-3 !rounded-xl !text-sm flex-shrink-0"
+                        @click="applyCatalogEntry(entry)"
+                      />
+                    </div>
+                  </div>
+                  <p class="text-xs text-gray-400 mt-2">Điền nhanh chỉ nhập sẵn tên và URL vào biểu mẫu phía trên — bạn vẫn xem lại rồi bấm "Thêm máy chủ".</p>
+                </section>
                 <div v-if="mcpError" role="alert" class="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{{ mcpError }}</div>
                 <div v-if="mcpServers.length === 0" class="p-8 border border-gray-100 rounded-xl bg-gray-200/50 text-center">
                   <i class="pi pi-database text-4xl text-gray-600 mb-3"></i>
@@ -281,7 +316,9 @@ const isAdmin = computed(() => userRole.value === 'Admin');
 const showSettingsModal = ref(false);
 const activeTab = ref('mcp');
 interface McpServer { id: string; name: string; url: string; isActive: boolean; hasHeaders: boolean; trustReadOnlyAnnotations: boolean }
+interface McpCatalogEntry { name: string; baseUrl: string; description: string }
 const mcpServers = ref<McpServer[]>([]);
+const mcpCatalog = ref<McpCatalogEntry[]>([]);
 const mcpSaving = ref(false);
 const mcpError = ref('');
 const appError = ref('');
@@ -505,7 +542,30 @@ const saveRename = async (id: string) => {
 
 const openSettings = async () => {
   showSettingsModal.value = true;
-  if (isAdmin.value) await loadMcpServers();
+  if (isAdmin.value) {
+    void loadMcpCatalog();
+    await loadMcpServers();
+  }
+};
+
+/**
+ * Connection suggestions are a convenience: any failure to load the catalog is
+ * swallowed (console.warn only) and simply hides the "Gợi ý kết nối" section.
+ */
+const loadMcpCatalog = async () => {
+  try {
+    const response = await http.get(ApiFactory.MCP.CATALOG);
+    if (response.ok) mcpCatalog.value = await response.json();
+    else console.warn('[mcp] không thể tải danh mục gợi ý kết nối', response.status);
+  } catch (cause) {
+    console.warn('[mcp] không thể tải danh mục gợi ý kết nối', cause);
+  }
+};
+
+/** Pre-fills the create form only — the admin still reviews and submits it. */
+const applyCatalogEntry = (entry: McpCatalogEntry) => {
+  mcpForm.value.name = entry.name;
+  mcpForm.value.url = entry.baseUrl;
 };
 
 const openMobileSettings = async () => {

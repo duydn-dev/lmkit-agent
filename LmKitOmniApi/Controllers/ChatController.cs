@@ -285,20 +285,26 @@ public class ChatController : ApiControllerBase
         await Response.Body.FlushAsync(ct);
     }
 
+    /// <summary>
+    /// The caller's chat sessions, newest first. Optional <c>?projectId=</c>
+    /// narrows the list to the sessions of that project (exact match); omitting
+    /// it keeps the pre-existing full-list behavior unchanged.
+    /// </summary>
     [Authorize]
     [HttpGet("sessions")]
-    public async Task<IActionResult> GetSessions(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetSessions([FromQuery] Guid? projectId, CancellationToken cancellationToken)
     {
         if (!TryGetUserId(out var currentUserId)) return Unauthorized();
 
-        var query = new GetChatSessionsQuery { UserId = currentUserId };
+        var query = new GetChatSessionsQuery { UserId = currentUserId, ProjectId = projectId };
         var result = await _mediator.Send(query, cancellationToken);
         return Ok(result);
     }
 
     /// <summary>
     /// Creates a chat session. Accepts an OPTIONAL JSON body
-    /// <c>{ "customAgentId": guid }</c> to bind a custom agent; the body is read
+    /// <c>{ "customAgentId": guid?, "projectId": guid? }</c> to bind a custom
+    /// agent and/or create the session inside a project; the body is read
     /// manually so legacy no-body clients keep working unchanged (a [FromBody]
     /// parameter would reject empty requests with an automatic 400).
     /// </summary>
@@ -309,21 +315,31 @@ public class ChatController : ApiControllerBase
         if (!TryGetUserId(out var currentUserId)) return Unauthorized();
 
         Guid? customAgentId = null;
-        if (Request.ContentLength is > 0 && Request.HasJsonContentType())
+        Guid? projectId = null;
+        // Content-Length is absent on chunked requests (TestServer, some HTTP
+        // clients), so gate on the content type and tolerate an empty body
+        // instead of trusting the header.
+        if (Request.HasJsonContentType())
         {
-            CreateChatSessionRequest? body;
-            try
+            using var reader = new StreamReader(Request.Body);
+            var rawBody = await reader.ReadToEndAsync(cancellationToken);
+            if (!string.IsNullOrWhiteSpace(rawBody))
             {
-                body = await Request.ReadFromJsonAsync<CreateChatSessionRequest>(cancellationToken);
+                CreateChatSessionRequestBody? body;
+                try
+                {
+                    body = JsonSerializer.Deserialize<CreateChatSessionRequestBody>(rawBody, JsonSerializerOptions.Web);
+                }
+                catch (JsonException)
+                {
+                    return BadRequest(new { message = "Nội dung yêu cầu không hợp lệ." });
+                }
+                customAgentId = body?.CustomAgentId;
+                projectId = body?.ProjectId;
             }
-            catch (JsonException)
-            {
-                return BadRequest(new { message = "Nội dung yêu cầu không hợp lệ." });
-            }
-            customAgentId = body?.CustomAgentId;
         }
 
-        var command = new CreateChatSessionCommand { UserId = currentUserId, CustomAgentId = customAgentId };
+        var command = new CreateChatSessionCommand { UserId = currentUserId, CustomAgentId = customAgentId, ProjectId = projectId };
         var result = await _mediator.Send(command, cancellationToken);
         if (result.ErrorMessage is not null)
             return BadRequest(new { message = result.ErrorMessage });

@@ -18,6 +18,7 @@ public class HermesDbContext : DbContext
     public DbSet<CanvasArtifact> CanvasArtifacts { get; set; } = null!;
     public DbSet<ChatShareLink> ChatShareLinks { get; set; } = null!;
     public DbSet<CustomAgent> CustomAgents { get; set; } = null!;
+    public DbSet<Project> Projects { get; set; } = null!;
     public DbSet<ScheduledTask> ScheduledTasks { get; set; } = null!;
     public DbSet<ExternalMcpServer> ExternalMcpServers { get; set; } = null!;
     public DbSet<GraphEntity> GraphEntities { get; set; } = null!;
@@ -100,6 +101,27 @@ public class HermesDbContext : DbContext
             .WithMany()
             .HasForeignKey(s => s.CustomAgentId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Project>()
+            .HasOne(p => p.Tenant).WithMany().HasForeignKey(p => p.TenantId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<Project>()
+            .HasOne(p => p.User).WithMany().HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<Project>()
+            .HasIndex(p => new { p.TenantId, p.UserId });
+
+        // A project deletion keeps its sessions; they just leave the project.
+        modelBuilder.Entity<ChatSession>()
+            .HasOne(s => s.Project)
+            .WithMany()
+            .HasForeignKey(s => s.ProjectId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        // API keys are looked up by hash on every request — must be unique and indexed.
+        modelBuilder.Entity<TenantApiKey>()
+            .HasIndex(k => k.ApiKey)
+            .IsUnique();
+        modelBuilder.Entity<TenantApiKey>()
+            .HasIndex(k => new { k.TenantId, k.UserId });
 
         modelBuilder.Entity<CanvasArtifact>()
             .HasOne(c => c.Tenant).WithMany().HasForeignKey(c => c.TenantId).OnDelete(DeleteBehavior.Cascade);

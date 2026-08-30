@@ -1,3 +1,4 @@
+using LmKitOmniApi.Application.McpServers;
 using LmKitOmniApi.Application.McpServers.Commands;
 using LmKitOmniApi.Application.McpServers.Queries;
 using MediatR;
@@ -17,6 +18,19 @@ public sealed class McpServersController : ApiControllerBase
     {
         _mediator = mediator;
     }
+
+    /// <summary>
+    /// GET /api/mcp-servers/catalog — danh sách tĩnh các MCP server công khai được
+    /// đề xuất (xem <see cref="McpServerCatalog"/>). Chỉ là gợi ý: admin vẫn phải
+    /// thêm và xác thực từng server qua flow POST /api/mcp-servers hiện có (sandbox
+    /// SSRF, mã hóa header, trust-policy). Không gọi network. Kết hợp với
+    /// [Authorize(Roles = "Admin")] ở cấp class, endpoint vẫn chỉ dành cho Admin —
+    /// [Authorize] ở đây kéo default policy (JWT + ApiKey) vào để cả hai scheme
+    /// đều dùng được.
+    /// </summary>
+    [HttpGet("catalog")]
+    [Authorize]
+    public IActionResult Catalog() => Ok(McpServerCatalog.Entries);
 
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)

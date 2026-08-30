@@ -15,7 +15,7 @@ namespace LmKitOmniApi.Infrastructure.AI.Tools;
 
 /// <summary>
 /// Executes the concrete tool-action cases (RAG, VISION, SPEECH, NLP, WEB_SEARCH,
-/// DELEGATE, MCP proxy, SUMMARIZE) that previously lived inline in
+/// DELEGATE, MCP proxy, SUMMARIZE, CODE) that previously lived inline in
 /// <see cref="AgentOrchestrator"/>'s ExecuteActionCoreAsync switch.
 /// Mechanically extracted with zero behavior change: same guards, same
 /// ValidateOwnedPath checks, same error strings, same permission recording and
@@ -48,6 +48,7 @@ public sealed class AgentActionDispatcher
     private readonly IMediator _mediator;
     private readonly IWebSearchService _webSearch;
     private readonly IToolPermissionService _toolPermission;
+    private readonly IExecutionSandboxEngine _executionSandbox;
     private readonly UserResourceAccessService _resources;
     private readonly MultiAgentOrchestrator _multiAgent;
     private readonly McpClientService _mcpClient;
@@ -60,6 +61,7 @@ public sealed class AgentActionDispatcher
         IMediator mediator,
         IWebSearchService webSearch,
         IToolPermissionService toolPermission,
+        IExecutionSandboxEngine executionSandbox,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
         McpClientService mcpClient,
@@ -71,6 +73,7 @@ public sealed class AgentActionDispatcher
         _mediator = mediator;
         _webSearch = webSearch;
         _toolPermission = toolPermission;
+        _executionSandbox = executionSandbox;
         _resources = resources;
         _multiAgent = multiAgent;
         _mcpClient = mcpClient;
@@ -129,6 +132,10 @@ public sealed class AgentActionDispatcher
             // ── Document Summarization ──
             case "SUMMARIZE":
                 return await ExecuteSummarizationAsync(query, ct);
+
+            // ── Code Interpreter (v1: sandboxed JavaScript via Jint) ──
+            case "CODE":
+                return await ExecuteJavaScriptAsync(tenantId, userId, query, ct);
 
             default:
                 return $"Unknown action: {action}";
@@ -263,6 +270,24 @@ public sealed class AgentActionDispatcher
         await _toolPermission.RecordToolInvocationAsync(
             tenantId, userId, mcpAction, query, ct);
         return exactMcpResult.Content;
+    }
+
+    /// <summary>
+    /// CODE action: runs the query as JavaScript inside the hard-capped Jint
+    /// sandbox (no CLR, no network, no filesystem — see
+    /// <see cref="IExecutionSandboxEngine"/>). The whitelist guard at the top of
+    /// <see cref="ExecuteAsync"/> covers this case via the CODE → RunCode
+    /// mapping, and the orchestrator has already run the RBAC check on
+    /// "RunCode". Parameters are recorded as null (like NLP) because the code
+    /// snippet may embed user data; the orchestrator's audit layer still stores
+    /// the query.
+    /// </summary>
+    private async Task<string> ExecuteJavaScriptAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
+    {
+        _logger.LogInformation("🧮 Executing JavaScript in the Jint sandbox...");
+        var codeResult = await _executionSandbox.ExecuteCodeSafelyAsync(query, "javascript", ct);
+        await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "RunCode", null, ct);
+        return codeResult;
     }
 
     private async Task<string> ExecuteSummarizationAsync(string query, CancellationToken ct)
