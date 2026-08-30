@@ -152,7 +152,7 @@
               <div v-if="!msg.isTyping" class="flex items-center gap-2 mt-3 text-gray-500">
                 <button @click="copyMessage(msg.content)" class="w-11 h-11 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" aria-label="Sao chép câu trả lời"><i class="pi pi-copy text-sm"></i></button>
                 <button v-if="msg.role === 'assistant' && index === messages.length - 1 && !isGenerating" @click="regenerate" class="w-11 h-11 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors" aria-label="Tạo lại câu trả lời"><i class="pi pi-refresh text-sm"></i></button>
-                <button v-if="hasCanvasBlock(msg.content)" @click="openMessageInCanvas(msg.content)" class="min-h-11 px-2 flex items-center gap-1.5 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors text-sm" aria-label="Mở trong Canvas">
+                <button v-if="hasCanvasBlock(msg)" @click="openMessageInCanvas(msg.content)" class="min-h-11 px-2 flex items-center gap-1.5 hover:text-gray-900 hover:bg-gray-200/50 rounded-md transition-colors text-sm" aria-label="Mở trong Canvas">
                   <i class="pi pi-palette text-sm" aria-hidden="true"></i>
                   <span>Mở trong Canvas</span>
                 </button>
@@ -370,7 +370,19 @@ const toggleCanvasPanel = () => {
   canvasPanelOpen.value = !canvasPanelOpen.value;
 };
 
-const hasCanvasBlock = (content: string): boolean => largestCodeFence(content) !== null;
+// Canvas-fence detection is memoised per message so the regex runs once per
+// distinct message content instead of for every message on every render — a long
+// stream would otherwise re-scan the whole transcript on each token. Finished
+// messages have stable content and hit the cache; only the message currently
+// streaming (its content still growing) is re-scanned, and only for itself.
+const canvasFenceCache = new WeakMap<ChatMessage, { content: string; present: boolean }>();
+const hasCanvasBlock = (msg: ChatMessage): boolean => {
+  const cached = canvasFenceCache.get(msg);
+  if (cached && cached.content === msg.content) return cached.present;
+  const present = largestCodeFence(msg.content) !== null;
+  canvasFenceCache.set(msg, { content: msg.content, present });
+  return present;
+};
 
 /** "Mở trong Canvas": creates a code artifact from the message's largest fence. */
 const openMessageInCanvas = async (content: string) => {
@@ -609,6 +621,80 @@ const cancelEditing = () => {
   inputMessage.value = '';
 };
 
+// --- Session bootstrap (shared by the text and file send paths) ---------------
+
+/**
+ * Creates a chat session on demand for the first message of a brand-new chat and
+ * announces it so the sidebar refreshes. Throws when the session cannot be
+ * created; callers run this inside their guarded exchange so the failure surfaces
+ * on the pending assistant bubble exactly like any other send error.
+ */
+const ensureSession = async () => {
+  if (currentSessionId.value) return;
+  const sessionRes = await http.post(ApiFactory.CHAT.CREATE_SESSION);
+  if (!sessionRes.ok) throw new Error('Không thể tạo phiên trò chuyện.');
+  const newSession = await sessionRes.json();
+  currentSessionId.value = newSession.id;
+  window.dispatchEvent(new CustomEvent('chat-session-created'));
+};
+
+// --- Shared JSON streaming exchange (normal send + regenerate) ----------------
+
+interface StreamExchangeHooks {
+  /** readApiError fallback used when the POST itself is rejected. */
+  requestErrorFallback: string;
+  /** errorMessage fallback for a thrown transport / stream / body-factory error. */
+  errorFallback: string;
+  /** Lets a caller claim a mapped error (regenerate's "nothing to regenerate"); return true when handled. */
+  onError?: (message: string) => boolean;
+  /** Runs after a fully successful stream, before `finally` (regenerate's post-stream signal check). */
+  onComplete?: () => void;
+  /** Runs in `finally` once `isGenerating` is cleared (the normal send refreshes the sidebar). */
+  onSettled?: () => void;
+}
+
+type StreamRequestBody = Record<string, unknown>;
+
+/**
+ * Engine shared by the two JSON streaming exchanges — a normal text send and a
+ * regenerate. Both POST a body to the SSE endpoint, consume it into the pending
+ * assistant bubble with the same web-search closure, map transport / stream errors
+ * onto that bubble, and clear `isGenerating` in `finally`. The multipart/file send
+ * targets a different endpoint and keeps its own copy of this flow rather than
+ * routing through here.
+ *
+ * `body` is either a ready payload (regenerate, whose session already exists) or a
+ * factory run just before the request (the normal send creates the session on
+ * demand, then builds the payload with the resulting id); a factory that throws is
+ * reported exactly like a failed request.
+ */
+async function streamExchange(
+  body: StreamRequestBody | (() => StreamRequestBody | Promise<StreamRequestBody>),
+  assistantMsg: ChatMessage,
+  hooks: StreamExchangeHooks,
+): Promise<void> {
+  try {
+    const payload = typeof body === 'function' ? await body() : body;
+    const response = await http.post(ApiFactory.CHAT.STREAM, payload);
+    if (!response.ok) throw new Error(await readApiError(response, hooks.requestErrorFallback));
+    await consumeStream({
+      response,
+      assistantMsg,
+      scrollToBottom,
+      onWebSearch: (urls) => { assistantMsg.webUrls = urls; },
+    });
+    hooks.onComplete?.();
+  } catch (error) {
+    const message = errorMessage(error, hooks.errorFallback);
+    if (hooks.onError?.(message)) return;
+    assistantMsg.content = `Lỗi: ${message}`;
+    assistantMsg.isTyping = false;
+  } finally {
+    isGenerating.value = false;
+    hooks.onSettled?.();
+  }
+}
+
 const sendMessage = async () => {
   const content = inputMessage.value.trim();
   const editing = isEditing.value;
@@ -636,20 +722,15 @@ const sendMessage = async () => {
   const assistantMsg = messages.value[messages.value.length - 1];
   await scrollToBottom();
 
-  try {
-    if (!currentSessionId.value) {
-      const sessionRes = await http.post(ApiFactory.CHAT.CREATE_SESSION);
-      if (sessionRes.ok) {
-          const newSession = await sessionRes.json();
-          currentSessionId.value = newSession.id;
-          window.dispatchEvent(new CustomEvent('chat-session-created'));
-      } else {
-          throw new Error('Không thể tạo phiên trò chuyện.');
-      }
-    }
-    let response: Response;
+  // Both paths refresh the sidebar (new session / updated preview) once settled.
+  const onSettled = () => window.dispatchEvent(new CustomEvent('chat-session-created'));
 
-    if (hasFiles) {
+  if (hasFiles) {
+    // Multipart/file send keeps its own path: it builds a FormData request for a
+    // different endpoint, so it owns its stream + error handling instead of going
+    // through streamExchange.
+    try {
+      await ensureSession();
       // Multipart: send with files
       const formData = new FormData();
       formData.append('sessionId', currentSessionId.value || '00000000-0000-0000-0000-000000000000');
@@ -663,34 +744,43 @@ const sendMessage = async () => {
       }
       attachedFiles.value = []; // Clear after sending
       saveAttachmentsToKnowledge.value = false;
-      response = await http.post(ApiFactory.CHAT.STREAM_WITH_FILES, formData);
-    } else {
-      // JSON: text only
-      const payload = {
+      const response = await http.post(ApiFactory.CHAT.STREAM_WITH_FILES, formData);
+      if (!response.ok) throw new Error(await readApiError(response, 'Yêu cầu chat thất bại'));
+      await consumeStream({
+        response,
+        assistantMsg,
+        scrollToBottom,
+        onWebSearch: (urls) => { assistantMsg.webUrls = urls; },
+      });
+    } catch (error) {
+      assistantMsg.content = `Lỗi: ${errorMessage(error, 'Không thể tạo câu trả lời.')}`;
+      assistantMsg.isTyping = false;
+    } finally {
+      isGenerating.value = false;
+      onSettled();
+    }
+    return;
+  }
+
+  // Text-only send: create the session on demand, then stream the JSON exchange.
+  await streamExchange(
+    async () => {
+      await ensureSession();
+      return {
         SessionId: currentSessionId.value || '00000000-0000-0000-0000-000000000000',
         Message: content,
         ModelId: null,
         enableWebSearch: webSearchEnabled.value,
         ...(editing ? { replaceLastExchange: true } : {})
       };
-      response = await http.post(ApiFactory.CHAT.STREAM, payload);
+    },
+    assistantMsg,
+    {
+      requestErrorFallback: 'Yêu cầu chat thất bại',
+      errorFallback: 'Không thể tạo câu trả lời.',
+      onSettled,
     }
-
-    if (!response.ok) throw new Error(await readApiError(response, 'Yêu cầu chat thất bại'));
-
-    await consumeStream({
-      response,
-      assistantMsg,
-      scrollToBottom,
-      onWebSearch: (urls) => { assistantMsg.webUrls = urls; },
-    });
-  } catch (error) {
-    assistantMsg.content = `Lỗi: ${errorMessage(error, 'Không thể tạo câu trả lời.')}`;
-    assistantMsg.isTyping = false;
-  } finally {
-    isGenerating.value = false;
-    window.dispatchEvent(new CustomEvent('chat-session-created'));
-  }
+  );
 };
 
 // --- Regenerate the last answer ----------------------------------------------
@@ -719,36 +809,32 @@ const regenerate = async () => {
     toast.add({ severity: 'warn', summary: 'Không thể tạo lại', detail: `${NO_REGENERATE_TARGET}.`, life: 5000 });
   };
 
-  try {
-    const response = await http.post(ApiFactory.CHAT.STREAM, {
+  await streamExchange(
+    {
       SessionId: currentSessionId.value,
       Message: '',
       ModelId: null,
       regenerate: true,
-      enableWebSearch: webSearchEnabled.value
-    });
-    if (!response.ok) throw new Error(await readApiError(response, 'Yêu cầu tạo lại thất bại'));
-
-    await consumeStream({
-      response,
-      assistantMsg,
-      scrollToBottom,
-      onWebSearch: (urls) => { assistantMsg.webUrls = urls; },
-    });
-
-    // The "nothing to regenerate" signal may arrive as plain stream content.
-    if (assistantMsg.content.trim() === `[${NO_REGENERATE_TARGET}]`) warnNothingToRegenerate();
-  } catch (error) {
-    const message = errorMessage(error, 'Không thể tạo lại câu trả lời.');
-    if (message.includes(NO_REGENERATE_TARGET)) {
-      warnNothingToRegenerate();
-    } else {
-      assistantMsg.content = `Lỗi: ${message}`;
-      assistantMsg.isTyping = false;
-    }
-  } finally {
-    isGenerating.value = false;
-  }
+      enableWebSearch: webSearchEnabled.value,
+    },
+    assistantMsg,
+    {
+      requestErrorFallback: 'Yêu cầu tạo lại thất bại',
+      errorFallback: 'Không thể tạo lại câu trả lời.',
+      // The "nothing to regenerate" signal may arrive as a thrown error...
+      onError: (message) => {
+        if (message.includes(NO_REGENERATE_TARGET)) {
+          warnNothingToRegenerate();
+          return true;
+        }
+        return false;
+      },
+      // ...or as plain stream content.
+      onComplete: () => {
+        if (assistantMsg.content.trim() === `[${NO_REGENERATE_TARGET}]`) warnNothingToRegenerate();
+      },
+    },
+  );
 };
 
 // --- Share / revoke public link -----------------------------------------------

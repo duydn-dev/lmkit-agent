@@ -46,6 +46,28 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         _logger = logger;
     }
 
+    // The two mutually-exclusive wire flags (StreamChatCommand.Regenerate /
+    // ReplaceLastExchange, which the controller rejects with a 400 when both are
+    // set) collapse to a single internal mode, so the invalid both-set state is
+    // never representable past the top of Handle.
+    private enum ChatSendMode
+    {
+        // Normal send: store the incoming message and answer it.
+        Normal,
+        // Re-run the session's last user turn; the incoming message is ignored.
+        Regenerate,
+        // Edit-last: drop the last exchange, then send like Normal.
+        EditLast
+    }
+
+    // Small result of the regenerate/edit-last history rewrite handed back to
+    // Handle, which owns the iterator-only "nothing to regenerate" early return.
+    private readonly record struct ResendRewrite(
+        bool NothingToRegenerate,
+        string EffectiveMessage,
+        DateTime? RegeneratedUserCreatedAt,
+        DateTime? HistoryCutoffUtc);
+
     public async IAsyncEnumerable<string> Handle(StreamChatCommand request, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         // Intentionally tracked: this entity is mutated below (Title auto-generation,
@@ -71,7 +93,13 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         var model = await _modelManager.GetChatModelAsync(ct: cancellationToken);
 
         var cacheKey = $"ChatHistory:{request.SessionId}";
-        var isHistoryRewrite = request.Regenerate || request.ReplaceLastExchange;
+
+        // Collapse the two mutually-exclusive wire flags into one internal mode
+        // (the controller 400s the both-set combination before we get here), so the
+        // history-rewrite logic below is driven off `mode` alone.
+        var mode = request.Regenerate ? ChatSendMode.Regenerate
+            : request.ReplaceLastExchange ? ChatSendMode.EditLast
+            : ChatSendMode.Normal;
 
         // The user turn actually sent to the model. For regenerate this becomes the
         // session's last stored user message; otherwise it is the incoming message.
@@ -79,105 +107,23 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         DateTime? regeneratedUserCreatedAt = null;
         DateTime? historyCutoffUtc = null;
 
-        if (isHistoryRewrite)
+        if (mode != ChatSendMode.Normal)
         {
-            var lastUserMessage = await _dbContext.ChatMessages
-                .Where(m => m.ChatSessionId == request.SessionId && m.Role == "user")
-                .OrderByDescending(m => m.CreatedAt)
-                .FirstOrDefaultAsync(cancellationToken);
+            var rewrite = await RewriteHistoryForResendAsync(request, mode, cacheKey, cancellationToken);
 
-            if (request.Regenerate && lastUserMessage == null)
+            if (rewrite.NothingToRegenerate)
             {
                 // Nothing to re-run; surface a friendly notice instead of an exception.
                 yield return "[Không có tin nhắn nào để tạo lại]";
                 yield break;
             }
 
-            if (lastUserMessage != null)
-            {
-                // Drop every assistant reply produced after the last user turn; for
-                // edit-last (ReplaceLastExchange) also drop that user turn itself.
-                var trailingAssistantMessages = await _dbContext.ChatMessages
-                    .Where(m => m.ChatSessionId == request.SessionId
-                        && m.Role == "assistant"
-                        && m.CreatedAt > lastUserMessage.CreatedAt)
-                    .ToListAsync(cancellationToken);
-                _dbContext.ChatMessages.RemoveRange(trailingAssistantMessages);
-
-                if (request.ReplaceLastExchange)
-                {
-                    _dbContext.ChatMessages.Remove(lastUserMessage);
-                }
-
-                await _dbContext.SaveChangesAsync(cancellationToken);
-            }
-
-            // Invalidate the cached history BEFORE building it so the deleted
-            // exchange can never be replayed from cache; the history is re-read
-            // fresh from the DB (post-deletion) below.
-            await _cache.RemoveAsync(cacheKey, cancellationToken);
-
-            if (request.Regenerate)
-            {
-                effectiveMessage = lastUserMessage!.Content;
-                regeneratedUserCreatedAt = lastUserMessage.CreatedAt;
-                // The re-run user turn is passed to the orchestrator as the query,
-                // so exclude it (and anything after it) from the loaded history —
-                // mirroring a normal send, where the pending message is not yet stored.
-                historyCutoffUtc = lastUserMessage.CreatedAt;
-            }
+            effectiveMessage = rewrite.EffectiveMessage;
+            regeneratedUserCreatedAt = rewrite.RegeneratedUserCreatedAt;
+            historyCutoffUtc = rewrite.HistoryCutoffUtc;
         }
 
-        List<HistoryMessage>? cachedMessages = null;
-        if (!isHistoryRewrite)
-        {
-            var cachedHistory = await _cache.GetStringAsync(cacheKey, cancellationToken);
-            if (!string.IsNullOrEmpty(cachedHistory))
-            {
-                try
-                {
-                    cachedMessages = JsonSerializer.Deserialize<List<HistoryMessage>>(cachedHistory);
-                }
-                catch { /* Ignore serialization errors and fallback to DB */ }
-            }
-        }
-
-        List<HistoryMessage> historyMessages;
-        if (cachedMessages != null)
-        {
-            historyMessages = cachedMessages;
-        }
-        else
-        {
-            // Load messages with absolute cap (prevents loading 10000+ messages).
-            // Read-only: rows are only copied into HistoryMessage below, never
-            // updated, so skip change tracking.
-            var messagesQuery = _dbContext.ChatMessages
-                .AsNoTracking()
-                .Where(m => m.ChatSessionId == request.SessionId);
-
-            if (historyCutoffUtc.HasValue)
-            {
-                var cutoffUtc = historyCutoffUtc.Value;
-                messagesQuery = messagesQuery.Where(m => m.CreatedAt < cutoffUtc);
-            }
-
-            var dbMessages = await messagesQuery
-                .OrderByDescending(m => m.CreatedAt) // Load newest first
-                .Take(MaxMessagesToLoad)
-                .OrderBy(m => m.CreatedAt) // Then reorder chronologically
-                .ToListAsync(cancellationToken);
-
-            // Token management: apply sliding window with summary
-            historyMessages = dbMessages.Select(m => new HistoryMessage
-            {
-                Role = m.Role,
-                Content = m.Content,
-                CreatedAt = m.CreatedAt
-            }).ToList();
-        }
-
-        var trimResult = await _tokenManagement.TrimHistoryAsync(historyMessages, HistoryTokenBudget, cancellationToken);
+        var (historyMessages, trimResult) = await LoadHistoryAsync(request, mode, cacheKey, historyCutoffUtc, cancellationToken);
 
         // Build ChatHistory with trimmed messages
         var history = new ChatHistory(model);
@@ -191,7 +137,7 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         // Save user message. Regenerate re-runs the already stored last user turn,
         // so no new user row is inserted in that mode.
         ChatMessage? userMsg = null;
-        if (!request.Regenerate)
+        if (mode != ChatSendMode.Regenerate)
         {
             userMsg = new ChatMessage
             {
@@ -222,66 +168,7 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         // re-run last user message when regenerating) — used for the cache entry.
         var userTurnCreatedAt = userMsg?.CreatedAt ?? regeneratedUserCreatedAt!.Value;
 
-        // ── Custom-agent options (Gems-style persona/tool/knowledge scope) ──
-        // A bound agent must still be visible to the caller (owner or tenant-shared);
-        // if it is not (unshared or deleted since binding), the request proceeds
-        // WITHOUT it — byte-identical to an unbound session.
-        CustomAgent? customAgent = null;
-        if (session.CustomAgentId is Guid customAgentId)
-        {
-            customAgent = await _dbContext.CustomAgents
-                .AsNoTracking()
-                .FirstOrDefaultAsync(a => a.Id == customAgentId
-                    && a.TenantId == request.TenantId
-                    && (a.OwnerUserId == request.UserId || a.IsSharedWithTenant),
-                    cancellationToken);
-        }
-
-        AgentRequestOptions options;
-        if (customAgent is null)
-        {
-            options = new AgentRequestOptions { AllowWebSearch = request.EnableWebSearch };
-        }
-        else
-        {
-            var allowedTools = CustomAgentRules.ParseToolsCsv(customAgent.AllowedToolsCsv);
-            options = new AgentRequestOptions
-            {
-                // The user-facing toggle composes with the agent whitelist: web
-                // search runs only when the request enables it AND the agent
-                // either has no whitelist or whitelists SearchWeb.
-                AllowWebSearch = request.EnableWebSearch
-                    && (allowedTools is null || allowedTools.Contains("SearchWeb", StringComparer.OrdinalIgnoreCase)),
-                PersonaPrompt = customAgent.PersonaPrompt,
-                AllowedTools = allowedTools,
-                KnowledgeDocumentIds = CustomAgentRules.ParseDocumentIdsCsv(customAgent.KnowledgeDocumentIdsCsv)
-            };
-        }
-
-        // ── Project instructions (ChatGPT-Projects style shared context) ──
-        // A session inside a project prepends the project's instructions to the
-        // persona prompt. Tenant+owner scoped; a missing/foreign project or
-        // empty/whitespace instructions means the request proceeds WITHOUT them —
-        // and with no project anywhere, `options` is left untouched, so behavior
-        // stays byte-identical to a project-less session.
-        if (session.ProjectId is Guid sessionProjectId)
-        {
-            var projectInstructions = await _dbContext.Projects
-                .AsNoTracking()
-                .Where(p => p.Id == sessionProjectId
-                    && p.TenantId == request.TenantId
-                    && p.UserId == request.UserId)
-                .Select(p => p.Instructions)
-                .FirstOrDefaultAsync(cancellationToken);
-
-            if (!string.IsNullOrWhiteSpace(projectInstructions))
-            {
-                options = options with
-                {
-                    PersonaPrompt = ProjectRules.ComposePersonaPrompt(projectInstructions, options.PersonaPrompt)
-                };
-            }
-        }
+        var options = await BuildAgentOptionsAsync(request, session, cancellationToken);
 
         var fullResponseBuilder = new System.Text.StringBuilder();
         ChatMessage? botMsg = null;
@@ -383,6 +270,217 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
                 }
             }
         }
+    }
+
+    // ── Regenerate / edit-last history rewrite ────────────────────────────
+    // Finds the session's last user turn and drops the trailing assistant replies
+    // (and, for edit-last, that user turn too), flushes the deletes, then
+    // invalidates the cached history BEFORE it is rebuilt so the removed exchange
+    // can never be replayed from cache. Returns the effective user message and the
+    // timestamps that drive the reload. In Regenerate mode with no user turn to
+    // re-run it returns NothingToRegenerate without touching the DB or cache, and
+    // Handle (the async iterator) emits the friendly notice and stops.
+    private async Task<ResendRewrite> RewriteHistoryForResendAsync(
+        StreamChatCommand request,
+        ChatSendMode mode,
+        string cacheKey,
+        CancellationToken cancellationToken)
+    {
+        var lastUserMessage = await _dbContext.ChatMessages
+            .Where(m => m.ChatSessionId == request.SessionId && m.Role == "user")
+            .OrderByDescending(m => m.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (mode == ChatSendMode.Regenerate && lastUserMessage == null)
+        {
+            // Nothing to re-run; Handle surfaces a friendly notice instead of an exception.
+            return new ResendRewrite(true, request.Message, null, null);
+        }
+
+        if (lastUserMessage != null)
+        {
+            // Drop every assistant reply produced after the last user turn; for
+            // edit-last (ReplaceLastExchange) also drop that user turn itself.
+            var trailingAssistantMessages = await _dbContext.ChatMessages
+                .Where(m => m.ChatSessionId == request.SessionId
+                    && m.Role == "assistant"
+                    && m.CreatedAt > lastUserMessage.CreatedAt)
+                .ToListAsync(cancellationToken);
+            _dbContext.ChatMessages.RemoveRange(trailingAssistantMessages);
+
+            if (mode == ChatSendMode.EditLast)
+            {
+                _dbContext.ChatMessages.Remove(lastUserMessage);
+            }
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        // Invalidate the cached history BEFORE building it so the deleted
+        // exchange can never be replayed from cache; the history is re-read
+        // fresh from the DB (post-deletion) by LoadHistoryAsync.
+        await _cache.RemoveAsync(cacheKey, cancellationToken);
+
+        var effectiveMessage = request.Message;
+        DateTime? regeneratedUserCreatedAt = null;
+        DateTime? historyCutoffUtc = null;
+
+        if (mode == ChatSendMode.Regenerate)
+        {
+            effectiveMessage = lastUserMessage!.Content;
+            regeneratedUserCreatedAt = lastUserMessage.CreatedAt;
+            // The re-run user turn is passed to the orchestrator as the query,
+            // so exclude it (and anything after it) from the loaded history —
+            // mirroring a normal send, where the pending message is not yet stored.
+            historyCutoffUtc = lastUserMessage.CreatedAt;
+        }
+
+        return new ResendRewrite(false, effectiveMessage, regeneratedUserCreatedAt, historyCutoffUtc);
+    }
+
+    // ── Conversation-history load ─────────────────────────────────────────
+    // Prefers the 2h cache snapshot for a normal send; a regenerate/edit-last
+    // request (whose cache RewriteHistoryForResendAsync already invalidated) and a
+    // cache miss both fall through to a capped, read-only DB read honouring the
+    // optional regenerate cutoff. The sliding-window token trim runs last. Returns
+    // the raw history list (the cache writer extends it after streaming) alongside
+    // the trim result.
+    private async Task<(List<HistoryMessage> HistoryMessages, TrimmedHistoryResult TrimResult)> LoadHistoryAsync(
+        StreamChatCommand request,
+        ChatSendMode mode,
+        string cacheKey,
+        DateTime? historyCutoffUtc,
+        CancellationToken cancellationToken)
+    {
+        List<HistoryMessage>? cachedMessages = null;
+        if (mode == ChatSendMode.Normal)
+        {
+            var cachedHistory = await _cache.GetStringAsync(cacheKey, cancellationToken);
+            if (!string.IsNullOrEmpty(cachedHistory))
+            {
+                try
+                {
+                    cachedMessages = JsonSerializer.Deserialize<List<HistoryMessage>>(cachedHistory);
+                }
+                catch { /* Ignore serialization errors and fallback to DB */ }
+            }
+        }
+
+        List<HistoryMessage> historyMessages;
+        if (cachedMessages != null)
+        {
+            historyMessages = cachedMessages;
+        }
+        else
+        {
+            // Load messages with absolute cap (prevents loading 10000+ messages).
+            // Read-only: rows are only copied into HistoryMessage below, never
+            // updated, so skip change tracking.
+            var messagesQuery = _dbContext.ChatMessages
+                .AsNoTracking()
+                .Where(m => m.ChatSessionId == request.SessionId);
+
+            if (historyCutoffUtc.HasValue)
+            {
+                var cutoffUtc = historyCutoffUtc.Value;
+                messagesQuery = messagesQuery.Where(m => m.CreatedAt < cutoffUtc);
+            }
+
+            var dbMessages = await messagesQuery
+                .OrderByDescending(m => m.CreatedAt) // Load newest first
+                .Take(MaxMessagesToLoad)
+                .OrderBy(m => m.CreatedAt) // Then reorder chronologically
+                .ToListAsync(cancellationToken);
+
+            // Token management: apply sliding window with summary
+            historyMessages = dbMessages.Select(m => new HistoryMessage
+            {
+                Role = m.Role,
+                Content = m.Content,
+                CreatedAt = m.CreatedAt
+            }).ToList();
+        }
+
+        var trimResult = await _tokenManagement.TrimHistoryAsync(historyMessages, HistoryTokenBudget, cancellationToken);
+        return (historyMessages, trimResult);
+    }
+
+    // ── Custom-agent + project request options ────────────────────────────
+    // Composes the per-request AgentRequestOptions from the session's bound custom
+    // agent (persona / tool whitelist / knowledge scope, re-validated as still
+    // visible to the caller) and then the enclosing project's instructions
+    // (prepended to the persona). A missing/foreign/deleted agent or project leaves
+    // the corresponding layer untouched, so an unbound, project-less session yields
+    // byte-identical options to an agentless request. The agent and project reads
+    // stay two round-trips: they hit different tables under independent presence
+    // guards, and the project composition consumes the agent's persona.
+    private async Task<AgentRequestOptions> BuildAgentOptionsAsync(
+        StreamChatCommand request,
+        ChatSession session,
+        CancellationToken cancellationToken)
+    {
+        // ── Custom-agent options (Gems-style persona/tool/knowledge scope) ──
+        // A bound agent must still be visible to the caller (owner or tenant-shared);
+        // if it is not (unshared or deleted since binding), the request proceeds
+        // WITHOUT it — byte-identical to an unbound session.
+        CustomAgent? customAgent = null;
+        if (session.CustomAgentId is Guid customAgentId)
+        {
+            customAgent = await _dbContext.CustomAgents
+                .AsNoTracking()
+                .FirstOrDefaultAsync(a => a.Id == customAgentId
+                    && a.TenantId == request.TenantId
+                    && (a.OwnerUserId == request.UserId || a.IsSharedWithTenant),
+                    cancellationToken);
+        }
+
+        AgentRequestOptions options;
+        if (customAgent is null)
+        {
+            options = new AgentRequestOptions { AllowWebSearch = request.EnableWebSearch };
+        }
+        else
+        {
+            var allowedTools = CustomAgentRules.ParseToolsCsv(customAgent.AllowedToolsCsv);
+            options = new AgentRequestOptions
+            {
+                // The user-facing toggle composes with the agent whitelist: web
+                // search runs only when the request enables it AND the agent
+                // either has no whitelist or whitelists SearchWeb.
+                AllowWebSearch = request.EnableWebSearch
+                    && (allowedTools is null || allowedTools.Contains("SearchWeb", StringComparer.OrdinalIgnoreCase)),
+                PersonaPrompt = customAgent.PersonaPrompt,
+                AllowedTools = allowedTools,
+                KnowledgeDocumentIds = CustomAgentRules.ParseDocumentIdsCsv(customAgent.KnowledgeDocumentIdsCsv)
+            };
+        }
+
+        // ── Project instructions (ChatGPT-Projects style shared context) ──
+        // A session inside a project prepends the project's instructions to the
+        // persona prompt. Tenant+owner scoped; a missing/foreign project or
+        // empty/whitespace instructions means the request proceeds WITHOUT them —
+        // and with no project anywhere, `options` is left untouched, so behavior
+        // stays byte-identical to a project-less session.
+        if (session.ProjectId is Guid sessionProjectId)
+        {
+            var projectInstructions = await _dbContext.Projects
+                .AsNoTracking()
+                .Where(p => p.Id == sessionProjectId
+                    && p.TenantId == request.TenantId
+                    && p.UserId == request.UserId)
+                .Select(p => p.Instructions)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (!string.IsNullOrWhiteSpace(projectInstructions))
+            {
+                options = options with
+                {
+                    PersonaPrompt = ProjectRules.ComposePersonaPrompt(projectInstructions, options.PersonaPrompt)
+                };
+            }
+        }
+
+        return options;
     }
 
     // ── Orchestrator status-marker stripping ──────────────────────────────

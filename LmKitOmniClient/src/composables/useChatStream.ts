@@ -163,6 +163,19 @@ export function useChatStream() {
 
     assistantMsg.isTyping = false;
 
+    // Auto-scroll is coalesced to at most one call per animation frame, so a fast
+    // token stream triggers a single layout flush per frame instead of one per SSE
+    // event. The concrete scroll — and its smooth / reduced-motion behaviour — still
+    // lives in the caller-supplied `scrollToBottom`; only its cadence changes here.
+    let scrollFrame: number | null = null;
+    const scheduleScroll = (): void => {
+      if (scrollFrame !== null) return;
+      scrollFrame = requestAnimationFrame(() => {
+        scrollFrame = null;
+        void scrollToBottom();
+      });
+    };
+
     const parser = new ChatSseParser();
     let streamFinished = false;
     const streamId = ++streamSeq;
@@ -194,24 +207,28 @@ export function useChatStream() {
               assistantMsg.thinkingSteps = [];
             }
             assistantMsg.thinkingSteps.push(event.value);
-            await scrollToBottom();
+            scheduleScroll();
             continue;
           }
           if (event.type === 'approval') {
             assistantMsg.hitlTaskId = event.value;
-            await scrollToBottom();
+            scheduleScroll();
             streamFinished = true;
             break;
           }
           if (event.type === 'agent-log') continue;
 
           assistantMsg.content += (event as Extract<ChatStreamEvent, { type: 'content' }>).value;
-          await scrollToBottom();
+          scheduleScroll();
         }
         if (done) break;
       }
       if (streamFinished) await reader.cancel();
+      // The per-frame throttle may leave a scroll pending; land the final
+      // end-of-stream position exactly, as the un-throttled version did.
+      await scrollToBottom();
     } finally {
+      if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
       if (streamId === streamSeq) isStreaming.value = false;
       localController.signal.removeEventListener('abort', onAbort);
       if (controller === localController) controller = null;
