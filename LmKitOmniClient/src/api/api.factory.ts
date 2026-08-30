@@ -20,6 +20,9 @@ export const ApiFactory = {
   },
   DOCUMENT: {
     BASE: '/api/document',
+    // Only the caller's own documents (admins included) — for the custom-agent
+    // knowledge picker, whose pinning is validated owner-only server-side.
+    OWNED: '/api/document?ownedOnly=true',
     UPLOAD: '/api/document/upload'
   },
   AGENTS: {

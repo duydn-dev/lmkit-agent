@@ -7,6 +7,13 @@ public class ListDocumentsQuery : IRequest<List<DocumentListItemDto>>
     public Guid TenantId { get; set; }
     public Guid UserId { get; set; }
     public bool IsAdmin { get; set; }
+
+    /// <summary>
+    /// When true, return only the caller's OWN documents even for admins. Used by
+    /// the custom-agent knowledge picker, whose pinning is validated owner-only —
+    /// so the picker must not offer teammates' documents an admin cannot pin.
+    /// </summary>
+    public bool OwnedOnly { get; set; }
 }
 
 /// <summary>

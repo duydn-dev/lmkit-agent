@@ -285,7 +285,9 @@ const ensureFormOptions = async () => {
   try {
     const [toolsResponse, docsResponse] = await Promise.all([
       http.get(ApiFactory.AGENTS.TOOL_CATALOG),
-      http.get(ApiFactory.DOCUMENT.BASE)
+      // Own documents only: pinning is validated owner-only server-side, so an
+      // admin must not be offered teammates' documents they cannot pin.
+      http.get(ApiFactory.DOCUMENT.OWNED)
     ]);
     if (toolsResponse.ok) toolCatalog.value = await toolsResponse.json();
     if (docsResponse.ok) documents.value = await docsResponse.json();

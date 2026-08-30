@@ -37,7 +37,7 @@ public class DocumentController : ApiControllerBase
 
     [Authorize]
     [HttpGet]
-    public async Task<IActionResult> GetDocuments()
+    public async Task<IActionResult> GetDocuments([FromQuery] bool ownedOnly = false)
     {
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
         var isAdmin = User.IsInRole("Admin");
@@ -46,7 +46,8 @@ public class DocumentController : ApiControllerBase
         {
             TenantId = tenantId,
             UserId = userId,
-            IsAdmin = isAdmin
+            IsAdmin = isAdmin,
+            OwnedOnly = ownedOnly
         }, HttpContext.RequestAborted);
 
         return Ok(docs);

@@ -20,7 +20,7 @@ public class ListDocumentsQueryHandler : IRequestHandler<ListDocumentsQuery, Lis
             .Include(d => d.User)
             .Where(d => d.User != null
                 && d.User.TenantId == request.TenantId
-                && (request.IsAdmin || d.UserId == request.UserId))
+                && ((request.IsAdmin && !request.OwnedOnly) || d.UserId == request.UserId))
             .OrderByDescending(d => d.UploadedAt)
             .Select(d => new DocumentListItemDto
             {
