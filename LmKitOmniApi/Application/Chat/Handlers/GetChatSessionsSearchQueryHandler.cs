@@ -37,16 +37,7 @@ namespace LmKitOmniApi.Application.Chat.Handlers
             {
                 return await scopedSessions
                     .OrderByDescending(s => s.CreatedAt)
-                    .Select(s => new ChatSessionDto
-                    {
-                        Id = s.Id,
-                        Title = s.Title,
-                        CreatedAt = s.CreatedAt,
-                        CustomAgentId = s.CustomAgentId,
-                        AgentName = s.CustomAgent != null ? s.CustomAgent.Name : null,
-                        AgentIcon = s.CustomAgent != null ? s.CustomAgent.Icon : null,
-                        ProjectId = s.ProjectId
-                    })
+                    .Select(ChatSessionProjections.ToDto)
                     .ToListAsync(cancellationToken);
             }
 
@@ -57,16 +48,7 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                     || s.Messages.Any(m => m.Content.ToLower().Contains(term)))
                 .OrderByDescending(s => s.CreatedAt)
                 .Take(MaxResults)
-                .Select(s => new ChatSessionDto
-                {
-                    Id = s.Id,
-                    Title = s.Title,
-                    CreatedAt = s.CreatedAt,
-                    CustomAgentId = s.CustomAgentId,
-                    AgentName = s.CustomAgent != null ? s.CustomAgent.Name : null,
-                    AgentIcon = s.CustomAgent != null ? s.CustomAgent.Icon : null,
-                    ProjectId = s.ProjectId
-                })
+                .Select(ChatSessionProjections.ToDto)
                 .ToListAsync(cancellationToken);
         }
     }

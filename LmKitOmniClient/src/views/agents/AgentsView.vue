@@ -196,6 +196,7 @@ import { useRouter } from 'vue-router';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
+import { formatDate } from '@/utils/date';
 
 interface CustomAgent {
   id: string;
@@ -409,12 +410,6 @@ const startChatWithAgent = async (agent: CustomAgent) => {
   } finally {
     chatStartingId.value = null;
   }
-};
-
-const formatDate = (iso: string): string => {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString('vi-VN', { year: 'numeric', month: '2-digit', day: '2-digit' });
 };
 
 onMounted(() => {

@@ -35,16 +35,7 @@ public class GetProjectSessionsQueryHandler : IRequestHandler<GetProjectSessions
                 && session.TenantId == request.TenantId
                 && session.UserId == request.UserId)
             .OrderByDescending(session => session.CreatedAt)
-            .Select(session => new ChatSessionDto
-            {
-                Id = session.Id,
-                Title = session.Title,
-                CreatedAt = session.CreatedAt,
-                CustomAgentId = session.CustomAgentId,
-                AgentName = session.CustomAgent != null ? session.CustomAgent.Name : null,
-                AgentIcon = session.CustomAgent != null ? session.CustomAgent.Icon : null,
-                ProjectId = session.ProjectId
-            })
+            .Select(ChatSessionProjections.ToDto)
             .ToListAsync(cancellationToken);
     }
 }

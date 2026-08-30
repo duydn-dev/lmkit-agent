@@ -76,6 +76,7 @@ public class ToolPermissionService : IToolPermissionService
 
     private const int DefaultRateLimit = 20; // per minute
     private const int RateLimitWindowMinutes = 1;
+    private static readonly TimeSpan QuotaWindow = TimeSpan.FromMinutes(RateLimitWindowMinutes);
 
     public ToolPermissionService(
         ILogger<ToolPermissionService> logger,
@@ -173,8 +174,6 @@ public class ToolPermissionService : IToolPermissionService
     }
 
     // ── Redis-backed sliding window (atomic across replicas) ──
-
-    private static readonly TimeSpan QuotaWindow = TimeSpan.FromMinutes(RateLimitWindowMinutes);
 
     /// <returns>The in-window invocation count, or null when Redis is not configured/available.</returns>
     private async Task<long?> TryCountRecentInvocationsInRedisAsync(string rateLimitKey)

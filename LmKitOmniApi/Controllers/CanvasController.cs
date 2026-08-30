@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using LmKitOmniApi.Application.Canvas.Commands;
 using LmKitOmniApi.Application.Canvas.DTOs;
 using LmKitOmniApi.Application.Canvas.Queries;
+using LmKitOmniApi.Domain.Entities;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -21,7 +22,7 @@ namespace LmKitOmniApi.Controllers;
 public sealed class CanvasController : ApiControllerBase
 {
     // Caps mirror the CanvasArtifact column limits and the fixed API contract.
-    private const int TitleMaxLength = 120;
+    private const int TitleMaxLength = CanvasArtifact.TitleMaxLength;
     private const int LanguageMaxLength = 40;
     private const int ContentMaxLength = 200_000;
     private static readonly string[] AllowedKinds = ["markdown", "code", "text"];

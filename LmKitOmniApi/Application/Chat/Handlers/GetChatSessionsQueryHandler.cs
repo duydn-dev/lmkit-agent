@@ -31,16 +31,7 @@ namespace LmKitOmniApi.Application.Chat.Handlers
 
             var sessions = await scopedSessions
                 .OrderByDescending(x => x.CreatedAt)
-                .Select(x => new ChatSessionDto
-                {
-                    Id = x.Id,
-                    Title = x.Title,
-                    CreatedAt = x.CreatedAt,
-                    CustomAgentId = x.CustomAgentId,
-                    AgentName = x.CustomAgent != null ? x.CustomAgent.Name : null,
-                    AgentIcon = x.CustomAgent != null ? x.CustomAgent.Icon : null,
-                    ProjectId = x.ProjectId
-                })
+                .Select(ChatSessionProjections.ToDto)
                 .ToListAsync(cancellationToken);
 
             return sessions;

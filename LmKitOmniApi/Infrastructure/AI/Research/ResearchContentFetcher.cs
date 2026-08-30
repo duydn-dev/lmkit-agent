@@ -26,7 +26,7 @@ namespace LmKitOmniApi.Infrastructure.AI.Research;
 /// Every per-URL failure is logged and surfaced as <c>null</c> — never fatal to
 /// the research run.
 /// </summary>
-public class ResearchContentFetcher
+public sealed class ResearchContentFetcher
 {
     private const int MaxTitleChars = 200;
     private const int ReadBufferBytes = 16 * 1024;

@@ -17,7 +17,7 @@ namespace LmKitOmniApi.Controllers;
 [ApiController]
 [Route("api/share")]
 [Authorize]
-public class ShareController : ApiControllerBase
+public sealed class ShareController : ApiControllerBase
 {
     private readonly IMediator _mediator;
 

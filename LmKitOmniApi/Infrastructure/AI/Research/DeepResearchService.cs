@@ -39,7 +39,7 @@ namespace LmKitOmniApi.Infrastructure.AI.Research;
 /// the same C1 pattern the orchestrator uses — never on the thread pool.
 /// Register as SCOPED (owns no state; depends on the scoped HermesDbContext).
 /// </summary>
-public class DeepResearchService
+public sealed class DeepResearchService
 {
     private const string ModelUnavailableMessage =
         "⚠️ Mô hình AI hiện chưa sẵn sàng (chưa tải được model hoặc thiếu giấy phép LM-Kit). Vui lòng thử lại sau ít phút.";
@@ -61,6 +61,8 @@ public class DeepResearchService
     private readonly ResearchContentFetcher _contentFetcher;
     private readonly HermesDbContext _dbContext;
     private readonly ILogger<DeepResearchService> _logger;
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public DeepResearchService(
         LmModelManager modelManager,
@@ -452,8 +454,6 @@ public class DeepResearchService
         }
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-
     private async Task<ResearchSource?> FetchSafelyAsync(
         string url, CancellationToken ct, CancellationToken requestCt)
     {
@@ -559,7 +559,7 @@ public class DeepResearchService
                 TenantId = tenantId,
                 UserId = userId,
                 ChatSessionId = null,
-                Title = Truncate($"Nghiên cứu: {query}", 120),
+                Title = Truncate($"Nghiên cứu: {query}", CanvasArtifact.TitleMaxLength),
                 Kind = "markdown",
                 Language = null,
                 Content = report,

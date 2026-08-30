@@ -31,8 +31,8 @@ public class UpdateCustomAgentCommandHandler : IRequestHandler<UpdateCustomAgent
             return SaveCustomAgentResult.ValidationFailed(validationError);
 
         agent.Name = request.Name.Trim();
-        agent.Description = NormalizeOptional(request.Description);
-        agent.Icon = NormalizeOptional(request.Icon);
+        agent.Description = CustomAgentRules.NormalizeOptional(request.Description);
+        agent.Icon = CustomAgentRules.NormalizeOptional(request.Icon);
         agent.PersonaPrompt = request.PersonaPrompt.Trim();
         agent.AllowedToolsCsv = CustomAgentRules.BuildToolsCsv(request.AllowedTools);
         agent.KnowledgeDocumentIdsCsv = CustomAgentRules.BuildDocumentIdsCsv(request.KnowledgeDocumentIds);
@@ -43,7 +43,4 @@ public class UpdateCustomAgentCommandHandler : IRequestHandler<UpdateCustomAgent
 
         return SaveCustomAgentResult.Success();
     }
-
-    private static string? NormalizeOptional(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

@@ -81,15 +81,7 @@ public class QdrantVectorService : IVectorStoreService
     {
         if (allowedValues.Count == 0) return new List<VectorSearchResult>();
 
-        var filter = new Filter();
-        filter.Should.AddRange(allowedValues.Select(value => new Condition
-        {
-            Field = new FieldCondition
-            {
-                Key = payloadField,
-                Match = new Match { Keyword = value }
-            }
-        }));
+        var filter = AnyKeywordMatch(payloadField, allowedValues);
 
         var queryResult = await _client.QueryAsync(
             collectionName: collectionName,
@@ -99,19 +91,7 @@ public class QdrantVectorService : IVectorStoreService
             payloadSelector: true,
             cancellationToken: ct);
 
-        return queryResult.Select(point => new VectorSearchResult
-        {
-            Id = Guid.Parse(point.Id.Uuid),
-            Score = point.Score,
-            Payload = point.Payload.ToDictionary(
-                item => item.Key,
-                item => item.Value.KindCase switch
-                {
-                    Value.KindOneofCase.StringValue => item.Value.StringValue,
-                    Value.KindOneofCase.IntegerValue => item.Value.IntegerValue.ToString(),
-                    _ => item.Value.ToString()
-                })
-        }).ToList();
+        return MapResults(queryResult);
     }
 
     /// <summary>
@@ -139,20 +119,6 @@ public class QdrantVectorService : IVectorStoreService
         if (string.IsNullOrEmpty(tenantId) || documentIds.Count == 0)
             return new List<VectorSearchResult>();
 
-        static Filter AnyKeywordMatch(string field, IReadOnlyList<string> values)
-        {
-            var group = new Filter();
-            group.Should.AddRange(values.Select(value => new Condition
-            {
-                Field = new FieldCondition
-                {
-                    Key = field,
-                    Match = new Match { Keyword = value }
-                }
-            }));
-            return group;
-        }
-
         var filter = new Filter
         {
             Must =
@@ -170,19 +136,7 @@ public class QdrantVectorService : IVectorStoreService
             payloadSelector: true,
             cancellationToken: ct);
 
-        return queryResult.Select(point => new VectorSearchResult
-        {
-            Id = Guid.Parse(point.Id.Uuid),
-            Score = point.Score,
-            Payload = point.Payload.ToDictionary(
-                item => item.Key,
-                item => item.Value.KindCase switch
-                {
-                    Value.KindOneofCase.StringValue => item.Value.StringValue,
-                    Value.KindOneofCase.IntegerValue => item.Value.IntegerValue.ToString(),
-                    _ => item.Value.ToString()
-                })
-        }).ToList();
+        return MapResults(queryResult);
     }
 
     /// <summary>
@@ -232,16 +186,7 @@ public class QdrantVectorService : IVectorStoreService
 
             foreach (var p in scrollResult.Result)
             {
-                var payload = new Dictionary<string, string>();
-                foreach (var kvp in p.Payload)
-                {
-                    payload[kvp.Key] = kvp.Value.KindCase switch
-                    {
-                        Value.KindOneofCase.StringValue => kvp.Value.StringValue,
-                        Value.KindOneofCase.IntegerValue => kvp.Value.IntegerValue.ToString(),
-                        _ => kvp.Value.ToString()
-                    };
-                }
+                var payload = MapPayload(p.Payload);
 
                 // Score based on number of keyword matches in the payload content
                 var contentText = payload.ContainsKey("Content") ? payload["Content"].ToLowerInvariant() : "";
@@ -305,15 +250,7 @@ public class QdrantVectorService : IVectorStoreService
             ).ToList();
 
             // Document allowlist as an OR-group (any pinned DocumentId matches).
-            var documentAllowlist = new Filter();
-            documentAllowlist.Should.AddRange(documentIds.Select(id => new Condition
-            {
-                Field = new FieldCondition
-                {
-                    Key = documentIdField,
-                    Match = new Match { Keyword = id }
-                }
-            }));
+            var documentAllowlist = AnyKeywordMatch(documentIdField, documentIds);
 
             var filter = new Filter
             {
@@ -341,16 +278,7 @@ public class QdrantVectorService : IVectorStoreService
 
             foreach (var p in scrollResult.Result)
             {
-                var payload = new Dictionary<string, string>();
-                foreach (var kvp in p.Payload)
-                {
-                    payload[kvp.Key] = kvp.Value.KindCase switch
-                    {
-                        Value.KindOneofCase.StringValue => kvp.Value.StringValue,
-                        Value.KindOneofCase.IntegerValue => kvp.Value.IntegerValue.ToString(),
-                        _ => kvp.Value.ToString()
-                    };
-                }
+                var payload = MapPayload(p.Payload);
 
                 // Score based on number of keyword matches in the payload content
                 var contentText = payload.ContainsKey("Content") ? payload["Content"].ToLowerInvariant() : "";
@@ -377,5 +305,51 @@ public class QdrantVectorService : IVectorStoreService
         }
 
         return results;
+    }
+
+    // --- Shared search-result mapping helpers ------------------------------------
+
+    /// <summary>
+    /// Projects a Qdrant point payload into the flat string dictionary used by
+    /// <see cref="VectorSearchResult.Payload"/>. String and integer values keep
+    /// their scalar rendering; every other kind falls back to the protobuf string
+    /// form. Identical across the dense and scroll search paths.
+    /// </summary>
+    private static Dictionary<string, string> MapPayload(IReadOnlyDictionary<string, Value> payload) =>
+        payload.ToDictionary(
+            item => item.Key,
+            item => item.Value.KindCase switch
+            {
+                Value.KindOneofCase.StringValue => item.Value.StringValue,
+                Value.KindOneofCase.IntegerValue => item.Value.IntegerValue.ToString(),
+                _ => item.Value.ToString()
+            });
+
+    /// <summary>Maps dense (vector) query hits to results, preserving each hit's score.</summary>
+    private static List<VectorSearchResult> MapResults(IReadOnlyList<ScoredPoint> points) =>
+        points.Select(point => new VectorSearchResult
+        {
+            Id = Guid.Parse(point.Id.Uuid),
+            Score = point.Score,
+            Payload = MapPayload(point.Payload)
+        }).ToList();
+
+    /// <summary>
+    /// Builds an OR-group filter (Qdrant <c>Should</c>) of keyword matches on a
+    /// single field — "<paramref name="field"/> equals any of <paramref name="values"/>".
+    /// Used both as a standalone filter and as a nested clause under <c>Must</c>.
+    /// </summary>
+    private static Filter AnyKeywordMatch(string field, IReadOnlyList<string> values)
+    {
+        var group = new Filter();
+        group.Should.AddRange(values.Select(value => new Condition
+        {
+            Field = new FieldCondition
+            {
+                Key = field,
+                Match = new Match { Keyword = value }
+            }
+        }));
+        return group;
     }
 }

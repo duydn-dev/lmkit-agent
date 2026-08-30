@@ -121,17 +121,17 @@ public class OutputGuardrailFilter : IAgentFilter
         {
             switch (threatType)
             {
-                case "CredentialLeakage":
+                case ThreatTypes.CredentialLeakage:
                     // Redact anything that looks like credentials
                     redacted = RedactCredentialContent(redacted);
                     break;
 
-                case "PIILeakage":
+                case ThreatTypes.PIILeakage:
                     // Redact SSN and email patterns
                     redacted = RedactPiiContent(redacted);
                     break;
 
-                case "SystemPromptLeakage":
+                case ThreatTypes.SystemPromptLeakage:
                     // Add a disclaimer instead of redacting
                     redacted += SystemPromptLeakageNotice;
                     break;

@@ -143,6 +143,10 @@ public static class CustomAgentRules
     public static List<Guid> NormalizeDocumentIds(List<Guid>? ids) =>
         ids?.Where(id => id != Guid.Empty).Distinct().ToList() ?? new List<Guid>();
 
+    /// <summary>Optional free-text field normalization: whitespace-only becomes null, otherwise trimmed.</summary>
+    public static string? NormalizeOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     /// <summary>
     /// Serializes a validated tool whitelist to the entity CSV. Null AND empty
     /// both become null CSV — per the entity contract, "null/empty = the caller

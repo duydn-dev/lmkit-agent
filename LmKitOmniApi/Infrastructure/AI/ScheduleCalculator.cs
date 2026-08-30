@@ -12,6 +12,9 @@ public static class ScheduleCalculator
     public const string DailyKind = "daily";
     public const string WeeklyKind = "weekly";
 
+    /// <summary>Inclusive upper bound for a time-of-day expressed as minutes after midnight UTC (23:59).</summary>
+    public const int MaxTimeOfDayMinutes = 1439;
+
     /// <summary>
     /// Computes the next run strictly after <paramref name="nowUtc"/>:
     /// <list type="bullet">
@@ -65,8 +68,8 @@ public static class ScheduleCalculator
 
     private static int RequireTimeOfDay(ScheduledTask task)
     {
-        if (task.TimeOfDayMinutes is not (>= 0 and <= 1439))
-            throw new InvalidOperationException("Daily and weekly schedules require TimeOfDayMinutes between 0 and 1439.");
+        if (task.TimeOfDayMinutes is not (>= 0 and <= MaxTimeOfDayMinutes))
+            throw new InvalidOperationException($"Daily and weekly schedules require TimeOfDayMinutes between 0 and {MaxTimeOfDayMinutes}.");
         return task.TimeOfDayMinutes.Value;
     }
 }

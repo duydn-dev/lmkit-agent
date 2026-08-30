@@ -432,6 +432,7 @@ import { ref, computed, onMounted } from 'vue';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
+import { formatDate } from '@/utils/date';
 
 interface Document {
   id: string;
@@ -549,11 +550,6 @@ function getFileIconClass(fileName: string): string {
 
 function getFileExt(fileName: string): string {
   return (fileName.split('.').pop() || '').toUpperCase();
-}
-
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString('vi-VN', { year: 'numeric', month: '2-digit', day: '2-digit' });
 }
 
 function formatFileSize(bytes: number): string {

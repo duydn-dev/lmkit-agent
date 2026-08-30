@@ -172,6 +172,7 @@ import { ref, onMounted, onUnmounted } from 'vue';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
+import { formatDate } from '@/utils/date';
 
 interface ApiKey {
   id: string;
@@ -319,12 +320,6 @@ const usageLabel = (apiKey: ApiKey): string => {
 const expiryLabel = (apiKey: ApiKey): string => {
   if (!apiKey.expiresAtUtc) return 'Không hết hạn';
   return `${isExpired(apiKey) ? 'Đã hết hạn' : 'Hết hạn'} ${formatDate(apiKey.expiresAtUtc)}`;
-};
-
-const formatDate = (iso: string): string => {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString('vi-VN', { year: 'numeric', month: '2-digit', day: '2-digit' });
 };
 
 onMounted(() => {

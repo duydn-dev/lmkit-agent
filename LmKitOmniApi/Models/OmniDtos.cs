@@ -2,29 +2,6 @@ using System.ComponentModel.DataAnnotations;
 
 namespace LmKitOmniApi.Models;
 
-public class ChatCompletionRequest
-{
-    [Required]
-    public List<ChatMessage> Messages { get; set; } = new();
-    public string? Model { get; set; }
-    public float Temperature { get; set; } = 0.7f;
-    public int MaxTokens { get; set; } = 2048;
-}
-
-public class ChatMessage
-{
-    public string Role { get; set; } = "user"; // "system", "user", "assistant"
-    public string Content { get; set; } = string.Empty;
-}
-
-public class ChatCompletionResponse
-{
-    public string Text { get; set; } = string.Empty;
-    public int GeneratedTokens { get; set; }
-    public double TokenGenerationRate { get; set; }
-    public string StopReason { get; set; } = string.Empty;
-}
-
 /// <summary>
 /// Body of <c>PATCH /api/chat/sessions/{id}</c>. Wire shape: <c>{ "title": string }</c>.
 /// Validation (non-empty, max 100 chars after trimming) lives in ChatController so the
@@ -33,17 +10,6 @@ public class ChatCompletionResponse
 public class RenameChatSessionRequest
 {
     public string? Title { get; set; }
-}
-
-/// <summary>
-/// OPTIONAL body of <c>POST /api/chat/sessions</c>. Wire shape:
-/// <c>{ "customAgentId": guid? }</c>. Omitting the body (or the field) creates a
-/// plain session exactly as before; ChatController reads it manually so
-/// empty-body requests stay valid.
-/// </summary>
-public class CreateChatSessionRequest
-{
-    public Guid? CustomAgentId { get; set; }
 }
 
 public class DocumentConversionRequest

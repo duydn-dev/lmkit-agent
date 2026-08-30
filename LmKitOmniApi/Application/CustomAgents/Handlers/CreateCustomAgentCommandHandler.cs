@@ -35,8 +35,8 @@ public class CreateCustomAgentCommandHandler : IRequestHandler<CreateCustomAgent
             TenantId = request.TenantId,
             OwnerUserId = request.UserId,
             Name = request.Name.Trim(),
-            Description = NormalizeOptional(request.Description),
-            Icon = NormalizeOptional(request.Icon),
+            Description = CustomAgentRules.NormalizeOptional(request.Description),
+            Icon = CustomAgentRules.NormalizeOptional(request.Icon),
             PersonaPrompt = request.PersonaPrompt.Trim(),
             AllowedToolsCsv = CustomAgentRules.BuildToolsCsv(request.AllowedTools),
             KnowledgeDocumentIdsCsv = CustomAgentRules.BuildDocumentIdsCsv(request.KnowledgeDocumentIds),
@@ -51,7 +51,4 @@ public class CreateCustomAgentCommandHandler : IRequestHandler<CreateCustomAgent
 
         return SaveCustomAgentResult.Success(CustomAgentRules.ToDto(agent, request.UserId));
     }
-
-    private static string? NormalizeOptional(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

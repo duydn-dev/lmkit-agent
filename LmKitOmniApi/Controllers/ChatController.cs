@@ -19,6 +19,9 @@ public class ChatController : ApiControllerBase
     private const long MaxTotalAttachmentBytes = 50 * 1024 * 1024;
     private const int MaxAttachmentCount = 8;
     private const int MaxMessageCharacters = 50_000;
+    private const int MaxSessionTitleLength = 100;
+    private const int MaxSearchQueryLength = 200;
+    private const int MaxInlineFileContextChars = 3000;
     private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif", ".tiff",
@@ -207,8 +210,8 @@ public class ChatController : ApiControllerBase
                     
                     if (result.Success)
                     {
-                        var truncated = result.ExtractedText.Length > 3000
-                            ? result.ExtractedText.Substring(0, 3000) + "... [Nội dung đã được lưu đầy đủ vào kho tri thức]"
+                        var truncated = result.ExtractedText.Length > MaxInlineFileContextChars
+                            ? result.ExtractedText.Substring(0, MaxInlineFileContextChars) + "... [Nội dung đã được lưu đầy đủ vào kho tri thức]"
                             : result.ExtractedText;
                         fileContextParts.Add($"[File: {result.FileName} ({result.FileType})]: {truncated}");
 
@@ -371,7 +374,7 @@ public class ChatController : ApiControllerBase
         var command = new DeleteChatSessionCommand { SessionId = id, UserId = currentUserId };
         var result = await _mediator.Send(command, cancellationToken);
         if (!result) return NotFound();
-        return Ok(true);
+        return NoContent();
     }
 
     /// <summary>
@@ -387,8 +390,8 @@ public class ChatController : ApiControllerBase
         var title = request.Title?.Trim();
         if (string.IsNullOrWhiteSpace(title))
             return BadRequest(new { message = "Tiêu đề đoạn chat không được để trống." });
-        if (title.Length > 100)
-            return BadRequest(new { message = "Tiêu đề đoạn chat không được vượt quá 100 ký tự." });
+        if (title.Length > MaxSessionTitleLength)
+            return BadRequest(new { message = $"Tiêu đề đoạn chat không được vượt quá {MaxSessionTitleLength} ký tự." });
 
         var command = new RenameChatSessionCommand
         {
@@ -411,8 +414,8 @@ public class ChatController : ApiControllerBase
     {
         if (!TryGetIdentity(out var tenantId, out var currentUserId)) return Unauthorized();
 
-        if (q is { Length: > 200 })
-            return BadRequest(new { message = "Từ khóa tìm kiếm không được vượt quá 200 ký tự." });
+        if (q is { Length: > MaxSearchQueryLength })
+            return BadRequest(new { message = $"Từ khóa tìm kiếm không được vượt quá {MaxSearchQueryLength} ký tự." });
 
         var query = new GetChatSessionsSearchQuery
         {

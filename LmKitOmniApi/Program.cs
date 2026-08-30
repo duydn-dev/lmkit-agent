@@ -331,7 +331,7 @@ builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Research.IResearchUrlV
 builder.Services.AddHttpClient<LmKitOmniApi.Infrastructure.AI.Research.ResearchContentFetcher>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(15);
-    client.MaxResponseContentBufferSize = 512 * 1024;
+    client.MaxResponseContentBufferSize = LmKitOmniApi.Infrastructure.AI.Research.ResearchLimits.MaxContentBytes;
     client.DefaultRequestHeaders.UserAgent.ParseAdd("LmKitOmniAgent/1.0");
 }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {

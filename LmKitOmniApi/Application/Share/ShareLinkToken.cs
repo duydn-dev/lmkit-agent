@@ -1,15 +1,13 @@
-using System;
-using System.Buffers.Text;
-using System.Security.Cryptography;
-using System.Text;
+using LmKitOmniApi.Infrastructure.Security;
 
 namespace LmKitOmniApi.Application.Share
 {
     /// <summary>
-    /// Share-token crypto, mirroring the refresh-token pattern in
-    /// <c>Infrastructure.Security.RefreshTokenProtector</c>: 32 cryptographically
+    /// Share-token facade over <see cref="SecretTokens"/>: 32 cryptographically
     /// random bytes for the raw token (base64url, no padding — URL-safe by
     /// construction) and a SHA-256 hex digest as the only value ever persisted.
+    /// Mirrors the refresh-token pattern in
+    /// <c>Infrastructure.Security.RefreshTokenProtector</c>.
     /// </summary>
     public static class ShareLinkToken
     {
@@ -21,17 +19,9 @@ namespace LmKitOmniApi.Application.Share
         public const int MaxPresentedLength = 128;
 
         /// <summary>Generates a fresh raw share token (43 chars, base64url alphabet).</summary>
-        public static string Generate()
-        {
-            var bytes = RandomNumberGenerator.GetBytes(32);
-            return Base64Url.EncodeToString(bytes);
-        }
+        public static string Generate() => SecretTokens.GenerateUrlSafeToken();
 
         /// <summary>SHA-256 hex digest of a raw token — the stored/compared representation.</summary>
-        public static string Hash(string token)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(token);
-            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
-        }
+        public static string Hash(string token) => SecretTokens.HashSha256Hex(token);
     }
 }

@@ -38,6 +38,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     // ── Core ──
     private readonly LmModelManager _modelManager;
     private readonly ILogger<AgentOrchestrator> _logger;
+    private readonly LmKitOmniApi.Infrastructure.Data.HermesDbContext _dbContext;
 
     // ── Security ──
     private readonly AgentFilterPipeline _filterPipeline;
@@ -153,7 +154,6 @@ public class AgentOrchestrator : IAgentOrchestrator
             promptTemplate,
             logger);
     }
-    private readonly LmKitOmniApi.Infrastructure.Data.HermesDbContext _dbContext;
 
     /// <summary>
     /// STREAMING version — every step yields SSE events to the client, and the
@@ -888,8 +888,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                 var guard = await _promptGuard.AnalyzeOutputAsync(raw[..stableLength], ct);
                 foreach (var detection in guard.Detections)
                 {
-                    if (detection.ThreatType == "CredentialLeakage") _credentialClassLatched = true;
-                    else if (detection.ThreatType == "PIILeakage") _piiClassLatched = true;
+                    if (detection.ThreatType == ThreatTypes.CredentialLeakage) _credentialClassLatched = true;
+                    else if (detection.ThreatType == ThreatTypes.PIILeakage) _piiClassLatched = true;
                     // SystemPromptLeakage only appends an end-of-text disclaimer;
                     // the full pass owns the text end, so nothing to do mid-stream.
                 }

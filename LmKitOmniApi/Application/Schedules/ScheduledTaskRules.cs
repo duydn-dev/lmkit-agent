@@ -18,8 +18,8 @@ public static class ScheduledTaskRules
     public const int MaxIntervalMinutes = 10080; // 7 days
     public const int MaxEnabledTasksPerUser = 10;
 
-    public const string EnabledCapMessage =
-        "Mỗi người dùng chỉ được bật tối đa 10 lịch tự động. Vui lòng tắt hoặc xóa bớt lịch hiện có.";
+    public static readonly string EnabledCapMessage =
+        $"Mỗi người dùng chỉ được bật tối đa {MaxEnabledTasksPerUser} lịch tự động. Vui lòng tắt hoặc xóa bớt lịch hiện có.";
 
     /// <summary>Returns the Vietnamese 400 message for an invalid request, or <c>null</c> when valid.</summary>
     public static string? Validate(SaveScheduledTaskCommandBase request)
@@ -28,27 +28,27 @@ public static class ScheduledTaskRules
         if (string.IsNullOrEmpty(name))
             return "Tên lịch không được để trống.";
         if (name.Length > MaxNameLength)
-            return "Tên lịch không được vượt quá 100 ký tự.";
+            return $"Tên lịch không được vượt quá {MaxNameLength} ký tự.";
 
         var prompt = request.Prompt?.Trim();
         if (string.IsNullOrEmpty(prompt))
             return "Nội dung nhắc lệnh không được để trống.";
         if (prompt.Length > MaxPromptLength)
-            return "Nội dung nhắc lệnh không được vượt quá 2000 ký tự.";
+            return $"Nội dung nhắc lệnh không được vượt quá {MaxPromptLength} ký tự.";
 
         switch (NormalizeKind(request.ScheduleKind))
         {
             case ScheduleCalculator.IntervalKind:
                 if (request.IntervalMinutes is not (>= MinIntervalMinutes and <= MaxIntervalMinutes))
-                    return "Chu kỳ lặp phải từ 15 đến 10080 phút.";
+                    return $"Chu kỳ lặp phải từ {MinIntervalMinutes} đến {MaxIntervalMinutes} phút.";
                 break;
             case ScheduleCalculator.DailyKind:
-                if (request.TimeOfDayMinutes is not (>= 0 and <= 1439))
-                    return "Thời điểm chạy trong ngày phải từ 0 đến 1439 phút (theo giờ UTC).";
+                if (request.TimeOfDayMinutes is not (>= 0 and <= ScheduleCalculator.MaxTimeOfDayMinutes))
+                    return $"Thời điểm chạy trong ngày phải từ 0 đến {ScheduleCalculator.MaxTimeOfDayMinutes} phút (theo giờ UTC).";
                 break;
             case ScheduleCalculator.WeeklyKind:
-                if (request.TimeOfDayMinutes is not (>= 0 and <= 1439))
-                    return "Thời điểm chạy trong ngày phải từ 0 đến 1439 phút (theo giờ UTC).";
+                if (request.TimeOfDayMinutes is not (>= 0 and <= ScheduleCalculator.MaxTimeOfDayMinutes))
+                    return $"Thời điểm chạy trong ngày phải từ 0 đến {ScheduleCalculator.MaxTimeOfDayMinutes} phút (theo giờ UTC).";
                 if (request.DayOfWeek is not (>= 0 and <= 6))
                     return "Thứ trong tuần phải từ 0 (Chủ nhật) đến 6 (Thứ bảy).";
                 break;

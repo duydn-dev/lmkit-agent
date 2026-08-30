@@ -12,6 +12,9 @@ namespace LmKitOmniApi.Domain.Entities;
 [Table("canvas_artifacts")]
 public sealed class CanvasArtifact
 {
+    /// <summary>Maximum length of <see cref="Title"/>; shared as the API validation cap.</summary>
+    public const int TitleMaxLength = 120;
+
     [Key]
     public Guid Id { get; set; } = Guid.NewGuid();
 
@@ -24,7 +27,7 @@ public sealed class CanvasArtifact
 
     public Guid? ChatSessionId { get; set; }
 
-    [MaxLength(120)]
+    [MaxLength(TitleMaxLength)]
     public string Title { get; set; } = string.Empty;
 
     /// <summary>"markdown" | "code" | "text".</summary>

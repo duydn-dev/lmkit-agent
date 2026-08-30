@@ -15,7 +15,7 @@ namespace LmKitOmniApi.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
-public class ResearchController : ApiControllerBase
+public sealed class ResearchController : ApiControllerBase
 {
     private readonly DeepResearchService _deepResearch;
     private readonly ILogger<ResearchController> _logger;
