@@ -212,6 +212,14 @@ builder.Services.AddSingleton<IToolPermissionService, ToolPermissionService>();
 builder.Services.AddScoped<ToolSandboxService>();
 builder.Services.AddScoped<UserResourceAccessService>();
 builder.Services.AddScoped<IExecutionSandboxEngine, ExecutionSandboxEngine>();
+// Container-backed Python code interpreter (disabled by default — see
+// CodeInterpreterOptions). Options bound from "CodeInterpreter:Python"; the
+// ProcessRunner seam is a stateless singleton, the executor is scoped like the
+// JS sandbox engine above. When disabled, the executor reports IsEnabled=false
+// and the run_python tool is never offered.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Security.CodeInterpreterOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Security.CodeInterpreterOptions.SectionName));
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Security.IProcessRunner, LmKitOmniApi.Infrastructure.AI.Security.ProcessRunner>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Security.IPythonCodeExecutor, LmKitOmniApi.Infrastructure.AI.Security.PythonContainerExecutor>();
 builder.Services.AddScoped<AgentToolGateway>();
 
 // Filter Pipeline (ordered execution)

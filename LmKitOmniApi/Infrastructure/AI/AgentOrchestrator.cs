@@ -46,6 +46,11 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly ToolSandboxService _sandbox;
     private readonly IPromptGuardService _promptGuard;
 
+    // Container-backed Python interpreter. Held here (unlike IExecutionSandboxEngine,
+    // which is only forwarded to the dispatcher) because CreateNativeActionToolsAsync
+    // must check IsEnabled to decide whether to offer the run_python tool.
+    private readonly IPythonCodeExecutor _pythonExecutor;
+
     // ── Memory ──
     private readonly IAgentMemoryService _memoryService;
     private readonly ITokenManagementService _tokenManagement;
@@ -92,6 +97,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["DELEGATE"] = "Delegate",
         ["SUMMARIZE"] = "AnalyzeText",
         ["CODE"] = "RunCode",
+        ["PYTHON"] = "RunPython",
     };
 
     // H6 path-extraction regexes moved to AgentActionDispatcher alongside the
@@ -109,6 +115,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         ToolSandboxService sandbox,
         IPromptGuardService promptGuard,
         IExecutionSandboxEngine executionSandbox,
+        IPythonCodeExecutor pythonExecutor,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
         McpClientService mcpClient,
@@ -128,6 +135,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         _toolPermission = toolPermission;
         _sandbox = sandbox;
         _promptGuard = promptGuard;
+        _pythonExecutor = pythonExecutor;
         _mcpClient = mcpClient;
         _telemetry = telemetry;
         _toolAudit = toolAudit;
@@ -139,14 +147,15 @@ public class AgentOrchestrator : IAgentOrchestrator
         _dbContext = dbContext;
 
         // Deliberately constructed here (not resolved from DI): the dispatcher gets
-        // exactly the injected dependencies its action cases use, and the public
-        // constructor signature of this class stays identical.
+        // exactly the injected dependencies its action cases use, threaded from this
+        // orchestrator's own injected dependencies rather than resolved separately.
         _actionDispatcher = new AgentActionDispatcher(
             ragService,
             mediator,
             webSearch,
             toolPermission,
             executionSandbox,
+            pythonExecutor,
             resources,
             multiAgent,
             mcpClient,
@@ -529,6 +538,23 @@ public class AgentOrchestrator : IAgentOrchestrator
                 (q, ct) => invoke("CODE", q, ct)));
         }
 
+        // Code interpreter (v2: sandboxed Python in an isolated container). Unlike
+        // run_javascript, this tool is offered ONLY when an operator has explicitly
+        // enabled AND provisioned the container runtime (_pythonExecutor.IsEnabled);
+        // when disabled it is simply never registered (no error surfaced). Same
+        // whitelist/role gating shape as run_javascript: the whitelist filters
+        // registration here, and the invoke path still runs the full RBAC check on
+        // the mapped "RunPython" permission (ActionToToolMap) before anything runs.
+        if (_pythonExecutor.IsEnabled && ActionAllowed("PYTHON"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "run_python",
+                "Chạy một đoạn mã Python 3 ngắn, tự chứa trong một container cô lập không có mạng; "
+                    + "kết quả trả về là nội dung in ra stdout. "
+                    + "Giới hạn 15 giây / bộ nhớ hạn chế; không có internet, không có bí mật.",
+                (q, ct) => invoke("PYTHON", q, ct)));
+        }
+
         if (profile.HasFlag(AgentToolProfile.ImageRead) && ActionAllowed("VISION"))
         {
             tools.Add(new DelegatedActionTool("analyze_image", "Analyze an allowlisted local image with OCR or vision.",
@@ -734,10 +760,12 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
     }
 
-    // CODE is retry-safe: the Jint sandbox is side-effect-free (no network, no
-    // filesystem, no CLR), so re-running a snippet cannot double-apply anything.
+    // CODE and PYTHON are retry-safe: both run side-effect-free from the app's
+    // perspective — the Jint sandbox (no network/filesystem/CLR) and the ephemeral
+    // no-network Python container — so re-running a snippet cannot double-apply
+    // anything.
     private static bool IsRetrySafeAction(string action) => action is
-        "RAG" or "VISION" or "SPEECH" or "NLP" or "WEB_SEARCH" or "DELEGATE" or "SUMMARIZE" or "CODE";
+        "RAG" or "VISION" or "SPEECH" or "NLP" or "WEB_SEARCH" or "DELEGATE" or "SUMMARIZE" or "CODE" or "PYTHON";
 
     /// <summary>
     /// Build system prompt using template engine. A custom-agent persona, when

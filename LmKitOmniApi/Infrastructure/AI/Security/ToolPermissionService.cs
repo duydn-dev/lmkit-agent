@@ -28,21 +28,22 @@ public class ToolPermissionService : IToolPermissionService
     private static readonly Dictionary<string, HashSet<string>> RoleToolPermissions = new()
     {
         // RunCode (sandboxed Jint JS interpreter — side-effect-free, no CLR/network/
-        // filesystem) is granted to authenticated User and Admin roles only. Least
+        // filesystem) and RunPython (sandboxed Python in an isolated no-network
+        // container) are granted to authenticated User and Admin roles only. Least
         // privilege keeps the untrusted Guest role out of code execution even though
-        // the interpreter is sandboxed. It intentionally stays OUT of
-        // ApprovalRequiredTools below and carries a tight per-tool rate limit.
+        // both interpreters are sandboxed. They intentionally stay OUT of
+        // ApprovalRequiredTools below and carry a tight per-tool rate limit.
         ["Admin"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
             "AnalyzeText", "QueryKnowledgeBase", "IngestDocument",
-            "ReadWordDocument", "ReadExcelDocument", "RunCode",
+            "ReadWordDocument", "ReadExcelDocument", "RunCode", "RunPython",
             "Delegate", "MCP" // C3 Fix: added for action→tool mapping
         },
         ["User"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
-            "AnalyzeText", "QueryKnowledgeBase", "RunCode",
+            "AnalyzeText", "QueryKnowledgeBase", "RunCode", "RunPython",
             "Delegate" // C3 Fix: Users can delegate but not use MCP
         },
         ["Guest"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -70,6 +71,7 @@ public class ToolPermissionService : IToolPermissionService
         // Code execution is the most sensitive tool — a tight limit well below the
         // default, and unavailable to Guests entirely (see RoleToolPermissions).
         ["RunCode"] = 5,
+        ["RunPython"] = 5,
         ["ReadWordDocument"] = 15,
         ["ReadExcelDocument"] = 15,
     };

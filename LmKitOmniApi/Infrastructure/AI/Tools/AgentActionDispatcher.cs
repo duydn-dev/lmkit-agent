@@ -15,7 +15,7 @@ namespace LmKitOmniApi.Infrastructure.AI.Tools;
 
 /// <summary>
 /// Executes the concrete tool-action cases (RAG, VISION, SPEECH, NLP, WEB_SEARCH,
-/// DELEGATE, MCP proxy, SUMMARIZE, CODE) that previously lived inline in
+/// DELEGATE, MCP proxy, SUMMARIZE, CODE, PYTHON) that previously lived inline in
 /// <see cref="AgentOrchestrator"/>'s ExecuteActionCoreAsync switch.
 /// Mechanically extracted with zero behavior change: same guards, same
 /// ValidateOwnedPath checks, same error strings, same permission recording and
@@ -49,6 +49,7 @@ public sealed class AgentActionDispatcher
     private readonly IWebSearchService _webSearch;
     private readonly IToolPermissionService _toolPermission;
     private readonly IExecutionSandboxEngine _executionSandbox;
+    private readonly IPythonCodeExecutor _pythonExecutor;
     private readonly UserResourceAccessService _resources;
     private readonly MultiAgentOrchestrator _multiAgent;
     private readonly McpClientService _mcpClient;
@@ -62,6 +63,7 @@ public sealed class AgentActionDispatcher
         IWebSearchService webSearch,
         IToolPermissionService toolPermission,
         IExecutionSandboxEngine executionSandbox,
+        IPythonCodeExecutor pythonExecutor,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
         McpClientService mcpClient,
@@ -74,6 +76,7 @@ public sealed class AgentActionDispatcher
         _webSearch = webSearch;
         _toolPermission = toolPermission;
         _executionSandbox = executionSandbox;
+        _pythonExecutor = pythonExecutor;
         _resources = resources;
         _multiAgent = multiAgent;
         _mcpClient = mcpClient;
@@ -136,6 +139,10 @@ public sealed class AgentActionDispatcher
             // ── Code Interpreter (v1: sandboxed JavaScript via Jint) ──
             case "CODE":
                 return await ExecuteJavaScriptAsync(tenantId, userId, query, ct);
+
+            // ── Code Interpreter (v2: sandboxed Python via isolated container) ──
+            case "PYTHON":
+                return await ExecutePythonAsync(tenantId, userId, query, ct);
 
             default:
                 return $"Unknown action: {action}";
@@ -287,6 +294,26 @@ public sealed class AgentActionDispatcher
         _logger.LogInformation("🧮 Executing JavaScript in the Jint sandbox...");
         var codeResult = await _executionSandbox.ExecuteCodeSafelyAsync(query, "javascript", ct);
         await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "RunCode", null, ct);
+        return codeResult;
+    }
+
+    /// <summary>
+    /// PYTHON action: runs the query as Python 3 inside the OS-isolated container
+    /// sandbox (no network, non-root, dropped capabilities, CPU/memory/time
+    /// limits — see <see cref="IPythonCodeExecutor"/>). Mirrors the CODE case: the
+    /// whitelist guard at the top of <see cref="ExecuteAsync"/> covers this via the
+    /// PYTHON → RunPython mapping, and the orchestrator has already run the RBAC
+    /// check on "RunPython" and only offered the tool when the interpreter is
+    /// enabled. Parameters are recorded as null (like CODE/NLP) because the snippet
+    /// may embed user data; the orchestrator's audit layer still stores the query.
+    /// The executor never throws for script-level failures — errors come back as
+    /// bracketed, agent-readable text.
+    /// </summary>
+    private async Task<string> ExecutePythonAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
+    {
+        _logger.LogInformation("🐍 Executing Python in the container sandbox...");
+        var codeResult = await _pythonExecutor.ExecuteAsync(query, ct);
+        await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "RunPython", null, ct);
         return codeResult;
     }
 

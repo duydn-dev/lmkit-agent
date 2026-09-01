@@ -55,6 +55,12 @@ public static class CustomAgentRules
         },
         new()
         {
+            Name = "RunPython",
+            Label = "Chạy mã Python",
+            Description = "Thực thi đoạn mã Python 3 ngắn trong container cô lập an toàn để tính toán và biến đổi dữ liệu; kết quả là nội dung in ra stdout (không mạng, không truy cập tệp, không bí mật)."
+        },
+        new()
+        {
             Name = "AnalyzeImage",
             Label = "Phân tích hình ảnh",
             Description = "Đọc OCR và phân tích nội dung hình ảnh được phép truy cập."
