@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using LmKitOmniApi.Application.Vision.Commands;
 using LmKitOmniApi.Models;
 using LmKitOmniApi.Infrastructure.AI.Security;
+using LmKitOmniApi.Infrastructure.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
 
@@ -157,6 +158,49 @@ public class VisionController : ApiControllerBase
             _logger.LogError(ex, "Image OCR failed.");
             return Problem(statusCode: 500, title: "Image OCR failed.");
         }
+    }
+
+    /// <summary>
+    /// Stores an uploaded image under the caller's isolated upload root and
+    /// returns its owned path. The vision endpoints only accept owned paths, so
+    /// this is the entry point that makes the image-tools screen usable: upload
+    /// once, then run analyze / OCR / classify / remove-background against the
+    /// returned <c>imagePath</c>. Validated the same way as document uploads:
+    /// extension allow-list, magic-byte signature, and size cap.
+    /// </summary>
+    [HttpPost("upload")]
+    public async Task<IActionResult> UploadImage(IFormFile image, CancellationToken ct)
+    {
+        if (image is null || image.Length == 0) return BadRequest("No image uploaded.");
+        if (image.Length > MaximumImageBytes) return BadRequest("Image exceeds the 20 MB limit.");
+
+        var ext = Path.GetExtension(image.FileName).ToLowerInvariant();
+        var allowedExtensions = new[] { ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff" };
+        if (!allowedExtensions.Contains(ext))
+            return BadRequest($"Unsupported image type. Allowed extensions: {string.Join(", ", allowedExtensions)}");
+        if (!await UploadFileValidator.HasExpectedSignatureAsync(image, ext, ct))
+            return BadRequest("File content does not match its extension.");
+
+        if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
+
+        var uploadDirectory = _resources.GetUploadDirectory(tenantId, userId);
+        Directory.CreateDirectory(uploadDirectory);
+
+        // Server-generated random name: never trust the client filename for the
+        // on-disk path, and avoid collisions/overwrites between uploads.
+        var storedName = $"{Guid.NewGuid():N}{ext}";
+        var absolutePath = Path.Combine(uploadDirectory, storedName);
+
+        await using (var target = System.IO.File.Create(absolutePath))
+        await using (var source = image.OpenReadStream())
+        {
+            await source.CopyToAsync(target, ct);
+        }
+
+        // The vision endpoints re-validate ownership on every call, so returning
+        // the absolute owned path here is safe and matches the existing
+        // convert/analyze contract that already accepts owned paths from clients.
+        return Ok(new { ImagePath = absolutePath, FileName = storedName });
     }
 
     private PathValidationResult ValidateOwnedPath(string path)
