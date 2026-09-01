@@ -4,51 +4,18 @@
     <!-- Sidebar -->
     <aside class="w-64 bg-gray-100 flex flex-col hidden md:flex transition-all duration-300" aria-label="Thanh bên ứng dụng">
       <div class="p-3 pb-0">
-        <div class="text-xs text-gray-500 font-semibold mb-2 px-3 uppercase tracking-wider">Không gian làm việc</div>
-        <router-link to="/chat" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer" active-class="bg-chatgpt-light border border-gray-200">
-          <i class="pi pi-sparkles"></i>
-          <span>Trợ lý AI</span>
-        </router-link>
-
-        <router-link to="/projects" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
-          <i class="pi pi-folder"></i>
-          <span>Dự án</span>
-        </router-link>
-
-        <router-link to="/documents" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
-          <i class="pi pi-file-pdf"></i>
-          <span>Kho tài liệu (RAG)</span>
-        </router-link>
-
-        <router-link to="/memory" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
-          <i class="pi pi-history"></i>
-          <span>Bộ nhớ trợ lý</span>
-        </router-link>
-
-        <router-link to="/agents" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
-          <i class="pi pi-microchip-ai"></i>
-          <span>Agents</span>
-        </router-link>
-
-        <router-link to="/schedules" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
-          <i class="pi pi-calendar-clock"></i>
-          <span>Lịch tác vụ</span>
-        </router-link>
-
-        <router-link to="/research" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
-          <i class="pi pi-compass"></i>
-          <span>Nghiên cứu</span>
-        </router-link>
-
-        <router-link to="/api-keys" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
-          <i class="pi pi-key"></i>
-          <span>API Keys</span>
-        </router-link>
-
-        <router-link v-if="isAdmin" to="/admin/users" class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1" active-class="bg-chatgpt-light border border-gray-200">
-          <i class="pi pi-users"></i>
-          <span>Quản lý User</span>
-        </router-link>
+        <template v-for="group in visibleNavGroups" :key="group.title">
+          <div class="text-xs text-gray-500 font-semibold mb-2 mt-4 first:mt-0 px-3 uppercase tracking-wider">{{ group.title }}</div>
+          <router-link
+            v-for="item in group.items"
+            :key="item.to"
+            :to="item.to"
+            class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1 first:mt-0"
+            active-class="bg-chatgpt-light border border-gray-200">
+            <i :class="item.icon" aria-hidden="true"></i>
+            <span>{{ item.label }}</span>
+          </router-link>
+        </template>
       </div>
       
       <div class="flex-1 overflow-y-auto p-3 mt-2 flex flex-col">
@@ -178,15 +145,17 @@
       </header>
 
       <nav v-if="mobileNavOpen" id="mobile-navigation" class="md:hidden bg-gray-100 border-b border-gray-200 p-3 grid gap-1" aria-label="Điều hướng di động">
-        <router-link to="/chat" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-sparkles mr-2"></i>Trợ lý AI</router-link>
-        <router-link to="/projects" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-folder mr-2"></i>Dự án</router-link>
-        <router-link to="/documents" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-file-pdf mr-2"></i>Kho tài liệu</router-link>
-        <router-link to="/memory" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-history mr-2"></i>Bộ nhớ trợ lý</router-link>
-        <router-link to="/agents" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-microchip-ai mr-2"></i>Agents</router-link>
-        <router-link to="/schedules" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-calendar-clock mr-2"></i>Lịch tác vụ</router-link>
-        <router-link to="/research" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-compass mr-2"></i>Nghiên cứu</router-link>
-        <router-link to="/api-keys" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-key mr-2"></i>API Keys</router-link>
-        <router-link v-if="isAdmin" to="/admin/users" @click="mobileNavOpen = false" class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-users mr-2"></i>Quản lý User</router-link>
+        <template v-for="group in visibleNavGroups" :key="group.title">
+          <div class="text-[11px] text-gray-500 font-semibold mt-2 first:mt-0 px-3 uppercase tracking-wider">{{ group.title }}</div>
+          <router-link
+            v-for="item in group.items"
+            :key="item.to"
+            :to="item.to"
+            @click="mobileNavOpen = false"
+            class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light">
+            <i :class="item.icon" class="mr-2" aria-hidden="true"></i>{{ item.label }}
+          </router-link>
+        </template>
         <button @click="openMobileSettings" class="min-h-11 text-left px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-cog mr-2"></i>Cấu hình</button>
         <button @click="logout" class="min-h-11 text-left px-3 py-2 rounded text-red-700 hover:bg-red-50"><i class="pi pi-sign-out mr-2"></i>Đăng xuất</button>
       </nav>
@@ -312,6 +281,56 @@ const userEmail = computed(() => authStore.currentUser?.email || '');
 const userRole = computed(() => authStore.currentUser?.role || 'Member');
 
 const isAdmin = computed(() => userRole.value === 'Admin');
+
+// --- Grouped navigation --------------------------------------------------------
+// Data-driven so the desktop sidebar and the mobile drawer render the exact same
+// items from one source. Labels are kept stable (existing e2e/a11y selectors rely
+// on "Bộ nhớ trợ lý", "Quản lý User", "Kho tài liệu"). The "Quản trị" group is
+// admin-only and filtered out for members.
+interface NavItem { to: string; icon: string; label: string }
+interface NavGroup { title: string; items: NavItem[]; adminOnly?: boolean }
+
+const navGroups: NavGroup[] = [
+  {
+    title: 'Không gian làm việc',
+    items: [
+      { to: '/chat', icon: 'pi pi-sparkles', label: 'Trợ lý AI' },
+      { to: '/projects', icon: 'pi pi-folder', label: 'Dự án' },
+      { to: '/documents', icon: 'pi pi-file-pdf', label: 'Kho tài liệu (RAG)' },
+      { to: '/memory', icon: 'pi pi-history', label: 'Bộ nhớ trợ lý' },
+      { to: '/agents', icon: 'pi pi-microchip-ai', label: 'Agents' },
+      { to: '/schedules', icon: 'pi pi-calendar-clock', label: 'Lịch tác vụ' },
+      { to: '/research', icon: 'pi pi-compass', label: 'Nghiên cứu' }
+    ]
+  },
+  {
+    title: 'Công cụ AI',
+    items: [
+      { to: '/tools/text', icon: 'pi pi-align-left', label: 'Phân tích văn bản' },
+      { to: '/tools/vision', icon: 'pi pi-image', label: 'Thị giác ảnh' }
+    ]
+  },
+  {
+    title: 'Vận hành',
+    items: [
+      { to: '/approvals', icon: 'pi pi-check-square', label: 'Phê duyệt tác vụ' },
+      { to: '/api-keys', icon: 'pi pi-key', label: 'API Keys' }
+    ]
+  },
+  {
+    title: 'Quản trị',
+    adminOnly: true,
+    items: [
+      { to: '/admin', icon: 'pi pi-th-large', label: 'Bảng điều khiển' },
+      { to: '/admin/users', icon: 'pi pi-users', label: 'Quản lý User' },
+      { to: '/admin/mcp-servers', icon: 'pi pi-server', label: 'Máy chủ MCP' },
+      { to: '/admin/knowledge', icon: 'pi pi-database', label: 'Cơ sở tri thức' },
+      { to: '/admin/audit', icon: 'pi pi-shield', label: 'Nhật ký hoạt động' }
+    ]
+  }
+];
+
+const visibleNavGroups = computed(() => navGroups.filter((group) => !group.adminOnly || isAdmin.value));
 
 const showSettingsModal = ref(false);
 const activeTab = ref('mcp');

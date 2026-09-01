@@ -63,6 +63,36 @@ export const ApiFactory = {
     BY_ID: (id: string) => `/api/api-keys/${id}`
   },
   MCP: {
+    BASE: '/api/mcp-servers',
+    BY_ID: (id: string) => `/api/mcp-servers/${id}`,
     CATALOG: '/api/mcp-servers/catalog'
+  },
+  KNOWLEDGE: {
+    INGEST: '/api/knowledgebase/ingest',
+    QUERY: '/api/knowledgebase/query'
+  },
+  TEXT_ANALYSIS: {
+    ANALYZE: '/api/textanalysis/analyze',
+    CLASSIFY: '/api/textanalysis/classify',
+    DETECT_LANGUAGE: '/api/textanalysis/detect-language',
+    KEYWORDS: '/api/textanalysis/extract-keywords',
+    EMBEDDINGS: '/api/textanalysis/embeddings'
+  },
+  VISION: {
+    UPLOAD: '/api/vision/upload',
+    ANALYZE: '/api/vision/analyze',
+    OCR: '/api/vision/ocr',
+    CLASSIFY: '/api/vision/classify',
+    REMOVE_BACKGROUND: '/api/vision/remove-background'
+  },
+  AUDIT: {
+    // Callers append a URLSearchParams query string for filtering/paging.
+    BASE: '/api/audit',
+    FACETS: '/api/audit/facets'
+  },
+  TASK_APPROVAL: {
+    PENDING: '/api/taskapproval/pending',
+    APPROVE: (id: string) => `/api/taskapproval/${id}/approve`,
+    REJECT: (id: string) => `/api/taskapproval/${id}/reject`
   }
 };

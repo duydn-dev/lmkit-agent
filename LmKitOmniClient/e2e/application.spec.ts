@@ -90,6 +90,32 @@ async function mockAuthenticatedApi(page: Page) {
     // ChatView refreshes the Canvas count badge whenever a session activates.
     if (path === '/api/canvas' && method === 'GET') return json(route, []);
 
+    // --- Admin/management + AI-tools screens ---
+    // Admin Hub stat card + Approvals inbox both read pending approvals.
+    if (path === '/api/taskapproval/pending' && method === 'GET') return json(route, []);
+    // Audit activity log: filter facets + one sample row so the table renders.
+    if (path === '/api/audit/facets') {
+      return json(route, { actorTypes: ['agent'], actions: ['AI.Tool.Invoke'], entityTypes: ['run_python'] });
+    }
+    if (path === '/api/audit' && method === 'GET') {
+      return json(route, {
+        items: [{
+          id: 'audit-1',
+          actorUserId: user.id,
+          actorType: 'agent',
+          action: 'AI.Tool.Invoke',
+          entityType: 'run_python',
+          entityId: null,
+          correlationId: null,
+          detailsJson: '{"Status":"Success","DurationMs":12.3}',
+          createdAtUtc: '2026-08-20T00:00:00Z'
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 25
+      });
+    }
+
     return json(route, { message: `E2E mock chưa khai báo ${method} ${path}` }, 501);
   });
   return browserErrors;
@@ -164,5 +190,60 @@ test('mobile navigation exposes the primary routes and closes after navigation',
   await expect(page.getByRole('navigation', { name: 'Điều hướng di động' })).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Kho Tài Liệu' })).toBeVisible();
   await expectNoWcagViolations(page);
+  expect(browserErrors).toEqual([]);
+});
+
+test('admin sidebar exposes grouped management navigation and opens the hub', async ({ page }) => {
+  const browserErrors = await mockAuthenticatedApi(page);
+  await page.goto('/chat');
+
+  const sidebar = page.getByRole('complementary', { name: 'Thanh bên ứng dụng' });
+  await expect(sidebar.getByText('Công cụ AI')).toBeVisible();
+  await expect(sidebar.getByText('Quản trị')).toBeVisible();
+  await expect(sidebar.getByRole('link', { name: 'Nhật ký hoạt động' })).toBeVisible();
+  await expect(sidebar.getByRole('link', { name: 'Máy chủ MCP' })).toBeVisible();
+  await expect(sidebar.getByRole('link', { name: 'Cơ sở tri thức' })).toBeVisible();
+
+  await sidebar.getByRole('link', { name: 'Bảng điều khiển' }).click();
+  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page.getByRole('heading', { name: 'Bảng điều khiển quản trị' })).toBeVisible();
+  await expectNoWcagViolations(page);
+  expect(browserErrors).toEqual([]);
+});
+
+test('admin can open the audit, MCP and knowledge-base management screens', async ({ page }) => {
+  const browserErrors = await mockAuthenticatedApi(page);
+
+  await page.goto('/admin/audit');
+  await expect(page.getByRole('heading', { name: 'Nhật ký hoạt động' })).toBeVisible();
+  await expectNoWcagViolations(page);
+
+  await page.goto('/admin/mcp-servers');
+  await expect(page.getByRole('heading', { name: 'Máy chủ MCP' })).toBeVisible();
+  await expect(page.getByText('Chưa có máy chủ MCP nào được kết nối.')).toBeVisible();
+  await expectNoWcagViolations(page);
+
+  await page.goto('/admin/knowledge');
+  await expect(page.getByRole('heading', { name: 'Cơ sở tri thức' })).toBeVisible();
+  await expectNoWcagViolations(page);
+
+  expect(browserErrors).toEqual([]);
+});
+
+test('AI-tools and approvals screens render for an authenticated user', async ({ page }) => {
+  const browserErrors = await mockAuthenticatedApi(page);
+
+  await page.goto('/tools/text');
+  await expect(page.getByRole('heading', { name: 'Phân tích văn bản' })).toBeVisible();
+  await expectNoWcagViolations(page);
+
+  await page.goto('/tools/vision');
+  await expect(page.getByRole('heading', { name: 'Thị giác ảnh' })).toBeVisible();
+  await expectNoWcagViolations(page);
+
+  await page.goto('/approvals');
+  await expect(page.getByRole('heading', { name: 'Phê duyệt tác vụ' })).toBeVisible();
+  await expectNoWcagViolations(page);
+
   expect(browserErrors).toEqual([]);
 });

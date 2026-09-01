@@ -58,9 +58,51 @@ const router = createRouter({
           meta: { requiresAuth: true }
         },
         {
+          path: '/tools/text',
+          name: 'TextTools',
+          component: () => import('../views/tools/TextToolsView.vue'),
+          meta: { requiresAuth: true }
+        },
+        {
+          path: '/tools/vision',
+          name: 'VisionTools',
+          component: () => import('../views/tools/VisionToolsView.vue'),
+          meta: { requiresAuth: true }
+        },
+        {
+          path: '/approvals',
+          name: 'Approvals',
+          component: () => import('../views/approvals/ApprovalsView.vue'),
+          meta: { requiresAuth: true }
+        },
+        {
+          path: '/admin',
+          name: 'AdminHub',
+          component: () => import('../views/admin/AdminHub.vue'),
+          meta: { requiresAuth: true, requiresAdmin: true }
+        },
+        {
           path: '/admin/users',
           name: 'AdminUsers',
           component: () => import('../views/admin/UserManager.vue'),
+          meta: { requiresAuth: true, requiresAdmin: true }
+        },
+        {
+          path: '/admin/mcp-servers',
+          name: 'AdminMcpServers',
+          component: () => import('../views/admin/McpServersView.vue'),
+          meta: { requiresAuth: true, requiresAdmin: true }
+        },
+        {
+          path: '/admin/knowledge',
+          name: 'AdminKnowledge',
+          component: () => import('../views/admin/KnowledgeBaseView.vue'),
+          meta: { requiresAuth: true, requiresAdmin: true }
+        },
+        {
+          path: '/admin/audit',
+          name: 'AdminAudit',
+          component: () => import('../views/admin/AuditLogView.vue'),
           meta: { requiresAuth: true, requiresAdmin: true }
         }
       ]
