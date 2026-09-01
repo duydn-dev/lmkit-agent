@@ -1,29 +1,31 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.AspNetCore.SignalR;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Infrastructure.VectorDb;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Services;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
-using System.Security.Cryptography;
+using System.Security.Claims;
 using System.Threading.RateLimiting;
 using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.AI;
 using LmKitOmniApi.Infrastructure.AI.Security;
 using LmKitOmniApi.Infrastructure.AI.Filters;
-using Hangfire;
-using Hangfire.PostgreSql;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
 using Microsoft.Extensions.Caching.Distributed;
-using LmKitOmniApi.Infrastructure.Notifications;
-using LmKitOmniApi.Application.Jobs;
 using LmKitOmniApi.Application.Chat;
+using LmKitOmniApi.Infrastructure.AI.Tools;
+using LmKitOmniApi.Infrastructure.Security;
+using Microsoft.AspNetCore.DataProtection;
+using System.Security.Cryptography.X509Certificates;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,7 +34,9 @@ builder.Host.UseSerilog((context, configuration) =>
                  .WriteTo.Console());
 
 // Khởi tạo LM-Kit.NET License
-LMKit.Licensing.LicenseManager.SetLicenseKey("");
+var lmKitLicenseKey = builder.Configuration["LMKit:LicenseKey"];
+if (!string.IsNullOrWhiteSpace(lmKitLicenseKey))
+    LMKit.Licensing.LicenseManager.SetLicenseKey(lmKitLicenseKey);
 
 // Cấu hình giới hạn kích thước upload lớn
 builder.WebHost.ConfigureKestrel(options =>
@@ -49,6 +53,23 @@ builder.Services.AddExceptionHandler<LmKitOmniApi.Infrastructure.Exceptions.Glob
 
 builder.Services.AddControllers();
 
+var dataProtectionKeyPath = builder.Configuration["DataProtection:KeyPath"]
+    ?? Path.Combine(builder.Environment.ContentRootPath, "App_Data", "DataProtectionKeys");
+Directory.CreateDirectory(dataProtectionKeyPath);
+var dataProtection = builder.Services.AddDataProtection()
+    .SetApplicationName("LmKitOmniApi")
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyPath));
+var dataProtectionCertificatePath = builder.Configuration["DataProtection:CertificatePath"];
+if (!string.IsNullOrWhiteSpace(dataProtectionCertificatePath))
+{
+    var certificate = X509CertificateLoader.LoadPkcs12FromFile(
+        dataProtectionCertificatePath,
+        builder.Configuration["DataProtection:CertificatePassword"]);
+    dataProtection.ProtectKeysWithCertificate(certificate);
+}
+builder.Services.AddSingleton<TaskApprovalPayloadProtector>();
+builder.Services.AddSingleton<McpHeaderProtector>();
+
 // Đăng ký CORS (đọc origins từ cấu hình, không hardcode)
 builder.Services.AddCors(options =>
 {
@@ -63,18 +84,6 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Đăng ký SignalR với Redis Backplane
-var signalRRedisConn = builder.Configuration.GetConnectionString("Redis");
-if (!string.IsNullOrEmpty(signalRRedisConn))
-{
-    // builder.Services.AddSignalR().AddStackExchangeRedis(signalRRedisConn);
-    builder.Services.AddSignalR(); // Tạm thời fallback do lỗi package của .NET 10 preview
-}
-else
-{
-    builder.Services.AddSignalR();
-}
-
 // Đăng ký Swagger/OpenAPI
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -87,6 +96,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         var jwtSettings = builder.Configuration.GetSection("JwtSettings");
+        var jwtSecret = jwtSettings["SecretKey"];
+        if (string.IsNullOrWhiteSpace(jwtSecret) || Encoding.UTF8.GetByteCount(jwtSecret) < 32)
+            throw new InvalidOperationException("JwtSettings:SecretKey must be configured with at least 32 bytes.");
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -95,7 +108,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             ValidIssuer = jwtSettings["Issuer"],
             ValidAudience = jwtSettings["Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["SecretKey"]!))
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+            NameClaimType = ClaimTypes.NameIdentifier,
+            RoleClaimType = "Role"
         };
         options.Events = new JwtBearerEvents
         {
@@ -117,11 +132,62 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     if (!string.IsNullOrEmpty(isBlacklisted))
                     {
                         context.Fail("Token has been revoked");
+                        return;
                     }
                 }
+
+                if (!Guid.TryParse(context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
+                    || !Guid.TryParse(context.Principal?.FindFirstValue("sid"), out var sessionId)
+                    || !Guid.TryParse(context.Principal?.FindFirstValue("TenantId"), out var tenantId))
+                {
+                    context.Fail("Token session claims are invalid");
+                    return;
+                }
+
+                var authDb = context.HttpContext.RequestServices.GetRequiredService<HermesDbContext>();
+                var sessionIsActive = await authDb.UserSessions.AnyAsync(session =>
+                    session.Id == sessionId
+                    && session.UserId == userId
+                    && session.Status == "active"
+                    && session.ExpiresAtUtc > DateTime.UtcNow
+                    && session.User != null
+                    && session.User.IsActive
+                    && session.User.TenantId == tenantId,
+                    context.HttpContext.RequestAborted);
+                if (!sessionIsActive) context.Fail("Session is inactive or revoked");
             }
         };
-    });
+
+        // Requests presenting X-Api-Key are handed to the ApiKey scheme for every
+        // default authenticate/challenge, so HttpContext.User is populated from the
+        // key even on surfaces that bypass endpoint policies (the /metrics admin
+        // gate, [Authorize(Roles = ...)] policies without explicit schemes, and the
+        // rate-limiter partitions). Requests WITHOUT the header keep the exact
+        // JWT pipeline above — cookie extraction, OnTokenValidated session
+        // revocation — untouched. When both credentials are present the explicit
+        // API key wins by design.
+        options.ForwardDefaultSelector = context =>
+            context.Request.Headers.TryGetValue(ApiKeyAuthenticationHandler.HeaderName, out var apiKeyHeader)
+                && !string.IsNullOrWhiteSpace(apiKeyHeader)
+                ? ApiKeyAuthenticationHandler.SchemeName
+                : null;
+    })
+    // Programmatic access: X-Api-Key header validated against hashed TenantApiKeys.
+    .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+        ApiKeyAuthenticationHandler.SchemeName, null);
+
+// Plain [Authorize] must accept BOTH schemes: the default policy authenticates the
+// JWT cookie/bearer scheme AND the ApiKey scheme and merges their principals. The
+// JWT scheme stays the default authenticate/challenge scheme, so anonymous requests
+// still get the same 401 challenge as before.
+builder.Services.AddAuthorization(options =>
+{
+    options.DefaultPolicy = new AuthorizationPolicyBuilder(
+            JwtBearerDefaults.AuthenticationScheme,
+            ApiKeyAuthenticationHandler.SchemeName)
+        .RequireAuthenticatedUser()
+        .Build();
+});
 
 // 1. Cấu hình DbContext (PostgreSQL) đọc từ AppSettings
 builder.Services.AddHttpContextAccessor();
@@ -137,32 +203,42 @@ builder.Services.AddDbContext<HermesDbContext>((sp, options) =>
 // Đăng ký Qdrant Vector DB
 builder.Services.AddSingleton<IVectorStoreService, QdrantVectorService>();
 
-// Cấu hình Hangfire
-builder.Services.AddHangfire(configuration => configuration
-    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-    .UseSimpleAssemblyNameTypeSerializer()
-    .UseRecommendedSerializerSettings()
-    .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(builder.Configuration["PostgreSql"])));
-
-builder.Services.AddHangfireServer();
-
-// Đăng ký Neo4j Driver
-var neo4jUri = builder.Configuration["GraphDb:Uri"] ?? "bolt://localhost:7687";
-var neo4jUser = builder.Configuration["GraphDb:Username"] ?? "neo4j";
-var neo4jPassword = builder.Configuration["GraphDb:Password"] ?? "neo4j";
-builder.Services.AddSingleton(Neo4j.Driver.GraphDatabase.Driver(neo4jUri, Neo4j.Driver.AuthTokens.Basic(neo4jUser, neo4jPassword)));
-
-// Đăng ký Telegram Proactive Agent
-builder.Services.Configure<TelegramSettings>(builder.Configuration.GetSection("TelegramSettings"));
-builder.Services.AddScoped<ITelegramNotificationService, TelegramNotificationService>();
-
 // ============================================================
 // 🛡️ AI Safety & Security Services (Phase 1)
 // ============================================================
 builder.Services.AddScoped<IPromptGuardService, PromptGuardService>();
-builder.Services.AddScoped<IToolPermissionService, ToolPermissionService>();
+// The rate window must survive individual HTTP request scopes.
+builder.Services.AddSingleton<IToolPermissionService, ToolPermissionService>();
 builder.Services.AddScoped<ToolSandboxService>();
+builder.Services.AddScoped<UserResourceAccessService>();
 builder.Services.AddScoped<IExecutionSandboxEngine, ExecutionSandboxEngine>();
+// Container-backed Python code interpreter (disabled by default — see
+// CodeInterpreterOptions). Options bound from "CodeInterpreter:Python"; the
+// ProcessRunner seam is a stateless singleton, the executor is scoped like the
+// JS sandbox engine above. When disabled, the executor reports IsEnabled=false
+// and the run_python tool is never offered.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Security.CodeInterpreterOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Security.CodeInterpreterOptions.SectionName));
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Security.IProcessRunner, LmKitOmniApi.Infrastructure.AI.Security.ProcessRunner>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Security.IPythonCodeExecutor, LmKitOmniApi.Infrastructure.AI.Security.PythonContainerExecutor>();
+builder.Services.AddScoped<AgentToolGateway>();
+
+// External database agent (read-only by default; db_query tool gated off unless
+// DatabaseAgent:Enabled). Connection secrets encrypted via DbConnectionSecretProtector;
+// egress-vetted per-provider; both engines registered as IExternalDatabaseProvider.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Security.DatabaseAgentOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Security.DatabaseAgentOptions.SectionName));
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.Security.DbConnectionSecretProtector>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Security.DbEgressValidator>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.PostgresDatabaseProvider>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.SqliteDatabaseProvider>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.MySqlDatabaseProvider>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.SqlServerDatabaseProvider>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.OracleDatabaseProvider>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.ExternalDatabaseService>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.MongoDatabaseService>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.ISchemaEmbedder, LmKitOmniApi.Infrastructure.AI.Database.LmKitSchemaEmbedder>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.SchemaIndexingService>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.ISchemaRetriever>(sp => sp.GetRequiredService<LmKitOmniApi.Infrastructure.AI.Database.SchemaIndexingService>());
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.DbQueryService>();
 
 // Filter Pipeline (ordered execution)
 builder.Services.AddScoped<IAgentFilter, InputSanitizationFilter>();
@@ -174,8 +250,6 @@ builder.Services.AddScoped<AgentFilterPipeline>();
 // ============================================================
 builder.Services.AddScoped<IAgentMemoryService, AgentMemoryService>();
 builder.Services.AddScoped<ITokenManagementService, TokenManagementService>();
-builder.Services.AddScoped<IGraphKnowledgeService, GraphKnowledgeService>();
-builder.Services.AddScoped<ISentimentAnalyzerService, SentimentAnalyzerService>();
 
 // ============================================================
 // 🔍 Query Expansion (Phase 4 — Hybrid Search)
@@ -188,6 +262,11 @@ builder.Services.AddScoped<IRagPipelineService, RagPipelineService>();
 
 // Đăng ký Background Worker cho RAG Bất đồng bộ
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DocumentVectorizationWorker>();
+builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.SchemaVectorizationWorker>();
+builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DataRetentionWorker>();
+builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ModelWarmupWorker>();
+// Tier 2: user-defined recurring prompts delivered as notifications.
+builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ScheduledTaskWorker>();
 
 // ============================================================
 // 🔄 Multi-Agent System (Phase 3)
@@ -196,7 +275,6 @@ builder.Services.AddScoped<ISpecializedAgent, LmKitOmniApi.Infrastructure.AI.Age
 builder.Services.AddScoped<ISpecializedAgent, LmKitOmniApi.Infrastructure.AI.Agents.AnalysisAgent>();
 builder.Services.AddScoped<ISpecializedAgent, LmKitOmniApi.Infrastructure.AI.Agents.VisionAgent>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Agents.MultiAgentOrchestrator>();
-builder.Services.AddScoped<DagWorkflowOrchestrator>();
 
 // ============================================================
 // 📎 Chat + File Attachment (Phase 5)
@@ -211,6 +289,8 @@ builder.Services.AddScoped<OCRKnowledgeIngestionService>();
 var redisConnectionString = builder.Configuration.GetConnectionString("Redis");
 if (!string.IsNullOrEmpty(redisConnectionString))
 {
+    builder.Services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(
+        _ => StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString));
     builder.Services.AddStackExchangeRedisCache(options =>
     {
         options.Configuration = redisConnectionString;
@@ -223,62 +303,154 @@ else
 }
 
 // 2. Cấu hình OpenTelemetry
+var otlpEnabled = !string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource.AddService("LmKitOmniApi"))
-    .WithMetrics(metrics => metrics
-        .AddAspNetCoreInstrumentation()
-        .AddHttpClientInstrumentation()
-        .AddMeter("LmKitOmniApi.AgentMetrics")
-        .AddPrometheusExporter())
-    .WithTracing(tracing => tracing
-        .AddAspNetCoreInstrumentation()
-        .AddHttpClientInstrumentation()
-        .AddSource("LmKitOmniApi.Agent"));
+    .WithMetrics(metrics =>
+    {
+        metrics.AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddMeter("LmKitOmniApi.AgentMetrics")
+            .AddPrometheusExporter();
+        if (otlpEnabled) metrics.AddOtlpExporter();
+    })
+    .WithTracing(tracing =>
+    {
+        tracing.AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddSource("LmKitOmniApi.Agent");
+        if (otlpEnabled) tracing.AddOtlpExporter();
+    });
 
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Observability.AgentTelemetryService>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Observability.AgentToolAuditService>();
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Resilience.AgentResiliencePolicy>();
 
 // ============================================================
 // 🔗 MCP Integration (Phase 7)
 // ============================================================
-builder.Services.AddHttpClient("MCP");
-builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Mcp.McpClientService>();
+builder.Services.AddHttpClient("MCP", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.MaxResponseContentBufferSize = 1_048_576;
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    // Redirect targets have not passed the MCP URL/DNS sandbox checks.
+    AllowAutoRedirect = false,
+    // DNS-rebinding TOCTOU fix: the pre-invocation URL check resolves DNS once, and a
+    // plain handler would resolve it AGAIN for the actual request — a malicious
+    // resolver can answer with a public IP during validation and rebind to
+    // 169.254.169.254 / RFC1918 space for the connection. The shared factory
+    // re-resolves, re-vets every address with the sandbox's authoritative
+    // classifier, and connects only to a vetted public IP (TLS still validates
+    // against the original hostname via SNI). See SsrfSafeConnect.
+    ConnectCallback = SsrfSafeConnect.CreateVettedConnectCallback()
+});
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.IMcpProtocolClient, LmKitOmniApi.Infrastructure.AI.Mcp.McpProtocolClient>();
+
+// OAuth 2.0 client-credentials token endpoint for MCP servers. Separate named client
+// (shorter timeout, smaller buffer) but the SAME connect-time SSRF re-vetting as the MCP
+// transport, so a rebinding token host is refused at the socket just like a tool host.
+builder.Services.AddHttpClient(LmKitOmniApi.Infrastructure.AI.Mcp.McpOAuthTokenProvider.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.MaxResponseContentBufferSize = 262_144;
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+    ConnectCallback = SsrfSafeConnect.CreateVettedConnectCallback()
+});
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.IMcpOAuthTokenProvider, LmKitOmniApi.Infrastructure.AI.Mcp.McpOAuthTokenProvider>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.McpClientService>();
+
+// ============================================================
+// 🔬 Deep Research (Tier 2)
+// ============================================================
+// Scoped: wraps the scoped ToolSandboxService SSRF gate.
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Research.IResearchUrlValidator,
+    LmKitOmniApi.Infrastructure.AI.Research.SandboxResearchUrlValidator>();
+builder.Services.AddHttpClient<LmKitOmniApi.Infrastructure.AI.Research.ResearchContentFetcher>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.MaxResponseContentBufferSize = LmKitOmniApi.Infrastructure.AI.Research.ResearchLimits.MaxContentBytes;
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("LmKitOmniAgent/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    // Redirect targets have not passed the research URL/DNS sandbox checks; the
+    // fetcher treats 3xx as skip. ValidateUrlAsync re-vets DNS per fetch.
+    AllowAutoRedirect = false,
+    // Same DNS-rebinding TOCTOU defense as the MCP handler: ValidateUrlAsync
+    // resolves DNS during validation, and without this the handler would resolve
+    // AGAIN at connect time — a rebinding resolver could then point the socket at
+    // internal/metadata IPs. Re-vet every resolved address and connect only to a
+    // vetted public IP. See SsrfSafeConnect.
+    ConnectCallback = SsrfSafeConnect.CreateVettedConnectCallback()
+});
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Research.DeepResearchService>();
 
 // ============================================================
 // 📋 Skill Registry & Prompt Templates
 // ============================================================
-builder.Services.AddScoped<AgentSkillRegistry>();
 builder.Services.AddSingleton<PromptTemplateEngine>();
+builder.Services.AddSingleton<LmKitDefaultToolCatalog>();
 
 // Đăng ký Agent Orchestrator (FULLY INTEGRATED — all services wired)
 builder.Services.AddScoped<IAgentOrchestrator, AgentOrchestrator>();
 
 // Đăng ký Advanced Tools
-builder.Services.AddScoped<IWebSearchService, LmKitOmniApi.Infrastructure.Web.DuckDuckGoSearchService>();
-builder.Services.AddScoped<IOfficeDocumentToolService, LmKitOmniApi.Infrastructure.Tools.OfficeDocumentToolService>();
+builder.Services.AddHttpClient<IWebSearchService, LmKitOmniApi.Infrastructure.Web.DuckDuckGoSearchService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("LmKitOmniAgent/1.0");
+});
 
 // ============================================================
 // 🏥 Health Checks
 // ============================================================
-builder.Services.AddHealthChecks();
+var healthChecks = builder.Services.AddHealthChecks()
+    .AddCheck<LmKitOmniApi.Infrastructure.Health.PostgresHealthCheck>("postgres", tags: ["ready"])
+    .AddCheck<LmKitOmniApi.Infrastructure.Health.QdrantHealthCheck>("qdrant", tags: ["ready"])
+    .AddCheck<LmKitOmniApi.Infrastructure.Health.LmKitModelHealthCheck>("lmkit-model", tags: ["ready"]);
+if (!string.IsNullOrWhiteSpace(redisConnectionString))
+    healthChecks.AddCheck<LmKitOmniApi.Infrastructure.Health.RedisHealthCheck>("redis", tags: ["ready"]);
 
 // ============================================================
 // 🚦 Rate Limiting (bảo vệ tài nguyên LLM đắt đỏ)
 // ============================================================
+var aiRequestsPerWindow = builder.Configuration.GetValue("RateLimiting:AiRequestsPerWindow", 10);
+var aiWindowSeconds = builder.Configuration.GetValue("RateLimiting:AiWindowSeconds", 60);
+if (aiRequestsPerWindow <= 0 || aiWindowSeconds <= 0)
+    throw new InvalidOperationException("AI rate-limit values must be greater than zero.");
+
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (rejection, ct) =>
+    {
+        var retryAfterSeconds = rejection.Lease.TryGetMetadata(
+            MetadataName.RetryAfter,
+            out var retryAfter)
+            ? Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds))
+            : aiWindowSeconds;
+        rejection.HttpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString();
+        await rejection.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            title = "Too many requests.",
+            status = StatusCodes.Status429TooManyRequests
+        }, ct);
+    };
     
-    // In Production with multiple instances, implement an IDistributedCache / Redis-backed sliding window here.
-    // E.g. using AspNetCoreRateLimit or a custom middleware. Using local TokenBucket for now.
+    // Local token bucket is the fallback and also protects each process. When Redis
+    // is configured, DistributedAiRateLimitMiddleware adds a cross-replica atomic window.
     options.AddPolicy("ai-agent", httpContext =>
         RateLimitPartition.GetTokenBucketLimiter(
             httpContext.User.Identity?.Name ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
             _ => new TokenBucketRateLimiterOptions
             {
-                TokenLimit = 10,
-                ReplenishmentPeriod = TimeSpan.FromMinutes(1),
-                TokensPerPeriod = 5,
+                TokenLimit = aiRequestsPerWindow,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(aiWindowSeconds),
+                TokensPerPeriod = aiRequestsPerWindow,
                 AutoReplenishment = true
             }));
 
@@ -292,16 +464,42 @@ builder.Services.AddRateLimiter(options =>
                 QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst,
                 QueueLimit = 0
             }));
+
+    // Anonymous share-link reads: per-IP fixed window so a single host cannot scan
+    // for tokens, while legitimate viewers stay comfortably under the limit.
+    options.AddPolicy("SharePolicy", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromSeconds(60),
+                QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0
+            }));
 });
 
 var app = builder.Build();
 
-// Database Migration - Bỏ Migrate() tự động trong code API để tránh lock table trên cluster
-// Hãy chạy dotnet ef database update trong CI/CD hoặc Init Container
-using (var scope = app.Services.CreateScope())
+if (builder.Configuration.GetValue<bool>("Database:ApplyMigrations"))
 {
+    using var migrationScope = app.Services.CreateScope();
+    var migrationDb = migrationScope.ServiceProvider.GetRequiredService<HermesDbContext>();
+    app.Logger.LogInformation("Applying database migrations before accepting traffic.");
+    migrationDb.Database.Migrate();
+}
+
+// Bootstrap is explicit. Production must provision the first administrator via
+// secret-backed configuration or an external identity workflow.
+if (builder.Configuration.GetValue<bool>("BootstrapAdmin:Enabled"))
+{
+    var bootstrapEmail = builder.Configuration["BootstrapAdmin:Email"];
+    var bootstrapPassword = builder.Configuration["BootstrapAdmin:Password"];
+    if (string.IsNullOrWhiteSpace(bootstrapEmail) || string.IsNullOrWhiteSpace(bootstrapPassword))
+        throw new InvalidOperationException("BootstrapAdmin is enabled but Email/Password is missing.");
+
+    using var scope = app.Services.CreateScope();
     var dbContext = scope.ServiceProvider.GetRequiredService<LmKitOmniApi.Infrastructure.Data.HermesDbContext>();
-    // Data Seeding — tạo tài khoản admin với mật khẩu ngẫu nhiên an toàn
     if (!dbContext.Tenants.Any())
     {
         var tenant = new Tenant { Name = "Default Tenant" };
@@ -310,49 +508,21 @@ using (var scope = app.Services.CreateScope())
 
         if (!dbContext.Users.Any())
         {
-            // Sinh mật khẩu ngẫu nhiên 16 ký tự thay vì dùng "admin"
-            var randomPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(12));
             var adminUser = new User
             {
                 Username = "admin",
-                Email = "admin@lmkit.net",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword(randomPassword),
+                Email = bootstrapEmail,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(bootstrapPassword),
                 FullName = "Admin User",
                 Role = "Admin",
                 TenantId = tenant.Id
             };
             dbContext.Users.Add(adminUser);
             dbContext.SaveChanges();
-
-            // In mật khẩu ra console để admin biết — chỉ hiển thị 1 lần duy nhất
-            Console.WriteLine("============================================");
-            Console.WriteLine($"  ADMIN ACCOUNT CREATED");
-            Console.WriteLine($"  Username: admin");
-            Console.WriteLine($"  Password: {randomPassword}");
-            Console.WriteLine($"  ⚠️  PLEASE CHANGE THIS PASSWORD IMMEDIATELY");
-            Console.WriteLine("============================================");
+            app.Logger.LogWarning("Bootstrap administrator {Email} was created; disable BootstrapAdmin immediately.", bootstrapEmail);
         }
     }
 }
-
-// Cấu hình Hangfire Recurring Jobs (Proactive Agent & Model Distillation)
-RecurringJob.AddOrUpdate<ProactiveMonitorJob>(
-    "proactive-monitor-job",
-    job => job.RunMonitorAsync(CancellationToken.None),
-    "*/30 * * * *" // Chạy định kỳ mỗi 30 phút
-);
-
-RecurringJob.AddOrUpdate<ContinuousFineTuningJob>(
-    "nightly-lora-finetuning-job",
-    job => job.RunNightlyFineTuningAsync(CancellationToken.None),
-    "0 2 * * *" // Chạy vào lúc 2:00 AM mỗi ngày
-);
-
-RecurringJob.AddOrUpdate<ReflexionJob>(
-    "nightly-reflexion-job",
-    job => job.RunReflexionAsync(CancellationToken.None),
-    "30 2 * * *" // Chạy vào lúc 2:30 AM mỗi ngày
-);
 
 if (app.Environment.IsDevelopment())
 {
@@ -365,31 +535,52 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseExceptionHandler();
-app.UseHttpsRedirection();
+if (builder.Configuration.GetValue("HttpsRedirection:Enabled", true))
+{
+    if (!app.Environment.IsDevelopment()) app.UseHsts();
+    app.UseHttpsRedirection();
+}
 
 // Kích hoạt CORS (đã đổi tên policy từ "AllowAll" → "ProductionCors")
 app.UseCors("ProductionCors");
 
-// Kích hoạt Rate Limiting
-app.UseRateLimiter();
-
+app.UseRouting();
 app.UseAuthentication();
+// Authentication must run first so rate-limit partitions use the stable user id
+// instead of grouping every signed-in caller behind the same proxy IP.
+app.UseMiddleware<LmKitOmniApi.Infrastructure.Security.DistributedAiRateLimitMiddleware>();
+app.UseRateLimiter();
 app.UseAuthorization();
 
-app.UseHangfireDashboard("/hangfire", new DashboardOptions
-{
-    Authorization = new[] { new LmKitOmniApi.Infrastructure.Security.HangfireAuthorizationFilter() }
-});
-
 // Kích hoạt Prometheus Scrape Endpoint cho OpenTelemetry
+app.UseWhen(
+    context => context.Request.Path.Equals("/metrics", StringComparison.OrdinalIgnoreCase),
+    metricsApp => metricsApp.Use(async (context, next) =>
+    {
+        if (context.User.Identity?.IsAuthenticated != true || !context.User.IsInRole("Admin"))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
+        await next(context);
+    }));
 app.UseOpenTelemetryPrometheusScrapingEndpoint();
 
 app.MapControllers();
 
 // Health Check endpoint
 app.MapHealthChecks("/health");
-
-// Map SignalR Hub
-app.MapHub<LmKitOmniApi.Infrastructure.Hubs.NotificationHub>("/hubs/notifications");
+app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = _ => false
+});
+app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+});
 
 app.Run();
+
+// Exposes the top-level application entry point to WebApplicationFactory without
+// changing production startup behavior.
+public partial class Program;

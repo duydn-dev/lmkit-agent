@@ -13,14 +13,13 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { formatSafeMessage } from '@/utils/safeFormatting';
 
 const props = defineProps<{
   content: string;
 }>();
 
-const formatMessage = (text: string) => {
-  return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>');
-};
+const formatMessage = formatSafeMessage;
 
 const defaultOptions = {
   responsive: true,

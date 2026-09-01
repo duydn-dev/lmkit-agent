@@ -1,0 +1,77 @@
+export type ChatStreamEvent =
+  | { type: 'content'; value: string }
+  | { type: 'thinking'; value: string }
+  | { type: 'web-search'; value: string }
+  | { type: 'approval'; value: string }
+  | { type: 'saved'; value: string }
+  | { type: 'file'; value: string }
+  | { type: 'step'; value: string }
+  | { type: 'run-id'; value: string }
+  | { type: 'error'; value: string }
+  | { type: 'agent-log'; value: string }
+  | { type: 'done'; value: '' };
+
+/** Incrementally parses the single-line JSON SSE events emitted by ChatController. */
+export class ChatSseParser {
+  private buffer = '';
+
+  push(chunk: string): ChatStreamEvent[] {
+    this.buffer += chunk;
+    const events: ChatStreamEvent[] = [];
+    let lineEnd: number;
+    while ((lineEnd = this.buffer.indexOf('\n')) !== -1) {
+      const line = this.buffer.slice(0, lineEnd).replace(/\r$/, '');
+      this.buffer = this.buffer.slice(lineEnd + 1);
+      const event = parseDataLine(line);
+      if (event) events.push(event);
+    }
+    return events;
+  }
+
+  finish(): ChatStreamEvent[] {
+    if (!this.buffer) return [];
+    const line = this.buffer.replace(/\r$/, '');
+    this.buffer = '';
+    const event = parseDataLine(line);
+    return event ? [event] : [];
+  }
+}
+
+function parseDataLine(line: string): ChatStreamEvent | null {
+  if (!line.startsWith('data:')) return null;
+  let raw = line.slice(5);
+  if (raw.startsWith(' ')) raw = raw.slice(1);
+
+  let value = raw;
+  try {
+    const decoded: unknown = JSON.parse(raw);
+    if (typeof decoded === 'string') value = decoded;
+  } catch {
+    // Plain data is accepted for compatibility with older API responses.
+  }
+
+  if (value === '[DONE]') return { type: 'done', value: '' };
+  if (value.startsWith('[ERROR]:'))
+    return { type: 'error', value: value.slice('[ERROR]:'.length).trim() };
+  if (value.startsWith('[THINKING]:'))
+    return { type: 'thinking', value: value.slice('[THINKING]:'.length).trim() };
+  if (value.startsWith('[WEB_SEARCH]:'))
+    return { type: 'web-search', value: value.slice('[WEB_SEARCH]:'.length) };
+  if (value.startsWith('[HITL_APPROVAL_REQUIRED:') && value.endsWith(']'))
+    return { type: 'approval', value: value.slice('[HITL_APPROVAL_REQUIRED:'.length, -1).trim() };
+  if (value.startsWith('[RESEARCH_SAVED:') && value.endsWith(']'))
+    return { type: 'saved', value: value.slice('[RESEARCH_SAVED:'.length, -1).trim() };
+  // [FILE:{json}] — a file a tool produced (e.g. a run_python chart). The inner
+  // JSON descriptor is sliced whole (the trailing ']' is dropped, never a ']'
+  // that appears inside a JSON string value) and parsed by the consumer.
+  if (value.startsWith('[FILE:') && value.endsWith(']'))
+    return { type: 'file', value: value.slice('[FILE:'.length, -1) };
+  // [STEP:{json}] — an agent-run tool step (agent mode only). [AGENT_RUN:{id}] —
+  // the run id, emitted first so the client can deep-link the run.
+  if (value.startsWith('[STEP:') && value.endsWith(']'))
+    return { type: 'step', value: value.slice('[STEP:'.length, -1) };
+  if (value.startsWith('[AGENT_RUN:') && value.endsWith(']'))
+    return { type: 'run-id', value: value.slice('[AGENT_RUN:'.length, -1).trim() };
+  if (value.startsWith('[Agent invoked:')) return { type: 'agent-log', value };
+  return { type: 'content', value };
+}

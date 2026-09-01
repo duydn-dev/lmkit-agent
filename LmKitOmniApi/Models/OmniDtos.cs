@@ -2,27 +2,14 @@ using System.ComponentModel.DataAnnotations;
 
 namespace LmKitOmniApi.Models;
 
-public class ChatCompletionRequest
+/// <summary>
+/// Body of <c>PATCH /api/chat/sessions/{id}</c>. Wire shape: <c>{ "title": string }</c>.
+/// Validation (non-empty, max 100 chars after trimming) lives in ChatController so the
+/// error payload matches the codebase's Vietnamese <c>{ message }</c> convention.
+/// </summary>
+public class RenameChatSessionRequest
 {
-    [Required]
-    public List<ChatMessage> Messages { get; set; } = new();
-    public string? Model { get; set; }
-    public float Temperature { get; set; } = 0.7f;
-    public int MaxTokens { get; set; } = 2048;
-}
-
-public class ChatMessage
-{
-    public string Role { get; set; } = "user"; // "system", "user", "assistant"
-    public string Content { get; set; } = string.Empty;
-}
-
-public class ChatCompletionResponse
-{
-    public string Text { get; set; } = string.Empty;
-    public int GeneratedTokens { get; set; }
-    public double TokenGenerationRate { get; set; }
-    public string StopReason { get; set; } = string.Empty;
+    public string? Title { get; set; }
 }
 
 public class DocumentConversionRequest

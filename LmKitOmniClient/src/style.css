@@ -1,12 +1,16 @@
 @import "tailwindcss";
 
 @theme {
-  --color-chatgpt-dark: #121212;
-  --color-chatgpt-light: #1e1e1e;
-  --color-chatgpt-text: #e0e0e0;
-  --color-chatgpt-brand: #0ea5e9; /* Sky Blue */
-  --color-glass: rgba(30, 30, 30, 0.6);
-  --color-glass-border: rgba(255, 255, 255, 0.08);
+  --color-chatgpt-dark: #f8fafc;
+  --color-chatgpt-light: #e2e8f0;
+  --color-chatgpt-text: #111827;
+  --color-chatgpt-brand: #0369a1;
+  --color-glass: rgba(255, 255, 255, 0.82);
+  --color-glass-border: rgba(15, 23, 42, 0.12);
+  --color-gray-400: #1f2937;
+  --color-gray-500: #374151;
+  --color-emerald-600: #065f46;
+  --color-amber-600: #78350f;
 }
 
 html, body {
@@ -31,6 +35,20 @@ html, body {
   flex-direction: column;
 }
 
+:focus-visible {
+  outline: 3px solid #0369a1;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* Glassmorphism utilities */
 .glass-panel {
   background: var(--color-glass);
@@ -48,11 +66,11 @@ html, body {
   background: transparent; 
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1); 
+  background: rgba(15, 23, 42, 0.24);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2); 
+  background: rgba(15, 23, 42, 0.4);
 }
 
 /* Animations */

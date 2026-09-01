@@ -1,4 +1,11 @@
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5032';
+/**
+ * API origin shared by every request. Also exported for the few surfaces (the
+ * public share page) that must call the API with a PLAIN fetch — no refresh /
+ * login-redirect machinery — but still target the same backend.
+ */
+export const API_BASE_URL: string = import.meta.env.VITE_API_URL || '';
+
+const BASE_URL = API_BASE_URL;
 
 class Http {
   private prepareHeaders(headers: HeadersInit = {}, isFormData: boolean = false): HeadersInit {
@@ -8,8 +15,16 @@ class Http {
     if (!isFormData && !reqHeaders['Content-Type']) {
       reqHeaders['Content-Type'] = 'application/json';
     }
-    
+
     return reqHeaders;
+  }
+
+  private serializeBody(body: unknown): BodyInit | undefined {
+    if (body instanceof FormData) {
+      return body;
+    }
+    // Preserve the original semantics: falsy bodies (undefined/null/'') are sent without a payload.
+    return body ? JSON.stringify(body) : undefined;
   }
 
   private isRefreshing = false;
@@ -24,12 +39,20 @@ class Http {
     this.refreshSubscribers.push(cb);
   }
 
+  private redirectToLogin() {
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      window.location.assign('/login');
+    }
+  }
+
   private async _request(url: string, options: RequestInit): Promise<Response> {
-    const isRefreshUrl = url === '/api/auth/refresh';
+    const isAuthLifecycleUrl = url === '/api/auth/login'
+      || url === '/api/auth/refresh'
+      || url === '/api/auth/logout';
     let response = await fetch(`${BASE_URL}${url}`, options);
 
     // If 401 and it's not the refresh endpoint itself
-    if (response.status === 401 && !isRefreshUrl) {
+    if (response.status === 401 && !isAuthLifecycleUrl) {
       if (!this.isRefreshing) {
         this.isRefreshing = true;
         
@@ -48,15 +71,14 @@ class Http {
           } else {
             this.isRefreshing = false;
             this.onRefreshed(false);
-            // If refresh fails, we could redirect to login here
-            if (typeof window !== 'undefined') {
-               // Let the auth store or component handle it if possible, or force redirect:
-               window.location.href = '/login';
-            }
+            // Refresh was rejected: send the user back to the login screen.
+            this.redirectToLogin();
           }
-        } catch (e) {
+        } catch {
+          // A network error while refreshing is also a refresh failure.
           this.isRefreshing = false;
           this.onRefreshed(false);
+          this.redirectToLogin();
         }
       } else {
         // Wait for the ongoing refresh to finish
@@ -66,6 +88,11 @@ class Http {
         if (success) {
           // Retry the original request
           response = await fetch(`${BASE_URL}${url}`, options);
+        } else {
+          // The shared refresh failed for this waiter too. Previously the waiter
+          // branch silently returned the original 401 without redirecting; redirect
+          // so every concurrent request lands on /login consistently.
+          this.redirectToLogin();
         }
       }
     }
@@ -81,22 +108,32 @@ class Http {
     });
   }
 
-  async post(url: string, body?: any, headers: HeadersInit = {}): Promise<Response> {
+  async post(url: string, body?: unknown, headers: HeadersInit = {}): Promise<Response> {
     const isFormData = body instanceof FormData;
     return this._request(url, {
       method: 'POST',
       headers: this.prepareHeaders(headers, isFormData),
-      body: isFormData ? body : (body ? JSON.stringify(body) : undefined),
+      body: this.serializeBody(body),
       credentials: 'include'
     });
   }
-  
-  async put(url: string, body?: any, headers: HeadersInit = {}): Promise<Response> {
+
+  async put(url: string, body?: unknown, headers: HeadersInit = {}): Promise<Response> {
     const isFormData = body instanceof FormData;
     return this._request(url, {
       method: 'PUT',
       headers: this.prepareHeaders(headers, isFormData),
-      body: isFormData ? body : (body ? JSON.stringify(body) : undefined),
+      body: this.serializeBody(body),
+      credentials: 'include'
+    });
+  }
+
+  async patch(url: string, body?: unknown, headers: HeadersInit = {}): Promise<Response> {
+    const isFormData = body instanceof FormData;
+    return this._request(url, {
+      method: 'PATCH',
+      headers: this.prepareHeaders(headers, isFormData),
+      body: this.serializeBody(body),
       credentials: 'include'
     });
   }

@@ -20,13 +20,14 @@ public class AnalyzeImageCommandHandler : IRequestHandler<AnalyzeImageCommand, s
         if (string.IsNullOrEmpty(request.ImagePath) || !System.IO.File.Exists(request.ImagePath))
             throw new FileNotFoundException("Image file not found.", request.ImagePath);
 
-        var visionModel = await _modelManager.GetVisionModelAsync();
+        var visionModel = await _modelManager.GetVisionModelAsync(ct: cancellationToken);
+        await using var inferenceLease = await _modelManager.AcquireVisionInferenceAsync(cancellationToken);
 
         var chat = new MultiTurnConversation(visionModel);
         var attachment = new LMKit.Data.Attachment(request.ImagePath);
         var message = new ChatHistory.Message(request.Prompt, attachment);
 
-        var result = chat.Submit(message);
+        var result = chat.Submit(message, cancellationToken);
         
         return result.Completion;
     }

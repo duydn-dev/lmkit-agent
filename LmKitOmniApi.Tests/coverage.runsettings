@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <!--
+    Configures the coverlet "XPlat Code Coverage" data collector (coverlet.collector,
+    already referenced by this test project). Used by CI as:
+      dotnet test ... --collect:"XPlat Code Coverage" --settings LmKitOmniApi.Tests/coverage.runsettings
+  -->
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <!-- Do not measure the test project or third-party test infrastructure. -->
+          <Exclude>[LmKitOmniApi.Tests]*,[xunit.*]*</Exclude>
+          <ExcludeByAttribute>GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute</ExcludeByAttribute>
+          <!-- EF Core migrations are generated scaffolding, not hand-written logic. -->
+          <ExcludeByFile>**/Migrations/*.cs</ExcludeByFile>
+          <SkipAutoProps>true</SkipAutoProps>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

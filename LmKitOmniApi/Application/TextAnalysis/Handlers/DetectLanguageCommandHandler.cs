@@ -16,7 +16,8 @@ public class DetectLanguageCommandHandler : IRequestHandler<DetectLanguageComman
 
     public async Task<DetectLanguageResult> Handle(DetectLanguageCommand request, CancellationToken cancellationToken)
     {
-        var chatModel = await _modelManager.GetChatModelAsync();
+        var chatModel = await _modelManager.GetChatModelAsync(ct: cancellationToken);
+        await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(cancellationToken);
         var translator = new TextTranslation(chatModel);
 
         var language = translator.DetectLanguage(request.Text);

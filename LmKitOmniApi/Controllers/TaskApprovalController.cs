@@ -1,45 +1,34 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
-using System.Security.Claims;
-using Microsoft.EntityFrameworkCore;
-using LmKitOmniApi.Infrastructure.Data;
-using LmKitOmniApi.Application.Abstractions;
+using MediatR;
+using LmKitOmniApi.Application.Approvals.Commands;
+using LmKitOmniApi.Application.Approvals.Queries;
 
 namespace LmKitOmniApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class TaskApprovalController : ControllerBase
+public class TaskApprovalController : ApiControllerBase
 {
-    private readonly HermesDbContext _dbContext;
-    private readonly IAgentOrchestrator _agentOrchestrator;
-    private readonly ILogger<TaskApprovalController> _logger;
+    private readonly IMediator _mediator;
 
-    public TaskApprovalController(
-        HermesDbContext dbContext,
-        IAgentOrchestrator agentOrchestrator,
-        ILogger<TaskApprovalController> logger)
+    public TaskApprovalController(IMediator mediator)
     {
-        _dbContext = dbContext;
-        _agentOrchestrator = agentOrchestrator;
-        _logger = logger;
+        _mediator = mediator;
     }
 
     [HttpGet("pending")]
     public async Task<IActionResult> GetPendingApprovals()
     {
-        var tenantIdStr = User.FindFirst("TenantId")?.Value;
-        var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
-        if (!Guid.TryParse(tenantIdStr, out var tenantId) || !Guid.TryParse(userIdStr, out var userId))
+        if (!TryGetIdentity(out var tenantId, out var userId))
             return Unauthorized();
 
-        var pending = await _dbContext.TaskApprovals
-            .Where(t => t.TenantId == tenantId && t.UserId == userId && t.Status == "Pending")
-            .OrderByDescending(t => t.CreatedAtUtc)
-            .Select(t => new { t.Id, t.ActionName, t.ParametersJson, t.CreatedAtUtc })
-            .ToListAsync();
+        var pending = await _mediator.Send(new GetPendingApprovalsQuery
+        {
+            TenantId = tenantId,
+            UserId = userId
+        }, HttpContext.RequestAborted);
 
         return Ok(pending);
     }
@@ -47,51 +36,49 @@ public class TaskApprovalController : ControllerBase
     [HttpPost("{id}/approve")]
     public async Task<IActionResult> ApproveTask(Guid id)
     {
-        var tenantIdStr = User.FindFirst("TenantId")?.Value;
-        var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        
-        if (!Guid.TryParse(tenantIdStr, out var tenantId) || !Guid.TryParse(userIdStr, out var userId))
+        if (!TryGetIdentity(out var tenantId, out var userId))
             return Unauthorized();
 
-        var task = await _dbContext.TaskApprovals.FirstOrDefaultAsync(t => t.Id == id && t.TenantId == tenantId);
-        if (task == null) return NotFound("Task not found.");
-        if (task.Status != "Pending") return BadRequest($"Task is already {task.Status}.");
-
-        task.Status = "Approved";
-        task.ResolvedAtUtc = DateTime.UtcNow;
-        
-        // Execute tool directly
-        string result;
-        try
+        var outcome = await _mediator.Send(new ApproveTaskCommand
         {
-            result = await _agentOrchestrator.ExecuteDirectActionAsync(tenantId, userId, task.ActionName, task.ParametersJson);
-        }
-        catch (Exception ex)
+            TaskId = id,
+            TenantId = tenantId,
+            UserId = userId
+        }, HttpContext.RequestAborted);
+
+        if (outcome.Outcome == ApproveTaskOutcome.NotFound)
+            return NotFound("Task not found.");
+
+        if (outcome.Outcome == ApproveTaskOutcome.Conflict)
+            return Conflict("Task is no longer pending.");
+
+        if (outcome.Outcome == ApproveTaskOutcome.Failed)
         {
-            _logger.LogError(ex, "Error executing approved task.");
-            result = $"[Error executing task: {ex.Message}]";
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                Success = false,
+                Error = "Approved task execution failed. See server logs for details."
+            });
         }
 
-        await _dbContext.SaveChangesAsync();
-
-        return Ok(new { Success = true, Result = result });
+        return Ok(new { Success = true, Result = outcome.Result });
     }
 
     [HttpPost("{id}/reject")]
     public async Task<IActionResult> RejectTask(Guid id, [FromBody] RejectTaskRequest request)
     {
-        var tenantIdStr = User.FindFirst("TenantId")?.Value;
-        if (!Guid.TryParse(tenantIdStr, out var tenantId)) return Unauthorized();
+        if (!TryGetIdentity(out var tenantId, out var userId))
+            return Unauthorized();
 
-        var task = await _dbContext.TaskApprovals.FirstOrDefaultAsync(t => t.Id == id && t.TenantId == tenantId);
-        if (task == null) return NotFound("Task not found.");
-        if (task.Status != "Pending") return BadRequest($"Task is already {task.Status}.");
+        var rejected = await _mediator.Send(new RejectTaskCommand
+        {
+            TaskId = id,
+            TenantId = tenantId,
+            UserId = userId,
+            Comment = request.Comment
+        }, HttpContext.RequestAborted);
 
-        task.Status = "Rejected";
-        task.ResolvedAtUtc = DateTime.UtcNow;
-        task.RejectionComment = request.Comment;
-
-        await _dbContext.SaveChangesAsync();
+        if (!rejected) return NotFound("Pending task not found.");
 
         return Ok(new { Success = true, Message = "Task rejected." });
     }

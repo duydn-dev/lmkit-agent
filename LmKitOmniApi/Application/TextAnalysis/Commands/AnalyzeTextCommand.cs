@@ -5,6 +5,7 @@ namespace LmKitOmniApi.Application.TextAnalysis.Commands;
 public class AnalyzeTextCommand : IRequest<AnalyzeTextResult>
 {
     public string Text { get; set; } = string.Empty;
+    internal bool ChatInferenceLeaseAlreadyHeld { get; set; }
 }
 
 public class AnalyzeTextResult

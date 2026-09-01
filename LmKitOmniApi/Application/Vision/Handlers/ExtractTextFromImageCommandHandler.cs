@@ -21,7 +21,8 @@ public class ExtractTextFromImageCommandHandler : IRequestHandler<ExtractTextFro
         if (string.IsNullOrEmpty(request.ImagePath) || !System.IO.File.Exists(request.ImagePath))
             throw new FileNotFoundException("Image file not found.", request.ImagePath);
 
-        var visionModel = await _modelManager.GetVisionModelAsync();
+        var visionModel = await _modelManager.GetVisionModelAsync(ct: cancellationToken);
+        await using var inferenceLease = await _modelManager.AcquireVisionInferenceAsync(cancellationToken);
 
         var intent = request.IncludeCoordinates ? VlmOcrIntent.OcrWithCoordinates : VlmOcrIntent.PlainText;
         var ocr = new VlmOcr(visionModel, intent)

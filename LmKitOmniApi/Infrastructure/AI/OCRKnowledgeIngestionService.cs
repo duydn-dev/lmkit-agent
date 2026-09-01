@@ -37,7 +37,12 @@ public class OCRKnowledgeIngestionService
     /// Returns the extracted text content for the AI to use in response.
     /// </summary>
     public async Task<FileProcessingResult> ProcessFileForChatAsync(
-        Guid tenantId, string filePath, string fileName, CancellationToken ct = default)
+        Guid tenantId,
+        Guid userId,
+        string filePath,
+        string fileName,
+        bool saveToKnowledge = false,
+        CancellationToken ct = default)
     {
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         string extractedText;
@@ -62,18 +67,33 @@ public class OCRKnowledgeIngestionService
                 var result = converter.Convert(filePath, new DocumentToMarkdownOptions());
                 extractedText = result.Markdown;
             }
-            else
+            else if (IsTextFile(ext))
             {
                 // Plain text files
                 _logger.LogInformation("📎 Reading text attachment: {File}", fileName);
                 extractedText = await File.ReadAllTextAsync(filePath, ct);
             }
+            else
+            {
+                return new FileProcessingResult
+                {
+                    Success = false,
+                    FileName = fileName,
+                    ErrorMessage = $"Unsupported attachment type '{ext}'."
+                };
+            }
 
-            // Auto-save to Qdrant for future recall
-            if (!string.IsNullOrWhiteSpace(extractedText) && extractedText.Length > 10)
+            // Persistent ingestion is an explicit user choice. Reading an attachment
+            // for the current chat must not silently mutate the tenant knowledge base.
+            if (saveToKnowledge && !string.IsNullOrWhiteSpace(extractedText) && extractedText.Length > 10)
             {
                 _logger.LogInformation("💾 Auto-saving attachment content to knowledge base: {File}", fileName);
-                await _ragService.IngestDocumentAsync(tenantId, $"ChatAttachment_{fileName}", extractedText);
+                await _ragService.IngestDocumentAsync(
+                    tenantId,
+                    userId,
+                    $"ChatAttachment_{fileName}",
+                    extractedText,
+                    ct);
             }
 
             return new FileProcessingResult
@@ -84,6 +104,10 @@ public class OCRKnowledgeIngestionService
                 FileType = GetFileCategory(ext)
             };
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "❌ Failed to process attachment: {File}", fileName);
@@ -91,7 +115,7 @@ public class OCRKnowledgeIngestionService
             {
                 Success = false,
                 FileName = fileName,
-                ErrorMessage = ex.Message
+                ErrorMessage = "Attachment processing failed."
             };
         }
     }
@@ -101,6 +125,9 @@ public class OCRKnowledgeIngestionService
 
     private static bool IsDocumentFile(string ext) =>
         ext is ".pdf" or ".doc" or ".docx" or ".xls" or ".xlsx" or ".ppt" or ".pptx";
+
+    private static bool IsTextFile(string ext) =>
+        ext is ".txt" or ".md" or ".csv" or ".json" or ".xml";
 
     private static string GetFileCategory(string ext) => ext switch
     {

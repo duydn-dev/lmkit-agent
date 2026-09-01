@@ -6,7 +6,7 @@
       "@/*": ["./src/*"]
     },
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "ignoreDeprecations": "6.0",
 
     /* Linting */

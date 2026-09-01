@@ -21,7 +21,8 @@ public class ExtractDocumentDataCommandHandler : IRequestHandler<ExtractDocument
             throw new FileNotFoundException("Document file not found.", request.DocumentPath);
 
         // Here we use the Vision model because TextExtraction might require OCR for scanned PDFs
-        var visionModel = await _modelManager.GetVisionModelAsync();
+        var visionModel = await _modelManager.GetVisionModelAsync(ct: cancellationToken);
+        await using var inferenceLease = await _modelManager.AcquireVisionInferenceAsync(cancellationToken);
 
         var textExtraction = new TextExtraction(visionModel);
         if (!string.IsNullOrEmpty(request.JsonSchema))

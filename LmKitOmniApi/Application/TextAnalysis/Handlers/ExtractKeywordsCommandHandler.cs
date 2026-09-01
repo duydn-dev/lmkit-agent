@@ -16,7 +16,8 @@ public class ExtractKeywordsCommandHandler : IRequestHandler<ExtractKeywordsComm
 
     public async Task<ExtractKeywordsResult> Handle(ExtractKeywordsCommand request, CancellationToken cancellationToken)
     {
-        var chatModel = await _modelManager.GetChatModelAsync();
+        var chatModel = await _modelManager.GetChatModelAsync(ct: cancellationToken);
+        await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(cancellationToken);
         var extractor = new KeywordExtraction(chatModel);
 
         return new ExtractKeywordsResult

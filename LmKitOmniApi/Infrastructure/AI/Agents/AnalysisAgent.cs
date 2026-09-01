@@ -3,6 +3,7 @@ using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Application.TextAnalysis.Commands;
 using MediatR;
 using Microsoft.Extensions.Logging;
+using LmKitOmniApi.Infrastructure.AI.Tools;
 
 namespace LmKitOmniApi.Infrastructure.AI.Agents;
 
@@ -13,15 +14,17 @@ namespace LmKitOmniApi.Infrastructure.AI.Agents;
 public class AnalysisAgent : ISpecializedAgent
 {
     private readonly IMediator _mediator;
+    private readonly AgentToolGateway _toolGateway;
     private readonly ILogger<AnalysisAgent> _logger;
 
     public string AgentName => "AnalysisAgent";
     public string Description => "Chuyên phân tích văn bản: sentiment, trích xuất thực thể (NER), phát hiện PII.";
     public IReadOnlyList<string> SupportedCategories => new[] { "analysis", "nlp", "sentiment", "ner", "pii", "reasoning" };
 
-    public AnalysisAgent(IMediator mediator, ILogger<AnalysisAgent> logger)
+    public AnalysisAgent(IMediator mediator, AgentToolGateway toolGateway, ILogger<AnalysisAgent> logger)
     {
         _mediator = mediator;
+        _toolGateway = toolGateway;
         _logger = logger;
     }
 
@@ -35,15 +38,28 @@ public class AnalysisAgent : ISpecializedAgent
         return Task.FromResult(confidence);
     }
 
-    public async Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct = default)
+    public async Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string userRole, string query, CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();
         try
         {
             _logger.LogInformation("📊 [{Agent}] Analyzing text...", AgentName);
-            var result = await _mediator.Send(new AnalyzeTextCommand { Text = query }, ct);
+            var execution = await _toolGateway.ExecuteReadOnlyAsync(
+                tenantId, userId, userRole, "AnalyzeText", null,
+                async token =>
+                {
+                    var analysis = await _mediator.Send(new AnalyzeTextCommand
+                    {
+                        Text = query,
+                        ChatInferenceLeaseAlreadyHeld = true
+                    }, token);
+                    return $"Sentiment: {analysis.Sentiment}, Entities: {string.Join(", ", analysis.ExtractedEntities)}";
+                }, ct);
 
-            var content = $"Sentiment: {result.Sentiment}, Entities: {string.Join(", ", result.ExtractedEntities)}";
+            if (!execution.IsSuccess)
+                return AgentExecutionResult.Fail(AgentName, execution.ErrorMessage ?? "Text analysis failed.");
+
+            var content = execution.Output;
 
             sw.Stop();
             return new AgentExecutionResult
@@ -54,6 +70,10 @@ public class AnalysisAgent : ISpecializedAgent
                 ToolsUsed = new List<string> { "AnalyzeText" },
                 Elapsed = sw.Elapsed
             };
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

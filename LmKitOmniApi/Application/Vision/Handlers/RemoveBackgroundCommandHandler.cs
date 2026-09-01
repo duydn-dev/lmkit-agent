@@ -20,7 +20,8 @@ public class RemoveBackgroundCommandHandler : IRequestHandler<RemoveBackgroundCo
         if (string.IsNullOrEmpty(request.ImagePath) || !System.IO.File.Exists(request.ImagePath))
             throw new FileNotFoundException("Image file not found.", request.ImagePath);
 
-        var segModel = await _modelManager.GetSegmentationModelAsync();
+        var segModel = await _modelManager.GetSegmentationModelAsync(ct: cancellationToken);
+        await using var inferenceLease = await _modelManager.AcquireSegmentationInferenceAsync(cancellationToken);
         var detector = new BackgroundDetection(segModel);
 
         using var sourceImage = ImageBuffer.LoadAsRGB(request.ImagePath);
@@ -30,11 +31,13 @@ public class RemoveBackgroundCommandHandler : IRequestHandler<RemoveBackgroundCo
         // Since LMKit ImageBuffer SaveAsPng requires a file, we might need a workaround.
         // Wait, ImageBuffer has GetImageBytes or we can save it to a temp file.
         // Let's use a temp file to get the bytes.
-        var tempFile = Path.GetTempFileName() + ".png";
+        var tempFile = Path.Combine(Path.GetTempPath(), $"lmkit-bg-{Guid.NewGuid():N}.png");
         try
         {
             resultImage.SaveAsPng(tempFile);
             var bytes = await File.ReadAllBytesAsync(tempFile, cancellationToken);
+            if (bytes.Length > 25 * 1024 * 1024)
+                throw new InvalidOperationException("Processed image exceeds the 25 MB response limit.");
             return new RemoveBackgroundResult
             {
                 Base64Image = Convert.ToBase64String(bytes)

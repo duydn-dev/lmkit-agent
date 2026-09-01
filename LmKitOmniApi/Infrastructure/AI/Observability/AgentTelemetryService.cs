@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
+using System.Security.Cryptography;
 
 namespace LmKitOmniApi.Infrastructure.AI.Observability;
 
@@ -18,6 +19,12 @@ public class AgentTelemetryService
     private readonly Counter<long> _tokensCounter;
     private readonly Counter<long> _toolsCounter;
     private readonly Counter<long> _errorsCounter;
+    private readonly Histogram<double> _toolDuration;
+    private long _totalRequests;
+    private long _totalTokens;
+    private long _totalTools;
+    private long _totalErrors;
+    private readonly ConcurrentDictionary<string, long> _toolUsage = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly ILogger<AgentTelemetryService> _logger;
 
@@ -29,19 +36,21 @@ public class AgentTelemetryService
         _tokensCounter = AgentMeter.CreateCounter<long>("agent_tokens_estimated_total", description: "Total estimated tokens used");
         _toolsCounter = AgentMeter.CreateCounter<long>("agent_tools_invocations_total", description: "Total number of tool invocations");
         _errorsCounter = AgentMeter.CreateCounter<long>("agent_errors_total", description: "Total number of errors encountered");
+        _toolDuration = AgentMeter.CreateHistogram<double>("agent_tool_duration_ms", "ms", "Tool execution duration in milliseconds");
     }
 
     /// <summary>Start a traced agent execution span.</summary>
     public Activity? StartAgentExecution(string operationName, Guid tenantId, string query)
     {
-        _requestsCounter.Add(1, new KeyValuePair<string, object?>("tenant_id", tenantId.ToString()), new KeyValuePair<string, object?>("operation", operationName));
+        _requestsCounter.Add(1, new KeyValuePair<string, object?>("operation", operationName));
+        Interlocked.Increment(ref _totalRequests);
 
         var activity = ActivitySource.StartActivity(operationName, ActivityKind.Internal);
-        activity?.SetTag("agent.tenant_id", tenantId.ToString());
+        var tenantScope = Convert.ToHexString(SHA256.HashData(tenantId.ToByteArray()))[..12];
+        activity?.SetTag("agent.tenant_scope", tenantScope);
         activity?.SetTag("agent.query_length", query.Length);
-        activity?.SetTag("agent.query_preview", query.Length > 100 ? query.Substring(0, 100) : query);
 
-        _logger.LogInformation("📊 [Telemetry] Started: {Operation} (Tenant: {Tenant})", operationName, tenantId);
+        _logger.LogInformation("📊 [Telemetry] Started: {Operation} (Tenant scope: {TenantScope})", operationName, tenantScope);
         return activity;
     }
 
@@ -49,6 +58,8 @@ public class AgentTelemetryService
     public Activity? StartToolInvocation(string toolName, Activity? parentActivity = null)
     {
         _toolsCounter.Add(1, new KeyValuePair<string, object?>("tool_name", toolName));
+        Interlocked.Increment(ref _totalTools);
+        _toolUsage.AddOrUpdate(toolName, 1, (_, count) => count + 1);
 
         var activity = ActivitySource.StartActivity($"Tool.{toolName}", ActivityKind.Internal, parentActivity?.Context ?? default);
         activity?.SetTag("tool.name", toolName);
@@ -71,27 +82,37 @@ public class AgentTelemetryService
     public void RecordTokenUsage(int estimatedTokens)
     {
         _tokensCounter.Add(estimatedTokens);
+        Interlocked.Add(ref _totalTokens, estimatedTokens);
     }
+
+    public void RecordToolDuration(string toolName, TimeSpan duration) =>
+        _toolDuration.Record(duration.TotalMilliseconds, new KeyValuePair<string, object?>("tool_name", toolName));
 
     /// <summary>Record an error.</summary>
     public void RecordError(Activity? activity, Exception ex)
     {
         _errorsCounter.Add(1, new KeyValuePair<string, object?>("exception_type", ex.GetType().Name));
+        Interlocked.Increment(ref _totalErrors);
 
-        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        activity?.SetStatus(ActivityStatusCode.Error, ex.GetType().Name);
         activity?.AddEvent(new ActivityEvent("error", tags: new ActivityTagsCollection
         {
             { "exception.type", ex.GetType().Name },
-            { "exception.message", ex.Message }
+            { "exception.type_detail", ex.GetType().FullName }
         }));
     }
 
     /// <summary>Get current metrics snapshot (for dashboard/API).</summary>
     public AgentMetricsSnapshot GetMetrics()
     {
-        // Snapshot is now obsolete since we use OpenTelemetry.
-        // Returning empty snapshot to prevent compilation errors if it's used elsewhere.
-        return new AgentMetricsSnapshot();
+        return new AgentMetricsSnapshot
+        {
+            TotalRequests = Interlocked.Read(ref _totalRequests),
+            TotalTokensEstimated = Interlocked.Read(ref _totalTokens),
+            TotalToolInvocations = Interlocked.Read(ref _totalTools),
+            TotalErrors = Interlocked.Read(ref _totalErrors),
+            ToolUsageBreakdown = _toolUsage.ToDictionary(item => item.Key, item => item.Value),
+        };
     }
 }
 

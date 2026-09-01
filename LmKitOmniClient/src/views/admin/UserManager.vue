@@ -6,10 +6,14 @@
           <h1 class="text-2xl font-bold text-gray-900">Quản lý Người dùng</h1>
           <p class="text-gray-500 mt-1">Cấp tài khoản và phân quyền trong hệ thống</p>
         </div>
-        <button @click="openNewDialog" class="bg-chatgpt-brand hover:bg-chatgpt-brand/90 text-white px-4 py-2 rounded-md font-medium transition-colors shadow-sm flex items-center gap-2">
+        <button @click="openNewDialog" class="min-h-11 bg-chatgpt-brand hover:bg-chatgpt-brand/90 text-white px-4 py-2 rounded-md font-medium transition-colors shadow-sm flex items-center gap-2">
           <i class="pi pi-user-plus"></i>
           Thêm người dùng
         </button>
+      </div>
+
+      <div v-if="userError && !userDialog" role="alert" class="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {{ userError }}
       </div>
 
       <!-- Data Table -->
@@ -38,18 +42,18 @@
 
           <Column field="isActive" header="Trạng thái" :sortable="true" style="min-width: 8rem">
             <template #body="{ data }">
-              <span v-if="data.isActive" class="text-green-600 flex items-center gap-1.5"><i class="pi pi-check-circle text-xs"></i> Hoạt động</span>
-              <span v-else class="text-red-500 flex items-center gap-1.5"><i class="pi pi-lock text-xs"></i> Đã khóa</span>
+              <span v-if="data.isActive" class="text-green-800 flex items-center gap-1.5"><i class="pi pi-check-circle text-xs"></i> Hoạt động</span>
+              <span v-else class="text-red-700 flex items-center gap-1.5"><i class="pi pi-lock text-xs"></i> Đã khóa</span>
             </template>
           </Column>
 
           <Column header="Thao tác" :exportable="false" style="min-width: 8rem" alignFrozen="right" :frozen="true">
             <template #body="{ data }">
               <div class="flex gap-2">
-                <button @click="editUser(data)" class="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Sửa quyền">
+                <button @click="editUser(data)" class="w-11 h-11 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" :aria-label="`Sửa quyền của ${data.email}`">
                   <i class="pi pi-pencil"></i>
                 </button>
-                <button @click="toggleUserStatus(data)" :class="['p-2 rounded transition-colors', data.isActive ? 'text-gray-500 hover:text-red-600 hover:bg-red-50' : 'text-gray-500 hover:text-green-600 hover:bg-green-50']" :title="data.isActive ? 'Khóa tài khoản' : 'Mở khóa'">
+                <button @click="toggleUserStatus(data)" :class="['w-11 h-11 rounded transition-colors', data.isActive ? 'text-gray-500 hover:text-red-600 hover:bg-red-50' : 'text-gray-500 hover:text-green-600 hover:bg-green-50']" :aria-label="`${data.isActive ? 'Khóa' : 'Mở khóa'} tài khoản ${data.email}`">
                   <i :class="data.isActive ? 'pi pi-lock' : 'pi pi-lock-open'"></i>
                 </button>
               </div>
@@ -60,6 +64,9 @@
 
       <!-- User Dialog -->
       <Dialog v-model:visible="userDialog" :style="{width: '450px'}" :header="isEditing ? 'Chỉnh sửa Quyền' : 'Tạo Tài khoản mới'" :modal="true" class="p-fluid">
+        <div v-if="userError" role="alert" class="mt-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {{ userError }}
+        </div>
         <div class="flex flex-col gap-4 mt-4">
           <div class="flex flex-col gap-2">
             <label for="email" class="font-medium text-sm text-gray-700">Email</label>
@@ -84,8 +91,8 @@
 
         <template #footer>
           <div class="flex justify-end gap-2 mt-4">
-            <button @click="hideDialog" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md transition-colors font-medium">Hủy</button>
-            <button @click="saveUser" class="px-4 py-2 bg-chatgpt-brand hover:bg-chatgpt-brand/90 text-white rounded-md transition-colors font-medium">Lưu lại</button>
+            <button @click="hideDialog" class="min-h-11 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md transition-colors font-medium">Hủy</button>
+            <button @click="saveUser" class="min-h-11 px-4 py-2 bg-chatgpt-brand hover:bg-chatgpt-brand/90 text-white rounded-md transition-colors font-medium">Lưu lại</button>
           </div>
         </template>
       </Dialog>
@@ -96,6 +103,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { http } from '@/api/http';
+import { errorMessage, readApiError } from '@/api/errors';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
@@ -112,6 +120,7 @@ interface User {
 
 const users = ref<User[]>([]);
 const loading = ref(true);
+const userError = ref('');
 
 const userDialog = ref(false);
 const isEditing = ref(false);
@@ -130,15 +139,14 @@ const roleOptions = [
 
 const loadUsers = async () => {
   loading.value = true;
+  userError.value = '';
   try {
     const res = await http.get('/api/users');
     if (res.ok) {
       users.value = await res.json();
-    } else {
-      console.error("Lỗi khi tải danh sách người dùng");
-    }
+    } else userError.value = await readApiError(res, 'Không thể tải danh sách người dùng');
   } catch (error) {
-    console.error(error);
+    userError.value = errorMessage(error, 'Không thể tải danh sách người dùng.');
   } finally {
     loading.value = false;
   }
@@ -173,6 +181,7 @@ const hideDialog = () => {
 };
 
 const saveUser = async () => {
+  userError.value = '';
   try {
     if (isEditing.value) {
       // Chỉ cập nhật Role
@@ -180,34 +189,30 @@ const saveUser = async () => {
       if (res.ok) {
         userDialog.value = false;
         loadUsers();
-      }
+      } else userError.value = await readApiError(res, 'Không thể cập nhật quyền người dùng');
     } else {
       // Tạo mới
       const res = await http.post('/api/users', userForm.value);
       if (res.ok) {
         userDialog.value = false;
         loadUsers();
-      } else {
-        const error = await res.json();
-        alert("Lỗi: " + error.message);
-      }
+      } else userError.value = await readApiError(res, 'Không thể tạo người dùng');
     }
   } catch (error) {
-    console.error(error);
-    alert("Có lỗi xảy ra khi lưu.");
+    userError.value = errorMessage(error, 'Có lỗi xảy ra khi lưu người dùng.');
   }
 };
 
 const toggleUserStatus = async (user: User) => {
   if (!confirm(`Bạn có chắc muốn ${user.isActive ? 'khóa' : 'mở khóa'} người dùng này không?`)) return;
-  
+  userError.value = '';
   try {
     const res = await http.put(`/api/users/${user.id}/toggle-status`);
     if (res.ok) {
       loadUsers();
-    }
+    } else userError.value = await readApiError(res, 'Không thể cập nhật trạng thái người dùng');
   } catch (error) {
-    console.error(error);
+    userError.value = errorMessage(error, 'Không thể cập nhật trạng thái người dùng.');
   }
 };
 

@@ -1,10 +1,11 @@
-using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Domain.Entities;
+using LmKitOmniApi.Infrastructure.AI.Security;
+using LmKitOmniApi.Infrastructure.Security;
 
 namespace LmKitOmniApi.Infrastructure.AI.Mcp;
 
@@ -14,24 +15,48 @@ namespace LmKitOmniApi.Infrastructure.AI.Mcp;
 /// </summary>
 public class McpClientService
 {
-    private readonly IHttpClientFactory _httpClientFactory;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<McpClientService> _logger;
+    private readonly ToolSandboxService _sandbox;
+    private readonly McpHeaderProtector _headerProtector;
+    private readonly IMcpProtocolClient _protocolClient;
+    private readonly IMcpOAuthTokenProvider _oauthTokenProvider;
 
     // Cache discovered tools from MCP servers per Tenant
-    private readonly Dictionary<Guid, Dictionary<string, List<McpToolDefinition>>> _cachedTools = new();
-    private readonly Dictionary<Guid, DateTime> _lastDiscovery = new();
-    private readonly SemaphoreSlim _cacheLock = new(1, 1);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, IReadOnlyDictionary<string, List<McpToolDefinition>>> CachedTools = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTime> LastDiscovery = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, SemaphoreSlim> TenantCacheLocks = new();
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(10);
 
     public McpClientService(
-        IHttpClientFactory httpClientFactory,
         IServiceScopeFactory scopeFactory,
+        ToolSandboxService sandbox,
+        McpHeaderProtector headerProtector,
+        IMcpProtocolClient protocolClient,
+        IMcpOAuthTokenProvider oauthTokenProvider,
         ILogger<McpClientService> logger)
     {
-        _httpClientFactory = httpClientFactory;
         _scopeFactory = scopeFactory;
+        _sandbox = sandbox;
+        _headerProtector = headerProtector;
+        _protocolClient = protocolClient;
+        _oauthTokenProvider = oauthTokenProvider;
         _logger = logger;
+    }
+
+    public async Task InvalidateTenantCacheAsync(Guid tenantId, CancellationToken ct = default)
+    {
+        var cacheLock = TenantCacheLocks.GetOrAdd(tenantId, static _ => new SemaphoreSlim(1, 1));
+        await cacheLock.WaitAsync(ct);
+        try
+        {
+            CachedTools.TryRemove(tenantId, out _);
+            LastDiscovery.TryRemove(tenantId, out _);
+        }
+        finally
+        {
+            cacheLock.Release();
+        }
     }
 
     /// <summary>
@@ -40,23 +65,18 @@ public class McpClientService
     /// </summary>
     public async Task<List<McpToolDefinition>> DiscoverToolsAsync(Guid tenantId, CancellationToken ct = default)
     {
-        await _cacheLock.WaitAsync(ct);
+        var cacheLock = TenantCacheLocks.GetOrAdd(tenantId, static _ => new SemaphoreSlim(1, 1));
+        await cacheLock.WaitAsync(ct);
         try
         {
-            if (_lastDiscovery.TryGetValue(tenantId, out var lastTime) && 
+            if (LastDiscovery.TryGetValue(tenantId, out var lastTime) &&
                 DateTime.UtcNow - lastTime < CacheDuration && 
-                _cachedTools.TryGetValue(tenantId, out var tenantCache) && 
-                tenantCache.Count > 0)
+                CachedTools.TryGetValue(tenantId, out var tenantCache))
             {
                 return tenantCache.Values.SelectMany(t => t).ToList();
             }
 
-            if (!_cachedTools.ContainsKey(tenantId))
-            {
-                _cachedTools[tenantId] = new Dictionary<string, List<McpToolDefinition>>();
-            }
-            
-            _cachedTools[tenantId].Clear();
+            var discoveredForTenant = new Dictionary<string, List<McpToolDefinition>>(StringComparer.OrdinalIgnoreCase);
 
             using var scope = _scopeFactory.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
@@ -70,8 +90,12 @@ public class McpClientService
                 try
                 {
                     var tools = await DiscoverToolsFromServerAsync(server, ct);
-                    _cachedTools[tenantId][server.Name] = tools;
+                    discoveredForTenant[server.Name] = tools;
                     _logger.LogInformation("🔗 [MCP] Discovered {Count} tools from '{Server}' for Tenant {Tenant}", tools.Count, server.Name, tenantId);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -79,45 +103,30 @@ public class McpClientService
                 }
             }
 
-            _lastDiscovery[tenantId] = DateTime.UtcNow;
-            return _cachedTools[tenantId].Values.SelectMany(t => t).ToList();
+            CachedTools[tenantId] = discoveredForTenant;
+            LastDiscovery[tenantId] = DateTime.UtcNow;
+            return discoveredForTenant.Values.SelectMany(t => t).ToList();
         }
         finally
         {
-            _cacheLock.Release();
+            cacheLock.Release();
         }
     }
 
     /// <summary>
     /// Invoke a tool on an MCP server by name.
     /// </summary>
-    public async Task<McpInvocationResult> InvokeToolAsync(Guid tenantId, string toolName, Dictionary<string, object> parameters, CancellationToken ct = default)
+    public async Task<McpInvocationResult> InvokeToolAsync(Guid tenantId, string serverName, string toolName, Dictionary<string, object> parameters, CancellationToken ct = default)
     {
-        // Find which server hosts this tool
-        string? serverName = null;
-        
-        if (_cachedTools.TryGetValue(tenantId, out var tenantCache))
+        if (!CachedTools.TryGetValue(tenantId, out var tenantCache) ||
+            !tenantCache.TryGetValue(serverName, out var serverTools) ||
+            !serverTools.Any(tool => tool.Name.Equals(toolName, StringComparison.Ordinal)))
         {
-            serverName = tenantCache
-                .FirstOrDefault(kv => kv.Value.Any(t => t.Name.Equals(toolName, StringComparison.OrdinalIgnoreCase)))
-                .Key;
-        }
-
-        if (string.IsNullOrEmpty(serverName))
-        {
-            // Try discovery first
             await DiscoverToolsAsync(tenantId, ct);
-            if (_cachedTools.TryGetValue(tenantId, out var retryCache))
-            {
-                serverName = retryCache
-                    .FirstOrDefault(kv => kv.Value.Any(t => t.Name.Equals(toolName, StringComparison.OrdinalIgnoreCase)))
-                    .Key;
-            }
-        }
-
-        if (string.IsNullOrEmpty(serverName))
-        {
-            return McpInvocationResult.Fail($"Tool '{toolName}' not found on any MCP server for Tenant '{tenantId}'.");
+            if (!CachedTools.TryGetValue(tenantId, out tenantCache) ||
+                !tenantCache.TryGetValue(serverName, out serverTools) ||
+                !serverTools.Any(tool => tool.Name.Equals(toolName, StringComparison.Ordinal)))
+                return McpInvocationResult.Fail($"Tool '{toolName}' was not discovered on MCP server '{serverName}'.");
         }
 
         using var scope = _scopeFactory.CreateScope();
@@ -126,44 +135,39 @@ public class McpClientService
         var server = await dbContext.ExternalMcpServers
             .FirstOrDefaultAsync(s => s.TenantId == tenantId && s.Name == serverName && s.IsActive, ct);
 
-        if (server == null)
+        if (server is null)
         {
             return McpInvocationResult.Fail($"Server '{serverName}' configuration not found or inactive for Tenant '{tenantId}'.");
         }
 
         try
         {
-            var client = _httpClientFactory.CreateClient("MCP");
-            client.BaseAddress = new Uri(server.Url);
-            client.Timeout = TimeSpan.FromSeconds(30);
+            var urlValidation = await _sandbox.ValidateUrlAsync(server.Url, ct);
+            if (!urlValidation.IsAllowed)
+                return McpInvocationResult.Fail(urlValidation.DenialReason ?? "MCP server URL was blocked.");
 
-            ApplyHeaders(client, server.HeadersJson);
+            var result = await _protocolClient.CallToolAsync(
+                new Uri(server.Url),
+                server.Name,
+                await BuildRequestHeadersAsync(server, ct),
+                toolName,
+                parameters.ToDictionary(pair => pair.Key, pair => (object?)pair.Value),
+                ct);
 
-            var request = new McpToolInvocationRequest
-            {
-                ToolName = toolName,
-                Parameters = parameters
-            };
+            if (result.IsError)
+                return McpInvocationResult.Fail(string.IsNullOrWhiteSpace(result.Content) ? "MCP tool returned an error." : result.Content);
 
-            var response = await client.PostAsJsonAsync("/mcp/invoke", request, ct);
-            
-            if (response.IsSuccessStatusCode)
-            {
-                var result = await response.Content.ReadFromJsonAsync<McpToolResponse>(cancellationToken: ct);
-                _logger.LogInformation("🔗 [MCP] Tool '{Tool}' invoked successfully on '{Server}' (Tenant {Tenant})", toolName, serverName, tenantId);
-                return McpInvocationResult.Ok(result?.Content ?? "", toolName, serverName);
-            }
-            else
-            {
-                var errorBody = await response.Content.ReadAsStringAsync(ct);
-                _logger.LogWarning("🔗 [MCP] Tool '{Tool}' invocation failed: {Status} {Body}", toolName, response.StatusCode, errorBody);
-                return McpInvocationResult.Fail($"HTTP {response.StatusCode}: {errorBody}");
-            }
+            _logger.LogInformation("🔗 [MCP] Tool '{Tool}' invoked successfully on '{Server}' (Tenant {Tenant})", toolName, serverName, tenantId);
+            return McpInvocationResult.Ok(result.Content, toolName, serverName);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "🔗 [MCP] Error invoking tool '{Tool}'", toolName);
-            return McpInvocationResult.Fail(ex.Message);
+            return McpInvocationResult.Fail("MCP invocation failed.");
         }
     }
 
@@ -191,53 +195,92 @@ public class McpClientService
 
     private async Task<List<McpToolDefinition>> DiscoverToolsFromServerAsync(ExternalMcpServer server, CancellationToken ct)
     {
-        var client = _httpClientFactory.CreateClient("MCP");
-        client.BaseAddress = new Uri(server.Url);
-        client.Timeout = TimeSpan.FromSeconds(10);
+        var urlValidation = await _sandbox.ValidateUrlAsync(server.Url, ct);
+        if (!urlValidation.IsAllowed)
+            throw new InvalidOperationException(urlValidation.DenialReason ?? "MCP server URL was blocked.");
 
-        ApplyHeaders(client, server.HeadersJson);
+        var tools = await _protocolClient.ListToolsAsync(
+            new Uri(server.Url), server.Name, await BuildRequestHeadersAsync(server, ct), ct);
 
-        var response = await client.GetAsync("/mcp/tools", ct);
-        response.EnsureSuccessStatusCode();
-
-        var tools = await response.Content.ReadFromJsonAsync<List<McpToolDefinition>>(cancellationToken: ct) ?? new();
-        
-        // Tag each tool with its server name
-        foreach (var tool in tools)
+        return tools.Select(tool => new McpToolDefinition
         {
-            tool.ServerName = server.Name;
+            Name = tool.Name,
+            Description = tool.Description,
+            ServerName = server.Name,
+            AllowAutomaticExecution = server.TrustReadOnlyAnnotations && tool.IsReadOnly,
+            InputSchema = tool.InputSchema.GetRawText(),
+            Parameters = ExtractParameters(tool.InputSchema)
+        }).ToList();
+    }
+
+    /// <summary>
+    /// Builds the outbound header set for a server: the admin-configured static headers,
+    /// plus a freshly-minted <c>Authorization: Bearer</c> header when the server uses the
+    /// OAuth client-credentials grant. The OAuth token takes precedence over any static
+    /// Authorization header so the two auth modes never collide.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string>> BuildRequestHeadersAsync(ExternalMcpServer server, CancellationToken ct)
+    {
+        var headers = new Dictionary<string, string>(ReadHeaders(server.HeadersJson), StringComparer.OrdinalIgnoreCase);
+
+        if (string.Equals(server.AuthMode, McpOAuthTokenProvider.ClientCredentialsMode, StringComparison.OrdinalIgnoreCase))
+        {
+            var token = await _oauthTokenProvider.GetAccessTokenAsync(server, ct);
+            headers["Authorization"] = $"Bearer {token}";
         }
 
-        return tools;
+        return headers;
     }
-    
-    private void ApplyHeaders(HttpClient client, string? headersJson)
+
+    private IReadOnlyDictionary<string, string> ReadHeaders(string? headersJson)
     {
-        if (string.IsNullOrWhiteSpace(headersJson)) return;
+        if (string.IsNullOrWhiteSpace(headersJson)) return new Dictionary<string, string>();
         
         try
         {
-            var headers = JsonSerializer.Deserialize<Dictionary<string, string>>(headersJson);
-            if (headers != null)
-            {
-                foreach (var header in headers)
-                {
-                    if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase) && header.Value.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var token = header.Value.Substring(7).Trim();
-                        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-                    }
-                    else
-                    {
-                        client.DefaultRequestHeaders.TryAddWithoutValidation(header.Key, header.Value);
-                    }
-                }
-            }
+            var plaintextHeaders = _headerProtector.Unprotect(headersJson);
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(plaintextHeaders)
+                ?? new Dictionary<string, string>();
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "⚠️ [MCP] Failed to parse HeadersJson");
+            return new Dictionary<string, string>();
         }
+    }
+
+    private static List<McpToolParameter> ExtractParameters(JsonElement inputSchema)
+    {
+        if (inputSchema.ValueKind != JsonValueKind.Object ||
+            !inputSchema.TryGetProperty("properties", out var properties) ||
+            properties.ValueKind != JsonValueKind.Object)
+            return new List<McpToolParameter>();
+
+        var required = inputSchema.TryGetProperty("required", out var requiredElement) && requiredElement.ValueKind == JsonValueKind.Array
+            ? requiredElement.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString()!)
+                .ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+
+        return properties.EnumerateObject().Select(property =>
+        {
+            var schema = property.Value;
+            var type = schema.ValueKind == JsonValueKind.Object && schema.TryGetProperty("type", out var typeElement)
+                ? typeElement.ValueKind == JsonValueKind.String ? typeElement.GetString() ?? "object" : "object"
+                : "object";
+            var description = schema.ValueKind == JsonValueKind.Object && schema.TryGetProperty("description", out var descriptionElement)
+                && descriptionElement.ValueKind == JsonValueKind.String
+                ? descriptionElement.GetString()
+                : null;
+            return new McpToolParameter
+            {
+                Name = property.Name,
+                Type = type,
+                Description = description,
+                Required = required.Contains(property.Name)
+            };
+        }).ToList();
     }
 }
 
@@ -248,6 +291,8 @@ public class McpToolDefinition
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string ServerName { get; set; } = string.Empty;
+    public bool AllowAutomaticExecution { get; set; }
+    public string? InputSchema { get; set; }
     public List<McpToolParameter> Parameters { get; set; } = new();
 }
 
@@ -257,18 +302,6 @@ public class McpToolParameter
     public string Type { get; set; } = "string";
     public bool Required { get; set; }
     public string? Description { get; set; }
-}
-
-public class McpToolInvocationRequest
-{
-    public string ToolName { get; set; } = string.Empty;
-    public Dictionary<string, object> Parameters { get; set; } = new();
-}
-
-public class McpToolResponse
-{
-    public string Content { get; set; } = string.Empty;
-    public bool Success { get; set; }
 }
 
 public class McpInvocationResult

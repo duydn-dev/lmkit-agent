@@ -37,6 +37,8 @@ public class AuditSaveChangesInterceptor : SaveChangesInterceptor
 
         var userStr = _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         Guid? userId = Guid.TryParse(userStr, out var uid) ? uid : null;
+        var tenantStr = _httpContextAccessor.HttpContext?.User?.FindFirst("TenantId")?.Value;
+        Guid? requestTenantId = Guid.TryParse(tenantStr, out var tid) ? tid : null;
         
         var ip = _httpContextAccessor.HttpContext?.Connection?.RemoteIpAddress?.ToString();
 
@@ -53,6 +55,7 @@ public class AuditSaveChangesInterceptor : SaveChangesInterceptor
                 EntityType = entry.Metadata.GetTableName() ?? entry.Entity.GetType().Name,
                 Action = entry.State.ToString(),
                 ActorUserId = userId,
+                TenantId = requestTenantId ?? TryGetTenantId(entry),
                 IpAddress = ip,
                 CreatedAtUtc = DateTime.UtcNow
             };
@@ -74,16 +77,16 @@ public class AuditSaveChangesInterceptor : SaveChangesInterceptor
                 switch (entry.State)
                 {
                     case EntityState.Added:
-                        newValues[propertyName] = property.CurrentValue;
+                        newValues[propertyName] = AuditValueSanitizer.Sanitize(propertyName, property.CurrentValue);
                         break;
                     case EntityState.Deleted:
-                        oldValues[propertyName] = property.OriginalValue;
+                        oldValues[propertyName] = AuditValueSanitizer.Sanitize(propertyName, property.OriginalValue);
                         break;
                     case EntityState.Modified:
                         if (property.IsModified)
                         {
-                            oldValues[propertyName] = property.OriginalValue;
-                            newValues[propertyName] = property.CurrentValue;
+                            oldValues[propertyName] = AuditValueSanitizer.Sanitize(propertyName, property.OriginalValue);
+                            newValues[propertyName] = AuditValueSanitizer.Sanitize(propertyName, property.CurrentValue);
                         }
                         break;
                 }
@@ -97,5 +100,11 @@ public class AuditSaveChangesInterceptor : SaveChangesInterceptor
         {
             context.Set<AuditLog>().AddRange(auditEntries);
         }
+    }
+
+    private static Guid? TryGetTenantId(Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry entry)
+    {
+        var tenantProperty = entry.Properties.FirstOrDefault(property => property.Metadata.Name == "TenantId");
+        return tenantProperty?.CurrentValue is Guid tenantId ? tenantId : null;
     }
 }

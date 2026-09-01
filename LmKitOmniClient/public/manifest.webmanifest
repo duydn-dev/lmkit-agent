@@ -1,0 +1,20 @@
+{
+  "name": "LM-Kit Omni Agent",
+  "short_name": "Omni",
+  "description": "Nền tảng trợ lý AI đa năng cho doanh nghiệp",
+  "lang": "vi",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#f8fafc",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "_v1_icon_note": "Giới hạn v1: chỉ có icon SVG (favicon.svg). Một số nền tảng cài đặt (đặc biệt iOS/Safari) yêu cầu PNG 192x192/512x512 — bổ sung ở phiên bản sau. Theo spec, trình phân tích manifest bỏ qua thành viên lạ này."
+}

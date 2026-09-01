@@ -14,13 +14,13 @@
           </div>
         </div>
       </div>
-      <button @click="closeWidget" class="text-white/80 hover:text-white p-1 hover:bg-white/10 rounded-full transition-colors" title="Thu nhỏ">
+      <button @click="closeWidget" class="text-white hover:text-white w-11 h-11 hover:bg-white/10 rounded-full transition-colors" aria-label="Thu nhỏ cửa sổ trò chuyện">
         <i class="pi pi-minus"></i>
       </button>
     </div>
 
     <!-- Chat History -->
-    <div ref="chatContainer" class="flex-1 overflow-y-auto p-4 scroll-smooth bg-gray-50/50">
+    <div ref="chatContainer" class="flex-1 overflow-y-auto p-4 scroll-smooth bg-gray-50/50" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Lịch sử trò chuyện">
       <div v-if="messages.length === 0" class="h-full flex flex-col items-center justify-center text-center opacity-70">
         <i class="pi pi-comments text-4xl text-gray-300 mb-2"></i>
         <p class="text-xs text-gray-500">Bắt đầu trò chuyện với AI...</p>
@@ -71,11 +71,12 @@
                 <div class="text-xs text-orange-700 mb-3 leading-snug">
                   Agent cần sự cho phép của bạn để tiếp tục.
                 </div>
+                <div v-if="msg.hitlError" class="text-xs text-red-700 mb-2" role="alert">{{ msg.hitlError }}</div>
                 <div class="flex gap-2" v-if="!msg.hitlResolved">
-                  <button @click="approveTask(msg)" class="flex-1 px-2 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium rounded transition-colors">
+                  <button @click="approveTask(msg)" :disabled="msg.hitlBusy" class="flex-1 min-h-11 px-2 py-1.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-xs font-medium rounded transition-colors">
                     Phê duyệt
                   </button>
-                  <button @click="rejectTask(msg)" class="flex-1 px-2 py-1.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs font-medium rounded transition-colors">
+                  <button @click="rejectTask(msg)" :disabled="msg.hitlBusy" class="flex-1 min-h-11 px-2 py-1.5 bg-white hover:bg-gray-50 disabled:opacity-50 text-gray-700 border border-gray-300 text-xs font-medium rounded transition-colors">
                     Từ chối
                   </button>
                 </div>
@@ -92,19 +93,30 @@
     <!-- Input Area -->
     <div class="bg-white border-t border-gray-100 p-3 shrink-0">
       <div class="relative flex items-center bg-gray-50 border border-gray-200 rounded-full pr-1 shadow-inner focus-within:border-blue-300 focus-within:ring-1 focus-within:ring-blue-300 transition-all">
-        <textarea 
-          v-model="inputMessage" 
-          @keydown.enter.prevent="sendMessage"
-          class="flex-1 bg-transparent border-0 focus:ring-0 resize-none outline-none py-2.5 pl-4 pr-2 text-[13px] text-gray-700 max-h-24 leading-snug" 
+        <textarea
+          v-model="inputMessage"
+          @keydown.enter.exact.prevent="sendMessage"
+          class="flex-1 bg-transparent border-0 resize-none py-2.5 pl-4 pr-2 text-[13px] text-gray-700 max-h-24 leading-snug"
           rows="1"
+          aria-label="Tin nhắn"
           placeholder="Nhập tin nhắn..."
           style="scrollbar-width: none;"
         ></textarea>
         
-        <button 
+        <button
+          v-if="isStreaming"
+          @click="stop"
+          aria-label="Dừng tạo trả lời"
+          class="w-11 h-11 flex items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700 transition-colors shrink-0"
+        >
+          <i class="pi pi-stop text-xs"></i>
+        </button>
+        <button
+          v-else
           @click="sendMessage"
           :disabled="!inputMessage.trim() || isGenerating"
-          class="w-8 h-8 flex items-center justify-center rounded-full bg-blue-600 text-white disabled:opacity-50 disabled:bg-gray-300 hover:bg-blue-700 transition-colors shrink-0"
+          aria-label="Gửi tin nhắn"
+          class="w-11 h-11 flex items-center justify-center rounded-full bg-blue-600 text-white disabled:opacity-50 disabled:bg-gray-300 hover:bg-blue-700 transition-colors shrink-0"
         >
           <i class="pi pi-send text-xs"></i>
         </button>
@@ -120,18 +132,17 @@
 import { ref, nextTick, onMounted } from 'vue';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
-
-interface Message {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  isTyping?: boolean;
-  thinkingSteps?: string[];
-  hitlTaskId?: string;
-  hitlResolved?: string;
-}
+import { errorMessage, readApiError } from '@/api/errors';
+import { formatSafeMessage } from '@/utils/safeFormatting';
+import {
+  useChatStream,
+  useHitlActions,
+  getCleanUserContent,
+  type ChatMessage,
+} from '@/composables/useChatStream';
 
 const inputMessage = ref('');
-const messages = ref<Message[]>([
+const messages = ref<ChatMessage[]>([
     {
         role: 'assistant',
         content: 'Xin chào! Tôi có thể giúp gì cho bạn?'
@@ -140,11 +151,13 @@ const messages = ref<Message[]>([
 const isGenerating = ref(false);
 const chatContainer = ref<HTMLElement | null>(null);
 const currentSessionId = ref<string | null>(null);
+// `stop` keeps whatever partial text has streamed in and ends the stream cleanly.
+const { consumeStream, stop, isStreaming } = useChatStream();
 
 const closeWidget = () => {
-    // Gửi thông báo ra trang web chứa iframe để đóng iframe lại
-    if (window.parent) {
-        window.parent.postMessage({ type: 'lmkit-close-widget' }, '*');
+    if (window.parent && document.referrer) {
+        const parentOrigin = new URL(document.referrer).origin;
+        window.parent.postMessage({ type: 'lmkit-close-widget' }, parentOrigin);
     }
 };
 
@@ -155,14 +168,7 @@ const scrollToBottom = async () => {
   }
 };
 
-const formatMessage = (text: string) => {
-  if (!text) return '';
-  return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>');
-};
-
-const getCleanUserContent = (content: string) => {
-  return content.replace(/\n\n--- Nội dung file đính kèm ---[\s\S]*/g, '').trim();
-};
+const formatMessage = formatSafeMessage;
 
 const sendMessage = async () => {
   const content = inputMessage.value.trim();
@@ -177,19 +183,14 @@ const sendMessage = async () => {
   const assistantMsg = messages.value[messages.value.length - 1];
   await scrollToBottom();
 
-  if (!currentSessionId.value) {
-      try {
+  try {
+    if (!currentSessionId.value) {
           const sessionRes = await http.post(ApiFactory.CHAT.CREATE_SESSION);
           if (sessionRes.ok) {
               const newSession = await sessionRes.json();
               currentSessionId.value = newSession.id;
-          }
-      } catch (e) {
-          console.error('Lỗi tạo session ẩn danh:', e);
-      }
-  }
-
-  try {
+          } else throw new Error(await readApiError(sessionRes, 'Không thể tạo phiên trò chuyện'));
+    }
     const payload = {
       SessionId: currentSessionId.value || '00000000-0000-0000-0000-000000000000',
       Message: content,
@@ -198,60 +199,13 @@ const sendMessage = async () => {
     
     const response = await http.post(ApiFactory.CHAT.STREAM, payload);
 
-    if (!response.body) throw new Error('ReadableStream not supported');
+    if (!response.ok) throw new Error(await readApiError(response, 'Yêu cầu chat thất bại'));
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-
-    assistantMsg.isTyping = false;
-
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      let lineEnd;
-      while ((lineEnd = buffer.indexOf('\n')) !== -1) {
-        let line = buffer.substring(0, lineEnd);
-        if (line.endsWith('\r')) {
-            line = line.substring(0, line.length - 1);
-        }
-        buffer = buffer.substring(lineEnd + 1);
-
-        if (line.startsWith('data:')) {
-          let data = line.substring(5);
-          if (data.startsWith(' ')) data = data.substring(1);
-
-          if (data === '[DONE]') break;
-          
-          if (data.startsWith('[WEB_SEARCH]:')) {
-              continue; // Bỏ qua web search display cho widget nhỏ để đỡ rối
-          }
-          if (data.startsWith('[THINKING]:')) {
-              const thinkingMsg = data.replace('[THINKING]:', '').trim();
-              if (!assistantMsg.thinkingSteps) {
-                  assistantMsg.thinkingSteps = [];
-              }
-              assistantMsg.thinkingSteps.push(thinkingMsg);
-              await scrollToBottom();
-              continue;
-          }
-          if (data.startsWith('[HITL_APPROVAL_REQUIRED:')) {
-              const taskId = data.replace('[HITL_APPROVAL_REQUIRED:', '').replace(']', '').trim();
-              assistantMsg.hitlTaskId = taskId;
-              await scrollToBottom();
-              break;
-          }
-          if (data.startsWith('[Agent invoked:')) continue; // Ẩn log thô của agent
-
-          assistantMsg.content += data;
-          await scrollToBottom();
-        }
-      }
-    }
+    // No onWebSearch handler: the widget intentionally ignores [WEB_SEARCH]
+    // events to keep the compact UI uncluttered.
+    await consumeStream({ response, assistantMsg, scrollToBottom });
   } catch (error) {
-    assistantMsg.content = `Lỗi phản hồi: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    assistantMsg.content = `Lỗi phản hồi: ${errorMessage(error, 'Không thể tạo câu trả lời.')}`;
     assistantMsg.isTyping = false;
   } finally {
     isGenerating.value = false;
@@ -266,42 +220,18 @@ onMounted(() => {
         tx[i].addEventListener("input", OnInput, false);
     }
 
-    function OnInput(this: any) {
-        this.style.height = 0;
+    function OnInput(this: HTMLTextAreaElement) {
+        this.style.height = '0';
         this.style.height = (this.scrollHeight) + "px";
     }
 });
 
-const approveTask = async (msg: any) => {
-  try {
-    msg.hitlResolved = 'Approved';
-    const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/approve`);
-    if (res.ok) {
-      const result = await res.json();
-      messages.value.push({
-        role: 'system',
-        content: `Đã phê duyệt. Kết quả: ${result.Result}`
-      });
-      inputMessage.value = `Tôi đã phê duyệt hành động trên. Kết quả thực thi là: ${result.Result}. Vui lòng tiếp tục.`;
-      await sendMessage();
-    }
-  } catch (error) {
-    console.error('Failed to approve task', error);
-  }
-};
-
-const rejectTask = async (msg: any) => {
-  try {
-    msg.hitlResolved = 'Rejected';
-    await http.post(`/api/TaskApproval/${msg.hitlTaskId}/reject`, { Comment: "User rejected" });
-    messages.value.push({
-      role: 'system',
-      content: `Đã từ chối hành động.`
-    });
-  } catch (error) {
-    console.error('Failed to reject task', error);
-  }
-};
+const { approveTask, rejectTask } = useHitlActions({
+  messages,
+  inputMessage,
+  sendMessage,
+  approvedSystemMessage: (result) => `Đã phê duyệt. Kết quả: ${result}`,
+});
 </script>
 
 <style scoped>

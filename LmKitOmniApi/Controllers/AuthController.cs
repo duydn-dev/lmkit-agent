@@ -2,12 +2,14 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using LmKitOmniApi.Infrastructure.Data;
+using LmKitOmniApi.Infrastructure.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Caching.Distributed;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -19,13 +21,15 @@ public class AuthController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly ILogger<AuthController> _logger;
     private readonly IWebHostEnvironment _env;
+    private readonly IDistributedCache _cache;
 
-    public AuthController(HermesDbContext dbContext, IConfiguration configuration, ILogger<AuthController> logger, IWebHostEnvironment env)
+    public AuthController(HermesDbContext dbContext, IConfiguration configuration, ILogger<AuthController> logger, IWebHostEnvironment env, IDistributedCache cache)
     {
         _dbContext = dbContext;
         _configuration = configuration;
         _logger = logger;
         _env = env;
+        _cache = cache;
     }
 
     [EnableRateLimiting("LoginPolicy")]
@@ -34,10 +38,14 @@ public class AuthController : ControllerBase
     {
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
 
-        if (string.IsNullOrEmpty(request.Email) || string.IsNullOrEmpty(request.Password))
-            return BadRequest("Email and Password are required.");
+        if (string.IsNullOrWhiteSpace(request.Email)
+            || request.Email.Length > 320
+            || string.IsNullOrEmpty(request.Password)
+            || request.Password.Length > 128)
+            return BadRequest("A valid email and password are required.");
 
-        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
         
         if (user == null)
         {
@@ -52,26 +60,14 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Tài khoản đã bị khóa tạm thời do đăng nhập sai quá nhiều lần. Vui lòng thử lại sau 15 phút." });
         }
 
-        // M7 Fix: BCrypt Password verification with auto-upgrade for legacy plaintext passwords
-        bool isPasswordValid = false;
-        
-        // Check if the stored password is a BCrypt hash (starts with $2a$, $2b$, or $2y$)
-        bool isBCryptHash = user.PasswordHash.StartsWith("$2a$") || user.PasswordHash.StartsWith("$2b$") || user.PasswordHash.StartsWith("$2y$");
-
+        var isBCryptHash = user.PasswordHash.StartsWith("$2a$", StringComparison.Ordinal)
+            || user.PasswordHash.StartsWith("$2b$", StringComparison.Ordinal)
+            || user.PasswordHash.StartsWith("$2y$", StringComparison.Ordinal);
+        var isPasswordValid = false;
         if (isBCryptHash)
         {
-            isPasswordValid = BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash);
-        }
-        else
-        {
-            // Fallback for legacy plaintext passwords (like "admin")
-            if (user.PasswordHash == request.Password)
-            {
-                isPasswordValid = true;
-                // Auto-upgrade: Hash the plaintext password and save to DB
-                user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
-                await _dbContext.SaveChangesAsync();
-            }
+            try { isPasswordValid = BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash); }
+            catch (BCrypt.Net.SaltParseException) { isPasswordValid = false; }
         }
 
         if (!isPasswordValid)
@@ -103,29 +99,28 @@ public class AuthController : ControllerBase
 
         _logger.LogInformation("Successful login for {Email} from IP {IP}", request.Email, ipAddress);
 
-        var token = GenerateJwtToken(user);
-        var refreshToken = GenerateRefreshToken();
-        user.RefreshToken = refreshToken;
-        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
+        var refreshToken = RefreshTokenProtector.Generate();
+        var session = new Domain.Entities.UserSession
+        {
+            UserId = user.Id,
+            SessionKey = Guid.NewGuid().ToString("N"),
+            RefreshTokenHash = RefreshTokenProtector.Hash(refreshToken),
+            DeviceInfo = Request.Headers.UserAgent.ToString()[..Math.Min(Request.Headers.UserAgent.ToString().Length, 500)],
+            IpAddress = ipAddress[..Math.Min(ipAddress.Length, 50)],
+            ExpiresAtUtc = DateTime.UtcNow.AddDays(7),
+            LastSeenAtUtc = DateTime.UtcNow
+        };
+        _dbContext.UserSessions.Add(session);
+        user.RefreshToken = null;
+        user.RefreshTokenExpiryTime = null;
         await _dbContext.SaveChangesAsync();
+        var token = GenerateJwtToken(user, session.Id);
 
         var jwtExpiration = double.Parse(_configuration.GetSection("JwtSettings")["ExpirationInMinutes"] ?? "30");
-        var cookieOptions = new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = !_env.IsDevelopment(),
-            SameSite = SameSiteMode.Lax,
-            Expires = DateTime.UtcNow.AddMinutes(jwtExpiration)
-        };
+        var cookieOptions = BuildCookieOptions(DateTime.UtcNow.AddMinutes(jwtExpiration));
         Response.Cookies.Append("hermes_token", token, cookieOptions);
 
-        var refreshCookieOptions = new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = !_env.IsDevelopment(),
-            SameSite = SameSiteMode.Lax,
-            Expires = user.RefreshTokenExpiryTime.Value
-        };
+        var refreshCookieOptions = BuildCookieOptions(session.ExpiresAtUtc);
         Response.Cookies.Append("hermes_refresh_token", refreshToken, refreshCookieOptions);
 
         return Ok(new
@@ -141,19 +136,41 @@ public class AuthController : ControllerBase
     [HttpPost("logout")]
     public async Task<IActionResult> Logout()
     {
-        var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!string.IsNullOrEmpty(userIdString) && Guid.TryParse(userIdString, out var userId))
+        var jti = User.FindFirstValue(JwtRegisteredClaimNames.Jti);
+        if (!string.IsNullOrWhiteSpace(jti))
         {
-            var user = await _dbContext.Users.FindAsync(userId);
-            if (user != null)
+            var expiresAt = TryGetTokenExpiration() ?? DateTimeOffset.UtcNow.AddMinutes(30);
+            if (expiresAt > DateTimeOffset.UtcNow)
             {
-                user.RefreshToken = null;
-                await _dbContext.SaveChangesAsync();
+                await _cache.SetStringAsync(
+                    $"blacklist_{jti}",
+                    "revoked",
+                    new DistributedCacheEntryOptions { AbsoluteExpiration = expiresAt },
+                    HttpContext.RequestAborted);
             }
         }
 
-        Response.Cookies.Delete("hermes_token");
-        Response.Cookies.Delete("hermes_refresh_token");
+        Domain.Entities.UserSession? session = null;
+        if (Guid.TryParse(User.FindFirstValue("sid"), out var sessionId))
+        {
+            session = await _dbContext.UserSessions.FindAsync(sessionId);
+        }
+        else if (Request.Cookies.TryGetValue("hermes_refresh_token", out var refreshToken))
+        {
+            var refreshHash = RefreshTokenProtector.Hash(refreshToken);
+            session = await _dbContext.UserSessions.FirstOrDefaultAsync(candidate => candidate.RefreshTokenHash == refreshHash);
+        }
+
+        if (session != null)
+        {
+            session.Status = "revoked";
+            session.RefreshTokenHash = null;
+            session.RevokedAtUtc = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync();
+        }
+
+        DeleteAuthCookie("hermes_token");
+        DeleteAuthCookie("hermes_refresh_token");
         return Ok();
     }
 
@@ -165,36 +182,41 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Không tìm thấy Refresh Token." });
         }
 
-        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.RefreshToken == refreshToken);
-        if (user == null || user.RefreshTokenExpiryTime <= DateTime.UtcNow || !user.IsActive)
+        var refreshTokenHash = RefreshTokenProtector.Hash(refreshToken);
+        var session = await _dbContext.UserSessions
+            .Include(candidate => candidate.User)
+            .FirstOrDefaultAsync(candidate => candidate.RefreshTokenHash == refreshTokenHash);
+        var user = session?.User;
+        if (session == null
+            || user == null
+            || !session.Status.Equals("active", StringComparison.OrdinalIgnoreCase)
+            || session.ExpiresAtUtc <= DateTime.UtcNow
+            || !user.IsActive)
         {
             return Unauthorized(new { message = "Refresh Token không hợp lệ hoặc đã hết hạn." });
         }
 
-        var newJwtToken = GenerateJwtToken(user);
-        var newRefreshToken = GenerateRefreshToken();
+        var newRefreshToken = RefreshTokenProtector.Generate();
+        var newRefreshTokenHash = RefreshTokenProtector.Hash(newRefreshToken);
+        var refreshedAt = DateTime.UtcNow;
 
-        user.RefreshToken = newRefreshToken;
-        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
-        await _dbContext.SaveChangesAsync();
+        var rotated = await _dbContext.UserSessions
+            .Where(candidate => candidate.Id == session.Id
+                && candidate.RefreshTokenHash == refreshTokenHash
+                && candidate.Status == "active")
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(candidate => candidate.RefreshTokenHash, newRefreshTokenHash)
+                .SetProperty(candidate => candidate.LastSeenAtUtc, refreshedAt));
+        if (rotated != 1)
+            return Unauthorized(new { message = "Refresh Token đã được sử dụng hoặc thu hồi." });
+
+        var newJwtToken = GenerateJwtToken(user, session.Id);
 
         var jwtExpiration = double.Parse(_configuration.GetSection("JwtSettings")["ExpirationInMinutes"] ?? "30");
-        var cookieOptions = new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = !_env.IsDevelopment(),
-            SameSite = SameSiteMode.Lax,
-            Expires = DateTime.UtcNow.AddMinutes(jwtExpiration)
-        };
+        var cookieOptions = BuildCookieOptions(DateTime.UtcNow.AddMinutes(jwtExpiration));
         Response.Cookies.Append("hermes_token", newJwtToken, cookieOptions);
 
-        var refreshCookieOptions = new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = !_env.IsDevelopment(),
-            SameSite = SameSiteMode.Lax,
-            Expires = user.RefreshTokenExpiryTime.Value
-        };
+        var refreshCookieOptions = BuildCookieOptions(session.ExpiresAtUtc);
         Response.Cookies.Append("hermes_refresh_token", newRefreshToken, refreshCookieOptions);
 
         return Ok(new { message = "Làm mới Token thành công." });
@@ -209,7 +231,7 @@ public class AuthController : ControllerBase
             return Unauthorized();
 
         var user = await _dbContext.Users.FindAsync(userId);
-        if (user == null) return NotFound();
+        if (user == null || !user.IsActive) return Unauthorized();
 
         return Ok(new
         {
@@ -221,7 +243,7 @@ public class AuthController : ControllerBase
         });
     }
 
-    private string GenerateJwtToken(Domain.Entities.User user)
+    private string GenerateJwtToken(Domain.Entities.User user, Guid sessionId)
     {
         var jwtSettings = _configuration.GetSection("JwtSettings");
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["SecretKey"]!));
@@ -234,6 +256,7 @@ public class AuthController : ControllerBase
             new Claim("FullName", user.FullName),
             new Claim("Role", user.Role),
             new Claim("TenantId", user.TenantId.ToString()),
+            new Claim("sid", sessionId.ToString()),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 
@@ -248,13 +271,30 @@ public class AuthController : ControllerBase
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
-    private string GenerateRefreshToken()
+    private CookieOptions BuildCookieOptions(DateTimeOffset expires) => new()
     {
-        var randomNumber = new byte[32];
-        using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
-        rng.GetBytes(randomNumber);
-        return Convert.ToBase64String(randomNumber);
+        HttpOnly = true,
+        Secure = _configuration.GetValue("AuthCookies:Secure", !_env.IsDevelopment()),
+        SameSite = SameSiteMode.Lax,
+        Path = "/",
+        Expires = expires
+    };
+
+    private void DeleteAuthCookie(string name) => Response.Cookies.Delete(name, new CookieOptions
+    {
+        Secure = _configuration.GetValue("AuthCookies:Secure", !_env.IsDevelopment()),
+        SameSite = SameSiteMode.Lax,
+        Path = "/"
+    });
+
+    private DateTimeOffset? TryGetTokenExpiration()
+    {
+        var value = User.FindFirstValue(JwtRegisteredClaimNames.Exp);
+        return long.TryParse(value, out var unixSeconds)
+            ? DateTimeOffset.FromUnixTimeSeconds(unixSeconds)
+            : null;
     }
+
 }
 
 public class LoginRequest

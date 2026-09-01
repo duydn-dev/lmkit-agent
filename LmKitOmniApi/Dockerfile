@@ -11,7 +11,13 @@ RUN dotnet publish "LmKitOmniApi.csproj" -c Release -o /app/publish
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/publish .
+RUN mkdir -p /app/Models /app/Uploads /var/lib/lmkit/keys \
+    && chown -R app:app /app/Models /app/Uploads /var/lib/lmkit/keys \
+    && chmod 700 /var/lib/lmkit/keys
 
 # Health check để Docker/K8s kiểm tra trạng thái
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
@@ -19,4 +25,5 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 
 ENV ASPNETCORE_URLS=http://+:5000
 EXPOSE 5000
+USER app
 ENTRYPOINT ["dotnet", "LmKitOmniApi.dll"]

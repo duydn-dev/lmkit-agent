@@ -14,11 +14,11 @@
             </div>
           </div>
           <Button
-            @click="showUploadDialog = true"
+            @click="openUpload"
             label="Tải tài liệu lên"
             icon="pi pi-cloud-upload"
             severity="info"
-            class="!px-4 !py-2.5 !rounded-xl !text-sm !font-medium !shadow-md !shadow-blue-500/20"
+            class="!px-4 !py-2.5 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800 !shadow-md !shadow-blue-500/20"
           />
         </div>
       </div>
@@ -26,6 +26,9 @@
 
     <!-- Main Content -->
     <div class="flex-1 max-w-7xl mx-auto w-full px-6 py-6">
+      <div v-if="documentError" role="alert" class="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {{ documentError }}
+      </div>
       <!-- Stats Cards -->
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <div class="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm hover:shadow-md hover:border-gray-200 transition-all duration-300">
@@ -60,12 +63,12 @@
 
         <div class="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm hover:shadow-md hover:border-gray-200 transition-all duration-300">
           <div class="flex items-center justify-between mb-2">
-            <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-purple-50 to-purple-100 flex items-center justify-center">
-              <i class="pi pi-database text-purple-500 text-sm"></i>
+            <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-red-50 to-red-100 flex items-center justify-center">
+              <i class="pi pi-exclamation-triangle text-red-500 text-sm"></i>
             </div>
           </div>
-          <p class="text-2xl font-bold text-gray-900 tabular-nums">{{ vectorizedCount }}</p>
-          <p class="text-xs text-gray-500 font-medium mt-0.5">Chunk trong KB</p>
+          <p class="text-2xl font-bold text-gray-900 tabular-nums">{{ failedCount }}</p>
+          <p class="text-xs text-gray-500 font-medium mt-0.5">Tài liệu lỗi</p>
         </div>
       </div>
 
@@ -76,22 +79,25 @@
             <i class="pi pi-search absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
             <InputText
               v-model="searchQuery"
+              aria-label="Tìm kiếm tài liệu"
               placeholder="Tìm kiếm tài liệu..."
               class="!pl-9 !pr-4 !py-2.5 !rounded-xl !border-gray-200 !bg-white !shadow-sm !text-sm !w-72 focus:!border-blue-400 focus:!ring-2 focus:!ring-blue-100 transition-all"
             />
           </div>
           <Button
             icon="pi pi-filter-slash"
-            class="!w-10 !h-10 !rounded-xl !border-gray-200 !bg-white !text-gray-500 !shadow-sm hover:!bg-gray-50"
+            class="!w-11 !h-11 !rounded-xl !border-gray-200 !bg-white !text-gray-500 !shadow-sm hover:!bg-gray-50"
             @click="searchQuery = ''"
+            aria-label="Xóa bộ lọc"
             v-tooltip.top="'Xóa bộ lọc'"
           />
         </div>
         <div class="flex items-center gap-2">
           <Button
             :icon="viewMode === 'grid' ? 'pi pi-list' : 'pi pi-th-large'"
-            class="!w-10 !h-10 !rounded-xl !border-gray-200 !bg-white !text-gray-500 !shadow-sm hover:!bg-gray-50"
+            class="!w-11 !h-11 !rounded-xl !border-gray-200 !bg-white !text-gray-500 !shadow-sm hover:!bg-gray-50"
             @click="viewMode = viewMode === 'grid' ? 'table' : 'grid'"
+            :aria-label="viewMode === 'grid' ? 'Chuyển sang chế độ bảng' : 'Chuyển sang chế độ lưới'"
             v-tooltip.top="viewMode === 'grid' ? 'Chế độ bảng' : 'Chế độ lưới'"
           />
           <span class="text-xs text-gray-400 font-medium">{{ filteredDocuments.length }} tài liệu</span>
@@ -111,7 +117,7 @@
           <div
             v-for="(doc, index) in filteredDocuments"
             :key="doc.id"
-            class="group relative bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl hover:border-gray-200 transition-all duration-300 overflow-hidden animate-fade-in-up cursor-pointer"
+            class="group relative bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl hover:border-gray-200 transition-all duration-300 overflow-hidden animate-fade-in-up"
             :style="{ animationDelay: `${index * 50}ms` }"
           >
             <!-- Top accent bar -->
@@ -133,19 +139,24 @@
               <!-- Status bar -->
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <span v-if="doc.isVectorized" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-600 border border-emerald-200">
+                  <span v-if="doc.isVectorized" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-900 border border-emerald-200">
                     <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                     Hoàn tất
                   </span>
-                  <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-600 border border-amber-200">
+                  <span v-else-if="doc.vectorizationStatus === 'Failed'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-red-50 text-red-800 border border-red-200">
+                    <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                    Xử lý lỗi
+                  </span>
+                  <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-900 border border-amber-200">
                     <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
                     Đang xử lý
                   </span>
                 </div>
                 <Button
                   icon="pi pi-trash"
-                  class="!w-8 !h-8 !rounded-xl !bg-transparent !text-gray-300 hover:!text-red-500 hover:!bg-red-50 !border-none transition-all"
+                  class="!w-11 !h-11 !rounded-xl !bg-transparent !text-gray-500 hover:!text-red-600 hover:!bg-red-50 !border-none transition-all"
                   @click.stop="confirmDelete(doc)"
+                  :aria-label="`Xóa tài liệu ${doc.fileName}`"
                   v-tooltip.top="'Xóa tài liệu'"
                 />
               </div>
@@ -197,11 +208,15 @@
 
           <Column field="isVectorized" header="Trạng thái" sortable>
             <template #body="{ data }">
-              <span v-if="data.isVectorized" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-600 border border-emerald-200">
+              <span v-if="data.isVectorized" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-900 border border-emerald-200">
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                 Hoàn tất
               </span>
-              <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-600 border border-amber-200">
+              <span v-else-if="data.vectorizationStatus === 'Failed'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-800 border border-red-200">
+                <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                Xử lý lỗi
+              </span>
+              <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-900 border border-amber-200">
                 <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
                 Đang xử lý
               </span>
@@ -211,8 +226,7 @@
           <Column header="Thao tác" :exportable="false" style="min-width: 8rem">
             <template #body="{ data }">
               <div class="flex items-center gap-1">
-                <Button icon="pi pi-eye" class="!w-8 !h-8 !rounded-lg !bg-transparent !text-gray-400 hover:!text-blue-500 hover:!bg-blue-50 !border-none" v-tooltip.top="'Xem chi tiết'" />
-                <Button icon="pi pi-trash" class="!w-8 !h-8 !rounded-lg !bg-transparent !text-gray-400 hover:!text-red-500 hover:!bg-red-50 !border-none" @click="confirmDelete(data)" v-tooltip.top="'Xóa tài liệu'" />
+                <Button icon="pi pi-trash" class="!w-11 !h-11 !rounded-lg !bg-transparent !text-gray-500 hover:!text-red-600 hover:!bg-red-50 !border-none" @click="confirmDelete(data)" :aria-label="`Xóa tài liệu ${data.fileName}`" v-tooltip.top="'Xóa tài liệu'" />
               </div>
             </template>
           </Column>
@@ -262,6 +276,7 @@
         >
           <input
             type="file"
+            aria-label="Chọn tài liệu để tải lên"
             @change="handleFileChange"
             @dragenter="isDragging = true"
             @dragleave="isDragging = false"
@@ -302,30 +317,33 @@
               </div>
             </div>
             <button
-              class="w-8 h-8 rounded-lg bg-gray-100 hover:bg-red-50 text-gray-400 hover:text-red-500 flex items-center justify-center transition-all shrink-0 z-20"
-              @click.stop="selectedFile = null"
+              class="w-11 h-11 rounded-lg bg-gray-100 hover:bg-red-50 text-gray-500 hover:text-red-600 flex items-center justify-center transition-all shrink-0 z-20"
+              @click.stop="clearSelectedFile"
+              :aria-label="`Bỏ file ${selectedFile.name}`"
             >
               <i class="pi pi-times text-xs"></i>
             </button>
           </div>
         </div>
 
-        <!-- Uploading progress -->
+        <!-- Validation / upload error -->
+        <div v-if="uploadError" role="alert" class="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+          {{ uploadError }}
+        </div>
+
+        <!-- Uploading status: fetch() has no upload-progress events, so we show an
+             honest indeterminate activity indicator rather than a fabricated percentage. -->
         <div v-if="uploading" class="mt-5 p-4 rounded-xl bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-100">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-cyan-400 flex items-center justify-center animate-pulse">
-              <i class="pi pi-upload text-white text-sm"></i>
+            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-cyan-400 flex items-center justify-center">
+              <i class="pi pi-spin pi-spinner text-white text-sm"></i>
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex justify-between text-sm mb-1.5">
                 <span class="font-medium text-gray-700">Đang tải lên & xử lý...</span>
-                <span class="text-blue-500 font-semibold text-xs">{{ uploadProgress }}%</span>
               </div>
-              <div class="h-2 w-full bg-blue-100 rounded-full overflow-hidden">
-                <div
-                  class="h-full bg-gradient-to-r from-blue-400 to-cyan-400 rounded-full transition-all duration-500 ease-out"
-                  :style="{ width: uploadProgress + '%' }"
-                ></div>
+              <div class="h-2 w-full bg-blue-100 rounded-full overflow-hidden" role="progressbar" aria-label="Đang tải tài liệu lên" aria-busy="true">
+                <div class="h-full w-2/5 bg-gradient-to-r from-blue-400 to-cyan-400 rounded-full doc-upload-indeterminate"></div>
               </div>
               <p class="text-xs text-gray-400 mt-1.5">Đang vector hóa tài liệu để sẵn sàng cho RAG...</p>
             </div>
@@ -341,7 +359,7 @@
             severity="secondary"
             @click="showUploadDialog = false"
             :disabled="uploading"
-            class="!px-4 !py-2 !rounded-xl !text-sm !font-medium"
+            class="!min-h-11 !px-4 !py-2 !rounded-xl !text-sm !font-medium"
           />
           <Button
             label="Tải lên"
@@ -349,7 +367,7 @@
             :loading="uploading"
             @click="uploadFile"
             :disabled="!selectedFile || uploading"
-            class="!px-5 !py-2 !rounded-xl !text-sm !font-medium !bg-gradient-to-r !from-blue-500 !to-blue-600 !border-none hover:!from-blue-600 hover:!to-blue-700 !shadow-lg !shadow-blue-500/20"
+            class="!min-h-11 !px-5 !py-2 !rounded-xl !text-sm !font-medium !bg-gradient-to-r !from-blue-500 !to-blue-600 !border-none hover:!from-blue-600 hover:!to-blue-700 !shadow-lg !shadow-blue-500/20"
           />
         </div>
       </template>
@@ -394,14 +412,14 @@
             text
             severity="secondary"
             @click="showDeleteDialog = false"
-            class="!px-4 !py-2 !rounded-xl !text-sm"
+            class="!min-h-11 !px-4 !py-2 !rounded-xl !text-sm"
           />
           <Button
             label="Xóa"
             icon="pi pi-trash"
             @click="deleteDocument"
             :loading="deleting"
-            class="!px-4 !py-2 !rounded-xl !text-sm !bg-gradient-to-r !from-red-500 !to-red-600 !border-none hover:!from-red-600 hover:!to-red-700 !shadow-lg !shadow-red-500/20"
+            class="!min-h-11 !px-4 !py-2 !rounded-xl !text-sm !bg-gradient-to-r !from-red-500 !to-red-600 !border-none hover:!from-red-600 hover:!to-red-700 !shadow-lg !shadow-red-500/20"
           />
         </div>
       </template>
@@ -413,29 +431,38 @@
 import { ref, computed, onMounted } from 'vue';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
+import { errorMessage, readApiError } from '@/api/errors';
+import { formatDate } from '@/utils/date';
 
 interface Document {
   id: string;
   fileName: string;
-  filePath: string;
   uploadedAt: string;
   isVectorized: boolean;
+  vectorizationStatus: 'Pending' | 'Processing' | 'Completed' | 'Failed';
+  processingAttempts: number;
+  hasError: boolean;
 }
 
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const ALLOWED_EXTENSIONS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md'];
+
 const documents = ref<Document[]>([]);
+const documentError = ref('');
 const showUploadDialog = ref(false);
 const uploading = ref(false);
 const selectedFile = ref<File | null>(null);
 const searchQuery = ref('');
 const viewMode = ref<'grid' | 'table'>('grid');
 const isDragging = ref(false);
-const uploadProgress = ref(0);
+const uploadError = ref('');
 const showDeleteDialog = ref(false);
 const docToDelete = ref<Document | null>(null);
 const deleting = ref(false);
 
 const vectorizedCount = computed(() => documents.value.filter(d => d.isVectorized).length);
-const pendingCount = computed(() => documents.value.filter(d => !d.isVectorized).length);
+const pendingCount = computed(() => documents.value.filter(d => !d.isVectorized && d.vectorizationStatus !== 'Failed' && !d.hasError).length);
+const failedCount = computed(() => documents.value.filter(d => d.vectorizationStatus === 'Failed' || d.hasError).length);
 
 const filteredDocuments = computed(() => {
   if (!searchQuery.value.trim()) return documents.value;
@@ -443,18 +470,50 @@ const filteredDocuments = computed(() => {
   return documents.value.filter(d => d.fileName.toLowerCase().includes(q));
 });
 
+function validateFile(file: File): string | null {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  if (!ext || !ALLOWED_EXTENSIONS.includes(ext)) {
+    return `Định dạng không được hỗ trợ. Chỉ chấp nhận: ${ALLOWED_EXTENSIONS.join(', ')}.`;
+  }
+  if (file.size > MAX_FILE_SIZE) {
+    return `File vượt quá dung lượng tối đa 50MB (hiện tại: ${formatFileSize(file.size)}).`;
+  }
+  return null;
+}
+
+// Single validation gate for both the file input and the drag-drop path so the
+// drop zone can no longer bypass the accepted types / size limit.
+function selectFile(file: File) {
+  const error = validateFile(file);
+  if (error) {
+    uploadError.value = error;
+    selectedFile.value = null;
+    return;
+  }
+  uploadError.value = '';
+  selectedFile.value = file;
+}
+
+function clearSelectedFile() {
+  selectedFile.value = null;
+  uploadError.value = '';
+}
+
+function openUpload() {
+  clearSelectedFile();
+  showUploadDialog.value = true;
+}
+
 function onDrop(e: DragEvent) {
   isDragging.value = false;
-  if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
-    selectedFile.value = e.dataTransfer.files[0];
-  }
+  const file = e.dataTransfer?.files?.[0];
+  if (file) selectFile(file);
 }
 
 function handleFileChange(e: Event) {
   const target = e.target as HTMLInputElement;
-  if (target.files && target.files.length > 0) {
-    selectedFile.value = target.files[0];
-  }
+  const file = target.files?.[0];
+  if (file) selectFile(file);
 }
 
 function getFileIcon(fileName: string): string {
@@ -493,11 +552,6 @@ function getFileExt(fileName: string): string {
   return (fileName.split('.').pop() || '').toUpperCase();
 }
 
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString('vi-VN', { year: 'numeric', month: '2-digit', day: '2-digit' });
-}
-
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -512,74 +566,63 @@ function confirmDelete(doc: Document) {
 const deleteDocument = async () => {
   if (!docToDelete.value) return;
   deleting.value = true;
+  documentError.value = '';
   try {
     const response = await http.delete(`${ApiFactory.DOCUMENT.BASE}/${docToDelete.value.id}`);
     if (response.ok) {
       documents.value = documents.value.filter(d => d.id !== docToDelete.value!.id);
       showDeleteDialog.value = false;
       docToDelete.value = null;
-    }
+    } else documentError.value = await readApiError(response, 'Không thể xóa tài liệu');
   } catch (error) {
-    console.error('Delete failed:', error);
+    documentError.value = errorMessage(error, 'Không thể xóa tài liệu.');
   } finally {
     deleting.value = false;
   }
 };
 
 const loadDocuments = async () => {
+  documentError.value = '';
   try {
     const response = await http.get(ApiFactory.DOCUMENT.BASE);
     if (response.ok) {
       documents.value = await response.json();
-    }
+    } else documentError.value = await readApiError(response, 'Không thể tải danh sách tài liệu');
   } catch (error) {
-    console.error('Failed to load documents:', error);
+    documentError.value = errorMessage(error, 'Không thể tải danh sách tài liệu.');
   }
 };
 
 const uploadFile = async () => {
   if (!selectedFile.value) return;
-  
+
+  // Re-validate defensively before hitting the network.
+  const validationError = validateFile(selectedFile.value);
+  if (validationError) {
+    uploadError.value = validationError;
+    return;
+  }
+
   uploading.value = true;
-  uploadProgress.value = 0;
-  
-  // Simulate upload progress
-  const progressInterval = setInterval(() => {
-    if (uploadProgress.value < 90) {
-      uploadProgress.value += Math.random() * 15;
-    }
-  }, 300);
+  uploadError.value = '';
 
   const formData = new FormData();
   formData.append('file', selectedFile.value);
-  
-  const userJson = localStorage.getItem('hermes_user');
-  const userId = userJson ? JSON.parse(userJson).id : '00000000-0000-0000-0000-000000000000';
-  formData.append('userId', userId);
 
   try {
     const response = await http.post(ApiFactory.DOCUMENT.UPLOAD, formData);
 
-    clearInterval(progressInterval);
-    uploadProgress.value = 100;
-    
     if (response.ok) {
-      setTimeout(() => {
-        selectedFile.value = null;
-        showUploadDialog.value = false;
-        uploadProgress.value = 0;
-        loadDocuments();
-      }, 500);
+      selectedFile.value = null;
+      showUploadDialog.value = false;
+      loadDocuments();
     } else {
-      console.error('Upload failed');
-      uploadProgress.value = 0;
+      uploadError.value = await readApiError(response, 'Không thể tải tài liệu lên');
     }
   } catch (error) {
-    clearInterval(progressInterval);
-    uploadProgress.value = 0;
-    console.error('Upload error:', error);
+    uploadError.value = errorMessage(error, 'Không thể tải tài liệu lên.');
   } finally {
-    setTimeout(() => { uploading.value = false; }, 300);
+    uploading.value = false;
   }
 };
 
@@ -603,6 +646,23 @@ onMounted(() => {
 
 .animate-fade-in-up {
   animation: fadeInUp 0.4s ease-out both;
+}
+
+/* Indeterminate upload activity bar (no real percentage is available) */
+@keyframes docUploadIndeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+.doc-upload-indeterminate {
+  animation: docUploadIndeterminate 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-upload-indeterminate {
+    animation: none;
+    width: 100%;
+  }
 }
 
 /* Custom scrollbar for main content area */

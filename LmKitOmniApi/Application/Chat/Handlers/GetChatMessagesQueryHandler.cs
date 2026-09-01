@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace LmKitOmniApi.Application.Chat.Handlers
 {
-    public class GetChatMessagesQueryHandler : IRequestHandler<GetChatMessagesQuery, List<ChatMessageDto>>
+    public class GetChatMessagesQueryHandler : IRequestHandler<GetChatMessagesQuery, List<ChatMessageDto>?>
     {
         private readonly HermesDbContext _dbContext;
 
@@ -18,12 +18,12 @@ namespace LmKitOmniApi.Application.Chat.Handlers
             _dbContext = dbContext;
         }
 
-        public async Task<List<ChatMessageDto>> Handle(GetChatMessagesQuery request, CancellationToken cancellationToken)
+        public async Task<List<ChatMessageDto>?> Handle(GetChatMessagesQuery request, CancellationToken cancellationToken)
         {
             var hasAccess = await _dbContext.ChatSessions
                 .AnyAsync(s => s.Id == request.SessionId && s.UserId == request.UserId, cancellationToken);
                 
-            if (!hasAccess) return new List<ChatMessageDto>();
+            if (!hasAccess) return null;
 
             var messages = await _dbContext.ChatMessages
                 .Where(m => m.ChatSessionId == request.SessionId)

@@ -49,5 +49,5 @@ public abstract class BaseSwarmAgent : ISwarmAgent
 
     public abstract Task<double> EvaluateConfidenceAsync(string query, CancellationToken ct = default);
     
-    public abstract Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? sessionId, string query, CancellationToken ct = default);
+    public abstract Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string userRole, string query, CancellationToken ct = default);
 }
