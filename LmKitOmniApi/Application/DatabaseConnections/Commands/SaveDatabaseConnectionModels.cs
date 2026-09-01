@@ -41,6 +41,13 @@ public sealed class TestDatabaseConnectionCommand : IRequest<DatabaseConnectionR
     public Guid TenantId { get; set; }
 }
 
+/// <summary>Marks a connection for (re)indexing — the background worker picks it up.</summary>
+public sealed class ReindexDatabaseConnectionCommand : IRequest<bool>
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+}
+
 /// <summary>Outcome of a create/update/test. Never carries the connection string.</summary>
 public sealed class DatabaseConnectionResult
 {

@@ -147,6 +147,17 @@
                   @click="testConnection(conn)"
                 />
                 <Button
+                  label="Lập chỉ mục lại"
+                  icon="pi pi-refresh"
+                  outlined
+                  severity="secondary"
+                  :loading="reindexingId === conn.id"
+                  :disabled="deletingId !== null || testingId !== null || (reindexingId !== null && reindexingId !== conn.id)"
+                  :aria-label="`Lập chỉ mục lại ${conn.name}`"
+                  class="!min-h-11 !px-3 !rounded-xl !text-sm"
+                  @click="reindexConnection(conn)"
+                />
+                <Button
                   label="Sửa"
                   icon="pi pi-pencil"
                   outlined
@@ -288,6 +299,7 @@ const editForm = ref({ id: '', name: '', provider: 'Postgres', connectionString:
 
 const deletingId = ref<string | null>(null);
 const testingId = ref<string | null>(null);
+const reindexingId = ref<string | null>(null);
 const testResults = ref<Record<string, TestResult>>({});
 
 const absoluteTime = (value: string | null | undefined): string => {
@@ -437,6 +449,27 @@ const testConnection = async (conn: DatabaseConnection) => {
     };
   } finally {
     testingId.value = null;
+  }
+};
+
+const reindexConnection = async (conn: DatabaseConnection) => {
+  reindexingId.value = conn.id;
+  try {
+    const response = await http.post(ApiFactory.DATABASE_CONNECTIONS.REINDEX(conn.id));
+    if (response.ok || response.status === 202) {
+      testResults.value = { ...testResults.value, [conn.id]: { success: true, message: 'Đã yêu cầu lập chỉ mục lại; đang chạy nền.' } };
+      await loadConnections();
+    } else {
+      const message = await readApiError(response, 'Không thể yêu cầu lập chỉ mục lại');
+      testResults.value = { ...testResults.value, [conn.id]: { success: false, message } };
+    }
+  } catch (cause) {
+    testResults.value = {
+      ...testResults.value,
+      [conn.id]: { success: false, message: errorMessage(cause, 'Không thể yêu cầu lập chỉ mục lại.') }
+    };
+  } finally {
+    reindexingId.value = null;
   }
 };
 

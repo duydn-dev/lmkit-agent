@@ -231,6 +231,8 @@ builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Security.DbEgressVa
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.PostgresDatabaseProvider>();
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.SqliteDatabaseProvider>();
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.ExternalDatabaseService>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.ISchemaEmbedder, LmKitOmniApi.Infrastructure.AI.Database.LmKitSchemaEmbedder>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.SchemaIndexingService>();
 
 // Filter Pipeline (ordered execution)
 builder.Services.AddScoped<IAgentFilter, InputSanitizationFilter>();
@@ -254,6 +256,7 @@ builder.Services.AddScoped<IRagPipelineService, RagPipelineService>();
 
 // Đăng ký Background Worker cho RAG Bất đồng bộ
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DocumentVectorizationWorker>();
+builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.SchemaVectorizationWorker>();
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DataRetentionWorker>();
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ModelWarmupWorker>();
 // Tier 2: user-defined recurring prompts delivered as notifications.

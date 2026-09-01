@@ -71,6 +71,15 @@ public class QdrantVectorService : IVectorStoreService
         await _client.DeleteAsync(collectionName, ids, cancellationToken: ct);
     }
 
+    public async Task DeleteByPayloadFilterAsync(
+        string collectionName, string payloadField, string value, CancellationToken ct = default)
+    {
+        // Delete every point whose payload field equals value (e.g. all schema
+        // points for one database connection) — used to clear stale schema before
+        // a re-index of a per-connection collection.
+        await _client.DeleteAsync(collectionName, AnyKeywordMatch(payloadField, new[] { value }), cancellationToken: ct);
+    }
+
     public async Task<List<VectorSearchResult>> SearchSimilarWithAnyPayloadAsync(
         string collectionName,
         float[] queryVector,

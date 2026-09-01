@@ -102,6 +102,7 @@ export const ApiFactory = {
   DATABASE_CONNECTIONS: {
     BASE: '/api/database-connections',
     BY_ID: (id: string) => `/api/database-connections/${id}`,
-    TEST: (id: string) => `/api/database-connections/${id}/test`
+    TEST: (id: string) => `/api/database-connections/${id}/test`,
+    REINDEX: (id: string) => `/api/database-connections/${id}/reindex`
   }
 };

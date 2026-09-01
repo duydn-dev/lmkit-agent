@@ -286,7 +286,8 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
                     && service.ImplementationType is { } implementation
                     && (implementation == typeof(DocumentVectorizationWorker)
                         || implementation == typeof(DataRetentionWorker)
-                        || implementation == typeof(ModelWarmupWorker)))
+                        || implementation == typeof(ModelWarmupWorker)
+                        || implementation == typeof(SchemaVectorizationWorker)))
                 .ToList())
             {
                 services.Remove(descriptor);

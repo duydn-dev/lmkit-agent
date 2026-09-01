@@ -119,6 +119,30 @@ public sealed class DeleteDatabaseConnectionCommandHandler : IRequestHandler<Del
     }
 }
 
+public sealed class ReindexDatabaseConnectionCommandHandler : IRequestHandler<ReindexDatabaseConnectionCommand, bool>
+{
+    private readonly HermesDbContext _dbContext;
+
+    public ReindexDatabaseConnectionCommandHandler(HermesDbContext dbContext) => _dbContext = dbContext;
+
+    public async Task<bool> Handle(ReindexDatabaseConnectionCommand command, CancellationToken ct)
+    {
+        var entity = await _dbContext.DatabaseConnections
+            .FirstOrDefaultAsync(c => c.Id == command.Id && c.TenantId == command.TenantId, ct);
+        if (entity is null) return false;
+
+        // Enqueue: reset index state so the background worker re-picks this row.
+        entity.IsIndexed = false;
+        entity.IndexStatus = "Pending";
+        entity.IndexAttempts = 0;
+        entity.IndexLeaseUntilUtc = null;
+        entity.LastIndexError = null;
+        entity.UpdatedAtUtc = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(ct);
+        return true;
+    }
+}
+
 public sealed class TestDatabaseConnectionCommandHandler : IRequestHandler<TestDatabaseConnectionCommand, DatabaseConnectionResult>
 {
     private readonly HermesDbContext _dbContext;

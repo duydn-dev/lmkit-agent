@@ -21,6 +21,14 @@ public interface IVectorStoreService
     Task DeleteVectorsAsync(string collectionName, IReadOnlyList<Guid> ids, CancellationToken ct = default);
 
     /// <summary>
+    /// Deletes every point whose <paramref name="payloadField"/> equals
+    /// <paramref name="value"/> (e.g. all schema points for one database
+    /// connection) — the delete-before-reingest primitive for per-connection
+    /// schema collections.
+    /// </summary>
+    Task DeleteByPayloadFilterAsync(string collectionName, string payloadField, string value, CancellationToken ct = default);
+
+    /// <summary>
     /// H3 Fix: Search by payload keyword filter — independent of vector similarity.
     /// Uses Qdrant's native payload filtering for true sparse retrieval.
     /// </summary>

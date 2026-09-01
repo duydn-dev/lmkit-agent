@@ -70,4 +70,12 @@ public sealed class DatabaseConnectionsController : ApiControllerBase
         var result = await _mediator.Send(new TestDatabaseConnectionCommand { Id = id, TenantId = tenantId }, ct);
         return result.Success ? Ok(new { success = true }) : BadRequest(new { success = false, message = result.Error });
     }
+
+    [HttpPost("{id:guid}/reindex")]
+    public async Task<IActionResult> Reindex(Guid id, CancellationToken ct)
+    {
+        if (!TryGetTenantId(out var tenantId)) return Unauthorized();
+        var queued = await _mediator.Send(new ReindexDatabaseConnectionCommand { Id = id, TenantId = tenantId }, ct);
+        return queued ? Accepted(new { queued = true }) : NotFound();
+    }
 }

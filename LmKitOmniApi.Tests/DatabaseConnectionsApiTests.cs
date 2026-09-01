@@ -119,6 +119,31 @@ public sealed class DatabaseConnectionsApiTests : IClassFixture<LmKitApiFactory>
     }
 
     [Fact]
+    public async Task Reindex_QueuesTheConnection_AndIsTenantScoped()
+    {
+        var client = await OwnerClientAsync();
+        var create = await client.PostAsJsonAsync("/api/database-connections", new
+        {
+            name = $"reindex-{Guid.NewGuid():N}",
+            provider = "Sqlite",
+            connectionString = "Data Source=:memory:",
+            isActive = true
+        });
+        var id = (await create.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+        var reindex = await client.PostAsync($"/api/database-connections/{id}/reindex", null);
+        Assert.Equal(HttpStatusCode.Accepted, reindex.StatusCode);
+
+        // The worker is disabled in tests, so it stays queued (Pending, not indexed).
+        var list = await client.GetFromJsonAsync<JsonElement[]>("/api/database-connections");
+        var entry = list!.Single(e => e.GetProperty("id").GetGuid() == id);
+        Assert.False(entry.GetProperty("isIndexed").GetBoolean());
+        Assert.Equal("Pending", entry.GetProperty("indexStatus").GetString());
+
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsync($"/api/database-connections/{Guid.NewGuid()}/reindex", null)).StatusCode);
+    }
+
+    [Fact]
     public async Task Delete_ForAForeignTenant_Returns404()
     {
         var owner = await OwnerClientAsync();
