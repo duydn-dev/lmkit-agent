@@ -109,6 +109,24 @@ public sealed class DbQueryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RunQuery_ExecutionError_SchedulesReindex_OnAnIndexedConnection()
+    {
+        var service = CreateService(); // seeded with IsIndexed = true
+
+        // A well-formed SELECT that passes the classifier but fails at execution because
+        // the table does not exist — the signal that the indexed schema may be stale.
+        var result = await service.RunQueryAsync(_tenantId, "SELECT * FROM nonexistent_table", CancellationToken.None);
+
+        Assert.Contains("Truy vấn thất bại", result);
+        Assert.Contains("lập chỉ mục lại", result);
+
+        // The connection was flipped back to Pending so the worker re-introspects it.
+        var row = _db.DatabaseConnections.AsNoTracking().Single(c => c.TenantId == _tenantId);
+        Assert.False(row.IsIndexed);
+        Assert.Equal("Pending", row.IndexStatus);
+    }
+
+    [Fact]
     public async Task GetSchema_ReturnsContext_AndReadOnlyGuidance()
     {
         var result = await CreateService().GetSchemaAsync(_tenantId, "khách hàng", CancellationToken.None);

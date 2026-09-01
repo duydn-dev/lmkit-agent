@@ -105,7 +105,45 @@ public sealed class DbQueryService
         {
             _logger.LogWarning(ex, "Read-only query failed for connection {ConnectionId}.", connection.Id);
             var message = ex.Message.Length > 300 ? ex.Message[..300] : ex.Message;
-            return $"[CSDL] Truy vấn thất bại: {message}";
+            // A failed read may mean the indexed schema is stale (a table/column was
+            // renamed or dropped). Schedule a re-index so the worker re-introspects and
+            // the next attempt sees the current schema.
+            var scheduled = await TryScheduleReindexAsync(connection.Id, ct);
+            var hint = scheduled
+                ? " Đã lên lịch lập chỉ mục lại schema (có thể đã thay đổi) — hãy thử lại sau giây lát."
+                : string.Empty;
+            return $"[CSDL] Truy vấn thất bại: {message}.{hint}";
+        }
+    }
+
+    /// <summary>
+    /// Best-effort: marks a currently-indexed connection for re-indexing after a query
+    /// error. Atomic and idempotent — only flips a connection still marked indexed, so
+    /// repeated failures don't thrash one already queued, and it never throws (a failure
+    /// here must not mask the original query error). Returns whether a re-index was
+    /// actually scheduled, so the caller only tells the user when it really happened.
+    /// </summary>
+    private async Task<bool> TryScheduleReindexAsync(Guid connectionId, CancellationToken ct)
+    {
+        try
+        {
+            var affected = await _dbContext.DatabaseConnections
+                .Where(c => c.Id == connectionId && c.IsIndexed)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(c => c.IsIndexed, false)
+                    .SetProperty(c => c.IndexStatus, "Pending")
+                    .SetProperty(c => c.IndexAttempts, 0)
+                    .SetProperty(c => c.IndexLeaseUntilUtc, (DateTime?)null)
+                    .SetProperty(c => c.LastIndexError, "Tự động lập chỉ mục lại sau lỗi truy vấn")
+                    .SetProperty(c => c.UpdatedAtUtc, DateTime.UtcNow), ct);
+            if (affected > 0)
+                _logger.LogInformation("Scheduled auto re-index for connection {ConnectionId} after a query error.", connectionId);
+            return affected > 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to schedule auto re-index for connection {ConnectionId}.", connectionId);
+            return false;
         }
     }
 
