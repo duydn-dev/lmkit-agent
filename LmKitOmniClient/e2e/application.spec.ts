@@ -152,7 +152,7 @@ test('authenticated user can create a chat and consume the SSE response', async 
   expect(browserErrors).toEqual([]);
 });
 
-test('admin can navigate documents, memory, users and MCP settings', async ({ page }) => {
+test('admin can navigate documents, memory, users and the admin hub', async ({ page }) => {
   const browserErrors = await mockAuthenticatedApi(page);
   await page.goto('/documents');
   await expect(page.getByRole('heading', { name: 'Kho Tài Liệu' })).toBeVisible();
@@ -169,9 +169,11 @@ test('admin can navigate documents, memory, users and MCP settings', async ({ pa
   await expect(page.getByRole('table').getByText('admin@example.test')).toBeVisible();
   await expectNoWcagViolations(page);
 
+  // The user card's gear is now an admin shortcut to the management hub
+  // (the old MCP settings modal was retired in favour of /admin/mcp-servers).
   await page.getByRole('button', { name: /Admin Tester/ }).click();
-  await expect(page.getByRole('dialog', { name: 'Cấu hình hệ thống' })).toBeVisible();
-  await expect(page.getByText('Chưa có máy chủ MCP nào được kết nối.')).toBeVisible();
+  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page.getByRole('heading', { name: 'Bảng điều khiển quản trị' })).toBeVisible();
   await expectNoWcagViolations(page);
   expect(browserErrors).toEqual([]);
 });

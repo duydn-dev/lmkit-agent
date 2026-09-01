@@ -71,15 +71,18 @@ test('real stack supports auth, sessions, documents, user admin and logout', asy
   const createdUserRow = page.getByRole('row').filter({ hasText: createdUserEmail });
   await expect(createdUserRow.getByText('Đã khóa', { exact: true })).toBeVisible();
 
+  // The settings modal was retired; MCP management now has its own admin page.
+  // The user-card gear navigates admins to the hub; the sidebar link opens MCP.
   await page.getByRole('button', { name: /Admin User/ }).click();
-  const settingsDialog = page.getByRole('dialog', { name: 'Cấu hình hệ thống' });
-  await expect(settingsDialog.getByText('Kết nối MCP Streamable HTTP theo tenant.')).toBeVisible();
-  await expect(settingsDialog.getByRole('checkbox', { name: /Tin cậy khai báo/ })).not.toBeChecked();
+  await expect(page).toHaveURL(/\/admin$/);
+  await page.getByRole('complementary', { name: 'Thanh bên ứng dụng' })
+    .getByRole('link', { name: 'Máy chủ MCP' }).click();
+  await expect(page).toHaveURL(/\/admin\/mcp-servers$/);
+  await expect(page.getByText('Kết nối MCP Streamable HTTP theo tenant.')).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: /Tin cậy khai báo/ })).not.toBeChecked();
   expect((await api.get('/api/mcp-servers')).status()).toBe(200);
 
   expect(browserErrors).toEqual([]);
-  await page.keyboard.press('Escape');
-  await expect(settingsDialog).toBeHidden();
   await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
   expect((await api.get('/api/auth/me')).status()).toBe(401);

@@ -76,7 +76,7 @@
             <div class="text-sm font-medium truncate text-gray-900">{{ userName }}</div>
             <div class="text-xs text-gray-500 truncate">{{ userEmail }}</div>
           </div>
-          <i class="pi pi-cog text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity hover:text-gray-900"></i>
+          <i v-if="isAdmin" class="pi pi-cog text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity hover:text-gray-900" aria-hidden="true"></i>
         </button>
         
         <button @click="logout" class="w-11 h-11 flex items-center justify-center text-gray-500 hover:text-red-600 hover:bg-chatgpt-light rounded-md transition-colors cursor-pointer flex-shrink-0" aria-label="Đăng xuất">
@@ -156,7 +156,6 @@
             <i :class="item.icon" class="mr-2" aria-hidden="true"></i>{{ item.label }}
           </router-link>
         </template>
-        <button @click="openMobileSettings" class="min-h-11 text-left px-3 py-2 rounded hover:bg-chatgpt-light"><i class="pi pi-cog mr-2"></i>Cấu hình</button>
         <button @click="logout" class="min-h-11 text-left px-3 py-2 rounded text-red-700 hover:bg-red-50"><i class="pi pi-sign-out mr-2"></i>Đăng xuất</button>
       </nav>
 
@@ -173,90 +172,6 @@
       
     </main>
 
-    <!-- Settings Modal -->
-    <Dialog v-model:visible="showSettingsModal" modal header="Cấu hình hệ thống" :style="{ width: '65vw' }" :breakpoints="{ '1199px': '75vw', '575px': '90vw' }" :pt="{ root: 'overflow-hidden', content: 'p-0' }">
-      <div class="flex h-[60vh]">
-        <!-- Sidebar Tabs -->
-        <div class="w-64 bg-gray-100 border-r border-gray-200 flex flex-col pt-2">
-          <div class="flex-1 overflow-y-auto p-2">
-            <button @click="activeTab = 'mcp'" :class="['w-full min-h-11 text-left px-3 py-2.5 rounded-lg mb-1 flex items-center gap-3 transition-colors text-sm font-medium', activeTab === 'mcp' ? 'bg-chatgpt-brand/10 text-sky-700' : 'text-gray-600 hover:bg-gray-200/50']">
-              <i class="pi pi-server"></i> Máy chủ MCP
-            </button>
-          </div>
-          <div class="p-2 border-t border-gray-200">
-            <button @click="logout" class="w-full min-h-11 text-left px-3 py-2.5 rounded-lg flex items-center gap-3 text-red-700 hover:bg-red-400/10 transition-colors text-sm font-medium">
-              <i class="pi pi-sign-out"></i> Đăng xuất
-            </button>
-          </div>
-        </div>
-
-        <!-- Content Area -->
-        <div class="flex-1 flex flex-col bg-gray-50">
-          <div class="flex-1 overflow-y-auto p-6 text-gray-700">
-            <div v-if="activeTab === 'mcp'" class="animate-fade-in">
-              <h3 class="text-xl font-medium text-gray-900 mb-2">Máy chủ Model Context Protocol (MCP)</h3>
-              <p class="text-sm text-gray-600 mb-6">Kết nối MCP Streamable HTTP theo tenant. Header bí mật được mã hóa và không bao giờ trả lại giao diện.</p>
-              <div v-if="!isAdmin" class="p-5 border border-amber-200 rounded-xl bg-amber-50 text-amber-700 text-sm">Chỉ Tenant Admin được quản lý máy chủ MCP.</div>
-              <template v-else>
-                <form @submit.prevent="createMcpServer" class="grid gap-3 p-4 bg-white border border-gray-200 rounded-xl mb-5">
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div class="grid gap-1"><label for="mcp-name" class="text-sm font-medium">Tên máy chủ</label><InputText id="mcp-name" v-model="mcpForm.name" required placeholder="Ví dụ crm-tools" /></div>
-                    <div class="grid gap-1"><label for="mcp-url" class="text-sm font-medium">URL máy chủ</label><InputText id="mcp-url" v-model="mcpForm.url" required type="url" placeholder="https://mcp.example.com" /></div>
-                  </div>
-                  <label for="mcp-headers" class="text-sm font-medium">Header JSON tùy chọn</label>
-                  <Textarea id="mcp-headers" v-model="mcpForm.headersJson" rows="3" placeholder='Ví dụ {"Authorization":"Bearer ..."}' />
-                  <label for="mcp-trust-readonly" class="flex items-start gap-2 text-sm text-amber-800 rounded-lg border border-amber-200 bg-amber-50 p-3">
-                    <Checkbox inputId="mcp-trust-readonly" v-model="mcpForm.trustReadOnlyAnnotations" binary />
-                    <span>Tin cậy khai báo <code>readOnlyHint</code> của máy chủ này. Chỉ bật khi đã xác minh nhà cung cấp; nếu tắt, mọi MCP tool đều cần phê duyệt.</span>
-                  </label>
-                  <div class="flex items-center justify-between gap-3">
-                    <label for="mcp-active" class="flex items-center gap-2 text-sm"><Checkbox inputId="mcp-active" v-model="mcpForm.isActive" binary /> Kích hoạt</label>
-                    <Button type="submit" label="Thêm máy chủ" icon="pi pi-plus" :loading="mcpSaving" class="!min-h-11 !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
-                  </div>
-                </form>
-                <!-- Quick-add suggestions from the tenant MCP catalog (hidden when the catalog is empty or failed to load). -->
-                <section v-if="mcpCatalog.length > 0" aria-labelledby="mcp-catalog-heading" class="mb-5">
-                  <h4 id="mcp-catalog-heading" class="text-sm font-semibold text-gray-900 mb-2">Gợi ý kết nối</h4>
-                  <div class="grid gap-2">
-                    <div v-for="entry in mcpCatalog" :key="entry.name" class="flex items-center justify-between gap-3 p-3 bg-white border border-gray-200 rounded-xl">
-                      <div class="min-w-0">
-                        <div class="text-sm font-medium text-gray-900 truncate">{{ entry.name }}</div>
-                        <div class="text-xs text-gray-500 truncate">{{ entry.description }}</div>
-                        <div class="text-xs text-gray-400 truncate">{{ entry.baseUrl }}</div>
-                      </div>
-                      <Button
-                        type="button"
-                        label="Điền nhanh"
-                        icon="pi pi-bolt"
-                        outlined
-                        :aria-label="`Điền nhanh ${entry.name} vào biểu mẫu`"
-                        class="!min-h-11 !px-3 !rounded-xl !text-sm flex-shrink-0"
-                        @click="applyCatalogEntry(entry)"
-                      />
-                    </div>
-                  </div>
-                  <p class="text-xs text-gray-400 mt-2">Điền nhanh chỉ nhập sẵn tên và URL vào biểu mẫu phía trên — bạn vẫn xem lại rồi bấm "Thêm máy chủ".</p>
-                </section>
-                <div v-if="mcpError" role="alert" class="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{{ mcpError }}</div>
-                <div v-if="mcpServers.length === 0" class="p-8 border border-gray-100 rounded-xl bg-gray-200/50 text-center">
-                  <i class="pi pi-database text-4xl text-gray-600 mb-3"></i>
-                  <p class="text-gray-500 text-sm">Chưa có máy chủ MCP nào được kết nối.</p>
-                </div>
-                <div v-for="server in mcpServers" :key="server.id" class="flex items-center justify-between gap-3 p-4 mb-2 bg-white border border-gray-200 rounded-xl">
-                  <div class="min-w-0">
-                    <div class="font-medium truncate">{{ server.name }}</div>
-                    <div class="text-xs text-gray-500 truncate">{{ server.url }}</div>
-                    <div class="text-xs mt-1" :class="server.isActive ? 'text-green-600' : 'text-gray-400'">{{ server.isActive ? 'Đang hoạt động' : 'Đã tắt' }} · {{ server.hasHeaders ? 'Có header bảo mật' : 'Không có header' }} · {{ server.trustReadOnlyAnnotations ? 'Tin cậy read-only' : 'Mọi tool cần duyệt' }}</div>
-                  </div>
-                  <Button icon="pi pi-trash" severity="danger" text rounded aria-label="Xóa máy chủ MCP" class="!w-11 !h-11" @click="deleteMcpServer(server.id)" />
-                </div>
-              </template>
-            </div>
-            
-          </div>
-        </div>
-      </div>
-    </Dialog>
   </div>
 </template>
 
@@ -332,16 +247,7 @@ const navGroups: NavGroup[] = [
 
 const visibleNavGroups = computed(() => navGroups.filter((group) => !group.adminOnly || isAdmin.value));
 
-const showSettingsModal = ref(false);
-const activeTab = ref('mcp');
-interface McpServer { id: string; name: string; url: string; isActive: boolean; hasHeaders: boolean; trustReadOnlyAnnotations: boolean }
-interface McpCatalogEntry { name: string; baseUrl: string; description: string }
-const mcpServers = ref<McpServer[]>([]);
-const mcpCatalog = ref<McpCatalogEntry[]>([]);
-const mcpSaving = ref(false);
-const mcpError = ref('');
 const appError = ref('');
-const mcpForm = ref({ name: '', url: '', headersJson: '', isActive: true, trustReadOnlyAnnotations: false });
 
 const chatSessions = ref<ChatSession[]>([]);
 const mobileNavOpen = ref(false);
@@ -559,97 +465,16 @@ const saveRename = async (id: string) => {
   }
 };
 
+// The gear on the user card is an admin-only shortcut to the management hub;
+// members have no settings surface, so it is a no-op for them and the cog
+// affordance is hidden. MCP management lives at /admin/mcp-servers.
 const openSettings = async () => {
-  showSettingsModal.value = true;
-  if (isAdmin.value) {
-    void loadMcpCatalog();
-    await loadMcpServers();
-  }
-};
-
-/**
- * Connection suggestions are a convenience: any failure to load the catalog is
- * swallowed (console.warn only) and simply hides the "Gợi ý kết nối" section.
- */
-const loadMcpCatalog = async () => {
-  try {
-    const response = await http.get(ApiFactory.MCP.CATALOG);
-    if (response.ok) mcpCatalog.value = await response.json();
-    else console.warn('[mcp] không thể tải danh mục gợi ý kết nối', response.status);
-  } catch (cause) {
-    console.warn('[mcp] không thể tải danh mục gợi ý kết nối', cause);
-  }
-};
-
-/** Pre-fills the create form only — the admin still reviews and submits it. */
-const applyCatalogEntry = (entry: McpCatalogEntry) => {
-  mcpForm.value.name = entry.name;
-  mcpForm.value.url = entry.baseUrl;
-};
-
-const openMobileSettings = async () => {
-  mobileNavOpen.value = false;
-  await openSettings();
+  if (isAdmin.value) await router.push('/admin');
 };
 
 const newChat = async () => {
   mobileNavOpen.value = false;
   await router.push('/chat?new=' + Date.now());
-};
-
-const loadMcpServers = async () => {
-  mcpError.value = '';
-  try {
-    const response = await http.get('/api/mcp-servers');
-    if (response.ok) mcpServers.value = await response.json();
-    else mcpError.value = await readApiError(response, 'Không thể tải cấu hình MCP');
-  } catch (cause) {
-    mcpError.value = errorMessage(cause, 'Không thể tải cấu hình MCP.');
-  }
-};
-
-const createMcpServer = async () => {
-  mcpError.value = '';
-  let headers: Record<string, string> | undefined;
-  try {
-    headers = mcpForm.value.headersJson.trim() ? JSON.parse(mcpForm.value.headersJson) : undefined;
-  } catch {
-    mcpError.value = 'Header JSON không hợp lệ.';
-    return;
-  }
-  mcpSaving.value = true;
-  try {
-    const response = await http.post('/api/mcp-servers', {
-      name: mcpForm.value.name,
-      url: mcpForm.value.url,
-      headers,
-      replaceHeaders: true,
-      isActive: mcpForm.value.isActive,
-      trustReadOnlyAnnotations: mcpForm.value.trustReadOnlyAnnotations
-    });
-    if (!response.ok) {
-      mcpError.value = await readApiError(response, 'Không thể thêm máy chủ MCP');
-      return;
-    }
-    mcpForm.value = { name: '', url: '', headersJson: '', isActive: true, trustReadOnlyAnnotations: false };
-    await loadMcpServers();
-  } catch (cause) {
-    mcpError.value = errorMessage(cause, 'Không thể thêm máy chủ MCP.');
-  } finally {
-    mcpSaving.value = false;
-  }
-};
-
-const deleteMcpServer = async (id: string) => {
-  if (!confirm('Xóa máy chủ MCP này?')) return;
-  mcpError.value = '';
-  try {
-    const response = await http.delete(`/api/mcp-servers/${id}`);
-    if (response.ok) mcpServers.value = mcpServers.value.filter(server => server.id !== id);
-    else mcpError.value = await readApiError(response, 'Không thể xóa máy chủ MCP');
-  } catch (cause) {
-    mcpError.value = errorMessage(cause, 'Không thể xóa máy chủ MCP.');
-  }
 };
 
 const selectSession = (id: string) => {
