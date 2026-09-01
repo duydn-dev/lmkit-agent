@@ -43,6 +43,23 @@ describe('ChatSseParser', () => {
     ]);
   });
 
+  it('decodes a produced-file marker into a file event carrying the raw descriptor JSON', () => {
+    const parser = new ChatSseParser();
+    const descriptor = '{"id":"abcd1234.png","name":"chart.png","contentType":"image/png","size":2048}';
+    // The controller JSON-encodes each SSE payload, so the wire line is a quoted string.
+    const events = parser.push('data: ' + JSON.stringify(`[FILE:${descriptor}]`) + '\n');
+
+    expect(events).toEqual([{ type: 'file', value: descriptor }]);
+  });
+
+  it('slices only the trailing marker bracket, tolerating a "]" inside the descriptor', () => {
+    const parser = new ChatSseParser();
+    const descriptor = '{"id":"x.csv","name":"a]b.csv","contentType":"text/csv","size":10}';
+    const events = parser.push('data: ' + JSON.stringify(`[FILE:${descriptor}]`) + '\n');
+
+    expect(events).toEqual([{ type: 'file', value: descriptor }]);
+  });
+
   it('returns server errors and flushes a final line without newline', () => {
     const parser = new ChatSseParser();
 

@@ -7,13 +7,17 @@ namespace LmKitOmniApi.Tests;
 /// <summary>
 /// Pure unit tests for <see cref="PythonContainerExecutor"/> — NO real docker and
 /// NO real process. A fake <see cref="IProcessRunner"/> records exactly how the
-/// executor invoked it (file name + argument list) and returns a scripted
+/// executor invoked it (file name + argument list), can simulate the container
+/// producing files under /work, and returns a scripted
 /// <see cref="ProcessRunResult"/>, so we can assert the container hardening flags,
-/// the Vietnamese failure-mode messages, output capping, and scratch-dir lifecycle
-/// without ever launching anything.
+/// the Vietnamese failure-mode messages, output capping, scratch-dir lifecycle, and
+/// produced-file harvesting — without ever launching anything.
 /// </summary>
 public class PythonContainerExecutorTests
 {
+    private static readonly Guid TenantId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid UserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+
     // ─────────────────────────────────────────────
     // Fake runner + helpers
     // ─────────────────────────────────────────────
@@ -23,12 +27,19 @@ public class PythonContainerExecutorTests
     /// moment it is called — whether the host scratch dir (the /work mount source)
     /// and the written main.py exist, proving the executor created and mounted them
     /// BEFORE the run (and, checked after ExecuteAsync, deleted them afterwards).
+    /// The optional <paramref name="produceFiles"/> hook runs against the scratch dir
+    /// during the call, simulating a container that wrote output files to /work.
     /// </summary>
     private sealed class FakeProcessRunner : IProcessRunner
     {
         private readonly ProcessRunResult _result;
+        private readonly Action<string>? _produceFiles;
 
-        public FakeProcessRunner(ProcessRunResult result) => _result = result;
+        public FakeProcessRunner(ProcessRunResult result, Action<string>? produceFiles = null)
+        {
+            _result = result;
+            _produceFiles = produceFiles;
+        }
 
         public int CallCount { get; private set; }
         public string? FileName { get; private set; }
@@ -57,6 +68,7 @@ public class PythonContainerExecutorTests
             {
                 ScratchDirExistedAtCall = Directory.Exists(ScratchDirAtCall);
                 ScriptExistedAtCall = File.Exists(Path.Combine(ScratchDirAtCall, "main.py"));
+                _produceFiles?.Invoke(ScratchDirAtCall);
             }
 
             return Task.FromResult(_result);
@@ -83,8 +95,21 @@ public class PythonContainerExecutorTests
         return options;
     }
 
+    private static UserResourceAccessService Resources() =>
+        new(new ToolSandboxService(NullLogger<ToolSandboxService>.Instance));
+
     private static PythonContainerExecutor CreateExecutor(CodeInterpreterOptions options, IProcessRunner runner) =>
-        new(Options.Create(options), runner, NullLogger<PythonContainerExecutor>.Instance);
+        new(Options.Create(options), runner, Resources(), NullLogger<PythonContainerExecutor>.Instance);
+
+    /// <summary>Where produced files land for the test identity; cleaned up by file tests.</summary>
+    private static string UploadDir() =>
+        Path.Combine(Directory.GetCurrentDirectory(), "Uploads", TenantId.ToString("N"), UserId.ToString("N"));
+
+    private static void CleanUploadDir()
+    {
+        var dir = UploadDir();
+        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+    }
 
     /// <summary>The host side of the "--volume {host}:/work:rw" mount (Windows drive-letter safe).</summary>
     private static string? ExtractScratchDir(IReadOnlyList<string> args)
@@ -122,9 +147,10 @@ public class PythonContainerExecutorTests
         var runner = new FakeProcessRunner(Success("hi"));
         var executor = CreateExecutor(EnabledOptions(o => o.Enabled = false), runner);
 
-        var result = await executor.ExecuteAsync("print('hi')");
+        var result = await executor.ExecuteAsync("print('hi')", TenantId, UserId);
 
-        Assert.Equal("[Code Interpreter] Trình thông dịch Python chưa được cấu hình.", result);
+        Assert.Equal("[Code Interpreter] Trình thông dịch Python chưa được cấu hình.", result.Output);
+        Assert.Empty(result.Files);
         Assert.False(executor.IsEnabled);
         Assert.Equal(0, runner.CallCount);
     }
@@ -135,9 +161,9 @@ public class PythonContainerExecutorTests
         var runner = new FakeProcessRunner(Success("hi"));
         var executor = CreateExecutor(EnabledOptions(o => o.Image = "   "), runner);
 
-        var result = await executor.ExecuteAsync("print('hi')");
+        var result = await executor.ExecuteAsync("print('hi')", TenantId, UserId);
 
-        Assert.Equal("[Code Interpreter] Trình thông dịch Python chưa được cấu hình.", result);
+        Assert.Equal("[Code Interpreter] Trình thông dịch Python chưa được cấu hình.", result.Output);
         Assert.False(executor.IsEnabled);
         Assert.Equal(0, runner.CallCount);
     }
@@ -152,9 +178,9 @@ public class PythonContainerExecutorTests
         var runner = new FakeProcessRunner(Success("Xin chào"));
         var executor = CreateExecutor(EnabledOptions(), runner);
 
-        var result = await executor.ExecuteAsync("print('Xin chào')");
+        var result = await executor.ExecuteAsync("print('Xin chào')", TenantId, UserId);
 
-        Assert.Equal("Xin chào", result);
+        Assert.Equal("Xin chào", result.Output);
         Assert.Equal(1, runner.CallCount);
         Assert.Equal("docker", runner.FileName);           // options.RuntimePath
         Assert.Null(runner.Stdin);                         // v1 feeds no stdin
@@ -188,7 +214,7 @@ public class PythonContainerExecutorTests
         var runner = new FakeProcessRunner(Success("ok"));
         var executor = CreateExecutor(EnabledOptions(), runner);
 
-        await executor.ExecuteAsync("print('ok')");
+        await executor.ExecuteAsync("print('ok')", TenantId, UserId);
 
         AssertFlagWithValue(runner.Arguments!, "--network", "none");
     }
@@ -199,9 +225,9 @@ public class PythonContainerExecutorTests
         var runner = new FakeProcessRunner(Success("stdout line", "a warning"));
         var executor = CreateExecutor(EnabledOptions(), runner);
 
-        var result = await executor.ExecuteAsync("print('stdout line')");
+        var result = await executor.ExecuteAsync("print('stdout line')", TenantId, UserId);
 
-        Assert.Equal("stdout line\n--- stderr ---\na warning", result);
+        Assert.Equal("stdout line\n--- stderr ---\na warning", result.Output);
     }
 
     [Fact]
@@ -210,9 +236,9 @@ public class PythonContainerExecutorTests
         var runner = new FakeProcessRunner(Success(string.Empty));
         var executor = CreateExecutor(EnabledOptions(), runner);
 
-        var result = await executor.ExecuteAsync("x = 1");
+        var result = await executor.ExecuteAsync("x = 1", TenantId, UserId);
 
-        Assert.Equal("(không có đầu ra)", result);
+        Assert.Equal("(không có đầu ra)", result.Output);
     }
 
     // ─────────────────────────────────────────────
@@ -226,9 +252,9 @@ public class PythonContainerExecutorTests
         var executor = CreateExecutor(EnabledOptions(o => o.MaxScriptChars = 100), runner);
 
         var oversized = new string('a', 101);
-        var result = await executor.ExecuteAsync(oversized);
+        var result = await executor.ExecuteAsync(oversized, TenantId, UserId);
 
-        Assert.Equal("[Code Interpreter] Đoạn mã vượt quá giới hạn 100 ký tự.", result);
+        Assert.Equal("[Code Interpreter] Đoạn mã vượt quá giới hạn 100 ký tự.", result.Output);
         Assert.Equal(0, runner.CallCount);
     }
 
@@ -238,9 +264,9 @@ public class PythonContainerExecutorTests
         var runner = new FakeProcessRunner(Success("unused"));
         var executor = CreateExecutor(EnabledOptions(), runner);
 
-        var result = await executor.ExecuteAsync("   ");
+        var result = await executor.ExecuteAsync("   ", TenantId, UserId);
 
-        Assert.Equal("[Code Interpreter] Không có mã Python để thực thi.", result);
+        Assert.Equal("[Code Interpreter] Không có mã Python để thực thi.", result.Output);
         Assert.Equal(0, runner.CallCount);
     }
 
@@ -254,9 +280,9 @@ public class PythonContainerExecutorTests
         var runner = new FakeProcessRunner(new ProcessRunResult(-1, string.Empty, string.Empty, TimedOut: true));
         var executor = CreateExecutor(EnabledOptions(o => o.TimeoutSeconds = 15), runner);
 
-        var result = await executor.ExecuteAsync("while True: pass");
+        var result = await executor.ExecuteAsync("while True: pass", TenantId, UserId);
 
-        Assert.Equal("[Code Interpreter] Thực thi vượt quá 15s và đã bị dừng.", result);
+        Assert.Equal("[Code Interpreter] Thực thi vượt quá 15s và đã bị dừng.", result.Output);
     }
 
     // ─────────────────────────────────────────────
@@ -270,11 +296,11 @@ public class PythonContainerExecutorTests
         var runner = new FakeProcessRunner(new ProcessRunResult(1, string.Empty, stderr, TimedOut: false));
         var executor = CreateExecutor(EnabledOptions(o => o.MaxOutputChars = 50), runner);
 
-        var result = await executor.ExecuteAsync("raise SystemExit(1)");
+        var result = await executor.ExecuteAsync("raise SystemExit(1)", TenantId, UserId);
 
-        Assert.StartsWith("[Code Interpreter] Lỗi (exit 1):", result);
-        Assert.Contains("EEEEE", result);                                 // stderr surfaced
-        Assert.Contains("[Kết quả đã bị cắt bớt vì vượt quá 50 ký tự]", result);  // and capped
+        Assert.StartsWith("[Code Interpreter] Lỗi (exit 1):", result.Output);
+        Assert.Contains("EEEEE", result.Output);                                 // stderr surfaced
+        Assert.Contains("[Kết quả đã bị cắt bớt vì vượt quá 50 ký tự]", result.Output);  // and capped
     }
 
     [Fact]
@@ -283,10 +309,10 @@ public class PythonContainerExecutorTests
         var runner = new FakeProcessRunner(new ProcessRunResult(2, "partial output before crash", string.Empty, false));
         var executor = CreateExecutor(EnabledOptions(), runner);
 
-        var result = await executor.ExecuteAsync("import sys; sys.exit(2)");
+        var result = await executor.ExecuteAsync("import sys; sys.exit(2)", TenantId, UserId);
 
-        Assert.StartsWith("[Code Interpreter] Lỗi (exit 2):", result);
-        Assert.Contains("partial output before crash", result);
+        Assert.StartsWith("[Code Interpreter] Lỗi (exit 2):", result.Output);
+        Assert.Contains("partial output before crash", result.Output);
     }
 
     // ─────────────────────────────────────────────
@@ -300,12 +326,12 @@ public class PythonContainerExecutorTests
         var runner = new FakeProcessRunner(Success(big));
         var executor = CreateExecutor(EnabledOptions(o => o.MaxOutputChars = 100), runner);
 
-        var result = await executor.ExecuteAsync("print('x' * 500)");
+        var result = await executor.ExecuteAsync("print('x' * 500)", TenantId, UserId);
 
-        Assert.StartsWith(new string('x', 100), result);                          // first 100 kept
-        Assert.Contains("[Kết quả đã bị cắt bớt vì vượt quá 100 ký tự]", result); // marker
-        Assert.True(result.Length < big.Length, $"Result length {result.Length} should be shorter than the raw 500.");
-        Assert.DoesNotContain(new string('x', 200), result);                      // tail dropped
+        Assert.StartsWith(new string('x', 100), result.Output);                          // first 100 kept
+        Assert.Contains("[Kết quả đã bị cắt bớt vì vượt quá 100 ký tự]", result.Output); // marker
+        Assert.True(result.Output.Length < big.Length, $"Result length {result.Output.Length} should be shorter than the raw 500.");
+        Assert.DoesNotContain(new string('x', 200), result.Output);                      // tail dropped
     }
 
     // ─────────────────────────────────────────────
@@ -318,7 +344,7 @@ public class PythonContainerExecutorTests
         var runner = new FakeProcessRunner(Success("done"));
         var executor = CreateExecutor(EnabledOptions(), runner);
 
-        await executor.ExecuteAsync("print('done')");
+        await executor.ExecuteAsync("print('done')", TenantId, UserId);
 
         Assert.NotNull(runner.ScratchDirAtCall);
         Assert.True(runner.ScratchDirExistedAtCall,
@@ -327,5 +353,139 @@ public class PythonContainerExecutorTests
             "main.py must be written into the scratch dir before the run.");
         Assert.False(Directory.Exists(runner.ScratchDirAtCall!),
             "The scratch dir must be deleted after ExecuteAsync returns.");
+    }
+
+    // ─────────────────────────────────────────────
+    // 8. Produced-file harvesting
+    // ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task ProducedFile_IsHarvested_PersistedAndDescribed_ExcludingMainPy()
+    {
+        CleanUploadDir();
+        try
+        {
+            var pngBytes = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3 };
+            var runner = new FakeProcessRunner(
+                Success("chart written"),
+                produceFiles: scratch => File.WriteAllBytes(Path.Combine(scratch, "chart.png"), pngBytes));
+            var executor = CreateExecutor(EnabledOptions(), runner);
+
+            var result = await executor.ExecuteAsync("save chart", TenantId, UserId);
+
+            Assert.Equal("chart written", result.Output);
+            var file = Assert.Single(result.Files);
+            Assert.Equal("chart.png", file.Name);              // original name preserved for display
+            Assert.NotEqual("chart.png", file.Id);             // stored under a server-generated name
+            Assert.EndsWith(".png", file.Id);                  // extension retained for content typing
+            Assert.Equal("image/png", file.ContentType);
+            Assert.Equal(pngBytes.Length, file.SizeBytes);
+
+            // Persisted into the caller's isolated upload root, readable by id, unchanged.
+            var stored = Path.Combine(UploadDir(), file.Id);
+            Assert.True(File.Exists(stored), "The produced file must be persisted under the owner upload dir.");
+            Assert.Equal(pngBytes, await File.ReadAllBytesAsync(stored));
+
+            // The scratch dir (with main.py) is still cleaned up afterwards.
+            Assert.False(Directory.Exists(runner.ScratchDirAtCall!));
+        }
+        finally
+        {
+            CleanUploadDir();
+        }
+    }
+
+    [Fact]
+    public async Task ProducedFiles_AreCappedByMaxOutputFiles()
+    {
+        CleanUploadDir();
+        try
+        {
+            var runner = new FakeProcessRunner(
+                Success("ok"),
+                produceFiles: scratch =>
+                {
+                    for (var i = 0; i < 5; i++)
+                        File.WriteAllText(Path.Combine(scratch, $"out{i}.txt"), "data");
+                });
+            var executor = CreateExecutor(EnabledOptions(o => o.MaxOutputFiles = 2), runner);
+
+            var result = await executor.ExecuteAsync("write many", TenantId, UserId);
+
+            Assert.Equal(2, result.Files.Count);
+        }
+        finally
+        {
+            CleanUploadDir();
+        }
+    }
+
+    [Fact]
+    public async Task ProducedFiles_OverPerFileSizeCap_AreSkipped()
+    {
+        CleanUploadDir();
+        try
+        {
+            var runner = new FakeProcessRunner(
+                Success("ok"),
+                produceFiles: scratch =>
+                {
+                    File.WriteAllBytes(Path.Combine(scratch, "small.bin"), new byte[10]);
+                    File.WriteAllBytes(Path.Combine(scratch, "big.bin"), new byte[100]);
+                });
+            var executor = CreateExecutor(EnabledOptions(o => o.MaxOutputFileBytes = 50), runner);
+
+            var result = await executor.ExecuteAsync("write two", TenantId, UserId);
+
+            var file = Assert.Single(result.Files);
+            Assert.Equal("small.bin", file.Name);
+        }
+        finally
+        {
+            CleanUploadDir();
+        }
+    }
+
+    [Fact]
+    public async Task ProducedFiles_AreNotReturned_WhenDisabledByCap()
+    {
+        CleanUploadDir();
+        try
+        {
+            var runner = new FakeProcessRunner(
+                Success("ok"),
+                produceFiles: scratch => File.WriteAllText(Path.Combine(scratch, "out.txt"), "data"));
+            var executor = CreateExecutor(EnabledOptions(o => o.MaxOutputFiles = 0), runner);
+
+            var result = await executor.ExecuteAsync("write one", TenantId, UserId);
+
+            Assert.Empty(result.Files);
+        }
+        finally
+        {
+            CleanUploadDir();
+        }
+    }
+
+    [Fact]
+    public async Task FailedRun_ReturnsNoFiles_EvenWhenScratchHasThem()
+    {
+        CleanUploadDir();
+        try
+        {
+            var runner = new FakeProcessRunner(
+                new ProcessRunResult(1, string.Empty, "boom", TimedOut: false),
+                produceFiles: scratch => File.WriteAllText(Path.Combine(scratch, "partial.txt"), "half"));
+            var executor = CreateExecutor(EnabledOptions(), runner);
+
+            var result = await executor.ExecuteAsync("crash after writing", TenantId, UserId);
+
+            Assert.StartsWith("[Code Interpreter] Lỗi (exit 1):", result.Output);
+            Assert.Empty(result.Files);
+        }
+        finally
+        {
+            CleanUploadDir();
+        }
     }
 }

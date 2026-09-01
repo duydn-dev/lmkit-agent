@@ -117,7 +117,41 @@
 
               <!-- Render Message with Charts -->
               <GenerativeUiRenderer :content="msg.content" />
-              
+
+              <!-- Produced Files (charts / CSVs the code interpreter returned) -->
+              <div v-if="msg.producedFiles && msg.producedFiles.length > 0" class="mt-2">
+                <div class="text-xs text-gray-500 mb-1.5">Tệp kết quả</div>
+                <div class="flex flex-wrap gap-2">
+                  <template v-for="file in msg.producedFiles" :key="file.id">
+                    <!-- Image result: inline preview, click to open / save -->
+                    <a
+                      v-if="file.contentType.startsWith('image/')"
+                      :href="fileUrl(file.id)"
+                      :download="file.name"
+                      target="_blank"
+                      rel="noopener"
+                      :aria-label="`Tải ảnh ${file.name}`"
+                      class="block rounded-lg overflow-hidden">
+                      <img
+                        :src="fileUrl(file.id)"
+                        :alt="file.name"
+                        class="max-w-xs max-h-64 rounded-lg border border-gray-200 object-contain" />
+                    </a>
+                    <!-- Non-image result: download chip -->
+                    <a
+                      v-else
+                      :href="fileUrl(file.id)"
+                      :download="file.name"
+                      :aria-label="`Tải tệp ${file.name}`"
+                      class="min-h-11 flex items-center gap-2 px-3 py-1.5 rounded-xl border border-gray-200 bg-white text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors">
+                      <i class="pi pi-file text-base text-gray-500" aria-hidden="true"></i>
+                      <span class="max-w-[160px] truncate font-medium">{{ file.name }}</span>
+                      <span class="text-xs text-gray-400">{{ formatFileSize(file.size) }}</span>
+                    </a>
+                  </template>
+                </div>
+              </div>
+
               <!-- Typing Indicator -->
               <div v-if="msg.isTyping" class="flex gap-1 mt-2">
                 <div class="w-2 h-2 rounded-full bg-gray-500 animate-bounce"></div>
@@ -483,7 +517,8 @@ const loadMessages = async () => {
           role: m.role.toLowerCase(),
           content: parsed.content,
           webUrls: parsed.webUrls,
-          thinkingSteps: parsed.thinkingSteps
+          thinkingSteps: parsed.thinkingSteps,
+          producedFiles: parsed.producedFiles
         };
       });
       await scrollToBottom();
@@ -564,6 +599,13 @@ const getFileIconForInput = (name: string) => {
   if (['xls','xlsx'].includes(ext || '')) return 'pi pi-file-excel text-emerald-600';
   return 'pi pi-file text-gray-600';
 };
+
+/**
+ * Same-origin, cookie-authenticated URL for a code-interpreter output file.
+ * SECURITY: the id is always encoded as a single path segment so it can never
+ * break out of `/api/files/` or inject query/path characters.
+ */
+const fileUrl = (id: string) => `/api/files/${encodeURIComponent(id)}`;
 
 const copyMessage = async (content: string) => {
   chatError.value = '';

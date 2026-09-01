@@ -235,6 +235,23 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
 
         yield return $"[THINKING]: ✅ LM-Kit ReAct hoàn tất sau {nativeRun.InferenceCount} inference(s)\\n";
+
+        // Emit a [FILE:] marker per file a tool produced (e.g. a chart PNG from
+        // run_python). These ride the same in-band SSE marker channel as
+        // [WEB_SEARCH]/[RESEARCH_SAVED]: persisted with the message and re-parsed on
+        // reload. The bytes themselves are served on demand from the owned upload
+        // root via GET /api/files/{id}; only the descriptor travels here.
+        foreach (var file in nativeRun.ProducedFiles)
+        {
+            yield return "[FILE:" + System.Text.Json.JsonSerializer.Serialize(new
+            {
+                id = file.Id,
+                name = file.Name,
+                contentType = file.ContentType,
+                size = file.SizeBytes
+            }) + "]";
+        }
+
         string fullContext = string.IsNullOrWhiteSpace(nativeRun.Content)
             ? string.Empty
             : $"[LM-Kit ReAct result]:\n{nativeRun.Content}";
@@ -408,11 +425,17 @@ public class AgentOrchestrator : IAgentOrchestrator
     {
         var model = await _modelManager.GetChatModelAsync(ct: ct);
         Guid? pendingApprovalId = null;
+        // Per-request sink for files a tool (currently run_python) produced. Captured
+        // by the InvokeActionAsync closure — the same pattern as pendingApprovalId —
+        // so files ride a side channel out of the blocking ReAct pass, bypassing the
+        // string observation (and its sandbox output cap), and are yielded as
+        // [FILE:] markers by the caller after this method returns.
+        var producedFiles = new List<ProducedFile>();
 
         async Task<string> InvokeActionAsync(string action, string toolQuery, CancellationToken toolCt)
         {
             var output = await ExecuteActionWithResilienceAsync(
-                tenantId, userId, userRole, sessionId, toolQuery, action, options, toolCt);
+                tenantId, userId, userRole, sessionId, toolQuery, action, options, toolCt, producedFiles);
 
             const string approvalPrefix = "[HITL_APPROVAL_REQUIRED:";
             if (output.StartsWith(approvalPrefix, StringComparison.Ordinal)
@@ -472,7 +495,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         return new NativeReActResult(
             result.Content ?? string.Empty,
             result.InferenceCount,
-            pendingApprovalId);
+            pendingApprovalId,
+            producedFiles);
     }
 
     private async Task<IReadOnlyList<ITool>> CreateNativeActionToolsAsync(
@@ -597,14 +621,16 @@ public class AgentOrchestrator : IAgentOrchestrator
         return tools;
     }
 
-    private sealed record NativeReActResult(string Content, int InferenceCount, Guid? PendingApprovalId);
+    private sealed record NativeReActResult(
+        string Content, int InferenceCount, Guid? PendingApprovalId, IReadOnlyList<ProducedFile> ProducedFiles);
 
     /// <summary>
     /// Execute action with RESILIENCE wrapping (retry + circuit breaker).
     /// </summary>
     private async Task<string> ExecuteActionWithResilienceAsync(
         Guid tenantId, Guid? userId, string userRole, Guid sessionId,
-        string query, string action, AgentRequestOptions? options, CancellationToken ct)
+        string query, string action, AgentRequestOptions? options, CancellationToken ct,
+        IList<ProducedFile>? fileSink = null)
     {
         var toolCallId = Guid.NewGuid();
         var startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -656,7 +682,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             {
                 var sandboxResult = await _sandbox.ExecuteInSandboxAsync(action, async (sandboxCt) =>
                 {
-                    return await ExecuteActionCoreAsync(tenantId, userId, userRole, query, action, options, sandboxCt);
+                    return await ExecuteActionCoreAsync(tenantId, userId, userRole, query, action, options, sandboxCt, fileSink);
                 }, resCt);
 
                 if (sandboxResult.IsSuccess) return sandboxResult.Output;
@@ -689,8 +715,9 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// point invoked inside the sandbox/resilience layers.
     /// </summary>
     private Task<string> ExecuteActionCoreAsync(
-        Guid tenantId, Guid? userId, string userRole, string query, string action, AgentRequestOptions? options, CancellationToken ct)
-        => _actionDispatcher.ExecuteAsync(tenantId, userId, userRole, query, action, options, ct);
+        Guid tenantId, Guid? userId, string userRole, string query, string action, AgentRequestOptions? options,
+        CancellationToken ct, IList<ProducedFile>? fileSink = null)
+        => _actionDispatcher.ExecuteAsync(tenantId, userId, userRole, query, action, options, ct, fileSink);
 
     /// <summary>
     /// Executes an approved action without repeating the approval check, while still

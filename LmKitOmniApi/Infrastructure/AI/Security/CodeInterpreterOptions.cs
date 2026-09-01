@@ -35,4 +35,13 @@ public sealed class CodeInterpreterOptions
 
     /// <summary>Max characters of the submitted script (reject larger).</summary>
     public int MaxScriptChars { get; set; } = 20_000;
+
+    /// <summary>Max number of produced files returned to the user per run (0 disables file return).</summary>
+    public int MaxOutputFiles { get; set; } = 5;
+
+    /// <summary>Max size of a single produced file that is returned (bytes); larger files are skipped.</summary>
+    public long MaxOutputFileBytes { get; set; } = 5 * 1024 * 1024;
+
+    /// <summary>Max combined size of all produced files returned per run (bytes).</summary>
+    public long MaxTotalOutputFileBytes { get; set; } = 15 * 1024 * 1024;
 }

@@ -4,6 +4,7 @@ export type ChatStreamEvent =
   | { type: 'web-search'; value: string }
   | { type: 'approval'; value: string }
   | { type: 'saved'; value: string }
+  | { type: 'file'; value: string }
   | { type: 'error'; value: string }
   | { type: 'agent-log'; value: string }
   | { type: 'done'; value: '' };
@@ -58,6 +59,11 @@ function parseDataLine(line: string): ChatStreamEvent | null {
     return { type: 'approval', value: value.slice('[HITL_APPROVAL_REQUIRED:'.length, -1).trim() };
   if (value.startsWith('[RESEARCH_SAVED:') && value.endsWith(']'))
     return { type: 'saved', value: value.slice('[RESEARCH_SAVED:'.length, -1).trim() };
+  // [FILE:{json}] — a file a tool produced (e.g. a run_python chart). The inner
+  // JSON descriptor is sliced whole (the trailing ']' is dropped, never a ']'
+  // that appears inside a JSON string value) and parsed by the consumer.
+  if (value.startsWith('[FILE:') && value.endsWith(']'))
+    return { type: 'file', value: value.slice('[FILE:'.length, -1) };
   if (value.startsWith('[Agent invoked:')) return { type: 'agent-log', value };
   return { type: 'content', value };
 }

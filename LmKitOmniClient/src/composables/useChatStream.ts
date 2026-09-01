@@ -10,6 +10,18 @@ import { ChatSseParser, type ChatStreamEvent } from '@/utils/chatSse';
  * both surfaces: the widget never populates `webUrls` / `attachedFiles`, the
  * full page uses all of them.
  */
+/**
+ * A file a tool produced during the turn (e.g. a chart PNG or CSV from
+ * run_python), served on demand from the owner-scoped `/api/files/{id}` endpoint.
+ * The wire descriptor is emitted by the backend as a `[FILE:{json}]` marker.
+ */
+export interface ProducedFile {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -17,10 +29,32 @@ export interface ChatMessage {
   webUrls?: string[];
   thinkingSteps?: string[];
   attachedFiles?: string[];
+  producedFiles?: ProducedFile[];
   hitlTaskId?: string;
   hitlResolved?: string;
   hitlBusy?: boolean;
   hitlError?: string;
+}
+
+/**
+ * Parses a `[FILE:{json}]` descriptor, tolerating a malformed payload (returns
+ * null). SECURITY: only `id` is ever used to build a same-origin URL, and it is
+ * used as a path segment via `encodeURIComponent` at render time; `name` is
+ * display/download text only.
+ */
+export function parseProducedFile(json: string): ProducedFile | null {
+  try {
+    const parsed = JSON.parse(json) as Partial<ProducedFile>;
+    if (typeof parsed.id !== 'string' || !parsed.id) return null;
+    return {
+      id: parsed.id,
+      name: typeof parsed.name === 'string' && parsed.name ? parsed.name : parsed.id,
+      contentType: typeof parsed.contentType === 'string' ? parsed.contentType : 'application/octet-stream',
+      size: typeof parsed.size === 'number' ? parsed.size : 0
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -49,6 +83,7 @@ export interface StoredAssistantContent {
   content: string;
   webUrls?: string[];
   thinkingSteps?: string[];
+  producedFiles?: ProducedFile[];
 }
 
 /**
@@ -62,6 +97,23 @@ export function parseStoredAssistantContent(raw: string): StoredAssistantContent
   let content = (raw || '').replace(/\[Agent invoked:.*?\][\n\r]*/g, '');
   let webUrls: string[] | undefined;
   let thinkingSteps: string[] | undefined;
+  let producedFiles: ProducedFile[] | undefined;
+
+  // [FILE:{json}] markers persisted with the message: rebuild the produced-file
+  // list on reload, then strip the markers from the displayed body. Matches
+  // non-greedily up to the first ']' — the backend never emits a ']' inside the
+  // descriptor JSON (values are id/name/mime/number), and a stray one only
+  // truncates that single marker's parse (guarded by parseProducedFile).
+  if (content.includes('[FILE:')) {
+    const fileMatches = content.match(/\[FILE:(.+?)\]/g);
+    if (fileMatches) {
+      const parsed = fileMatches
+        .map((match) => parseProducedFile(match.slice('[FILE:'.length, -1)))
+        .filter((file): file is ProducedFile => file !== null);
+      if (parsed.length > 0) producedFiles = parsed;
+      content = content.replace(/\[FILE:.+?\][\n\r]*/g, '').trimStart();
+    }
+  }
 
   if (content.includes('[THINKING]:')) {
     const thinkingMatches = content.match(/\[THINKING\]:([^\n\r]+)/g);
@@ -79,7 +131,7 @@ export function parseStoredAssistantContent(raw: string): StoredAssistantContent
     }
   }
 
-  return { content, webUrls, thinkingSteps };
+  return { content, webUrls, thinkingSteps, producedFiles };
 }
 
 export interface ConsumeStreamOptions {
@@ -216,6 +268,16 @@ export function useChatStream() {
             streamFinished = true;
             break;
           }
+          if (event.type === 'file') {
+            const file = parseProducedFile(event.value);
+            if (file) {
+              if (!assistantMsg.producedFiles) assistantMsg.producedFiles = [];
+              assistantMsg.producedFiles.push(file);
+              scheduleScroll();
+            }
+            continue;
+          }
+          if (event.type === 'saved') continue;
           if (event.type === 'agent-log') continue;
 
           assistantMsg.content += (event as Extract<ChatStreamEvent, { type: 'content' }>).value;

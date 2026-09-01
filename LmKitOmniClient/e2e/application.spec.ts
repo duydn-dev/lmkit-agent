@@ -90,6 +90,19 @@ async function mockAuthenticatedApi(page: Page) {
     // ChatView refreshes the Canvas count badge whenever a session activates.
     if (path === '/api/canvas' && method === 'GET') return json(route, []);
 
+    // Interpreter-produced files are served here (owner-scoped, cookie-authed). A
+    // 1x1 PNG is enough to prove <img src="/api/files/{id}"> renders in chat.
+    if (path.startsWith('/api/files/')) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
+          'base64'
+        )
+      });
+    }
+
     // --- Admin/management + AI-tools screens ---
     // Admin Hub stat card + Approvals inbox both read pending approvals.
     if (path === '/api/taskapproval/pending' && method === 'GET') return json(route, []);
@@ -191,6 +204,33 @@ test('mobile navigation exposes the primary routes and closes after navigation',
   await expect(page).toHaveURL(/\/documents$/);
   await expect(page.getByRole('navigation', { name: 'Điều hướng di động' })).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Kho Tài Liệu' })).toBeVisible();
+  await expectNoWcagViolations(page);
+  expect(browserErrors).toEqual([]);
+});
+
+test('files a tool produced render inline in the assistant reply', async ({ page }) => {
+  const browserErrors = await mockAuthenticatedApi(page);
+  // Override the chat stream to emit a [FILE:] marker (as run_python would after
+  // saving a chart). A later, more-specific route takes precedence over the
+  // catch-all registered by mockAuthenticatedApi.
+  await page.route('**/api/chat/stream', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+      body:
+        'data: ' + JSON.stringify('Đây là biểu đồ bạn yêu cầu:') + '\n\n' +
+        'data: ' + JSON.stringify('[FILE:{"id":"chart.png","name":"chart.png","contentType":"image/png","size":123}]') + '\n\n' +
+        'data: ' + JSON.stringify('[DONE]') + '\n\n'
+    })
+  );
+
+  await page.goto('/chat');
+  await page.getByRole('textbox', { name: 'Tin nhắn', exact: true }).fill('Vẽ cho tôi một biểu đồ');
+  await page.getByRole('button', { name: 'Gửi tin nhắn' }).click();
+
+  const chart = page.getByRole('img', { name: 'chart.png' });
+  await expect(chart).toBeVisible();
+  await expect(chart).toHaveAttribute('src', /\/api\/files\/chart\.png$/);
   await expectNoWcagViolations(page);
   expect(browserErrors).toEqual([]);
 });

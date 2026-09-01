@@ -100,7 +100,8 @@ public sealed class AgentActionDispatcher
     /// the orchestrator already ran.
     /// </summary>
     public async Task<string> ExecuteAsync(
-        Guid tenantId, Guid? userId, string userRole, string query, string action, AgentRequestOptions? options, CancellationToken ct)
+        Guid tenantId, Guid? userId, string userRole, string query, string action, AgentRequestOptions? options,
+        CancellationToken ct, IList<LmKitOmniApi.Infrastructure.AI.Security.ProducedFile>? fileSink = null)
     {
         if (options?.AllowedTools is { } whitelist && !IsActionWhitelisted(action, whitelist))
             return "[Công cụ này không khả dụng cho agent hiện tại]";
@@ -142,7 +143,7 @@ public sealed class AgentActionDispatcher
 
             // ── Code Interpreter (v2: sandboxed Python via isolated container) ──
             case "PYTHON":
-                return await ExecutePythonAsync(tenantId, userId, query, ct);
+                return await ExecutePythonAsync(tenantId, userId, query, fileSink, ct);
 
             default:
                 return $"Unknown action: {action}";
@@ -309,12 +310,21 @@ public sealed class AgentActionDispatcher
     /// The executor never throws for script-level failures — errors come back as
     /// bracketed, agent-readable text.
     /// </summary>
-    private async Task<string> ExecutePythonAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
+    private async Task<string> ExecutePythonAsync(
+        Guid tenantId, Guid? userId, string query,
+        IList<LmKitOmniApi.Infrastructure.AI.Security.ProducedFile>? fileSink, CancellationToken ct)
     {
         _logger.LogInformation("🐍 Executing Python in the container sandbox...");
-        var codeResult = await _pythonExecutor.ExecuteAsync(query, ct);
+        var codeResult = await _pythonExecutor.ExecuteAsync(query, tenantId, userId ?? Guid.Empty, ct);
         await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "RunPython", null, ct);
-        return codeResult;
+        // Produced files (if any) ride a side channel so they bypass the string
+        // observation (and its sandbox output cap) on their way to the SSE stream.
+        if (fileSink is not null && codeResult.Files.Count > 0)
+        {
+            foreach (var file in codeResult.Files)
+                fileSink.Add(file);
+        }
+        return codeResult.Output;
     }
 
     private async Task<string> ExecuteSummarizationAsync(string query, CancellationToken ct)
