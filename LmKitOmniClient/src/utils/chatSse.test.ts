@@ -60,6 +60,21 @@ describe('ChatSseParser', () => {
     expect(events).toEqual([{ type: 'file', value: descriptor }]);
   });
 
+  it('decodes agent-run markers: the run id and each tool step', () => {
+    const parser = new ChatSseParser();
+    const stepJson = '{"ordinal":1,"action":"run_python","input":"print(1)","observation":"1"}';
+    const events = parser.push([
+      'data: ' + JSON.stringify('[AGENT_RUN:11111111-2222-3333-4444-555555555555]'),
+      'data: ' + JSON.stringify(`[STEP:${stepJson}]`),
+      ''
+    ].join('\n'));
+
+    expect(events).toEqual([
+      { type: 'run-id', value: '11111111-2222-3333-4444-555555555555' },
+      { type: 'step', value: stepJson }
+    ]);
+  });
+
   it('returns server errors and flushes a final line without newline', () => {
     const parser = new ChatSseParser();
 

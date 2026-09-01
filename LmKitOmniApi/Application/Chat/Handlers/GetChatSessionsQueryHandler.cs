@@ -21,7 +21,7 @@ namespace LmKitOmniApi.Application.Chat.Handlers
         public async Task<List<ChatSessionDto>> Handle(GetChatSessionsQuery request, CancellationToken cancellationToken)
         {
             var scopedSessions = _dbContext.ChatSessions
-                .Where(x => x.UserId == request.UserId);
+                .Where(x => x.UserId == request.UserId && !x.IsAgentRun);
 
             // Optional exact-match project filter; absent = unchanged full list.
             if (request.ProjectId is Guid projectId)

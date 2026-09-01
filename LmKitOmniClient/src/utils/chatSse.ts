@@ -5,6 +5,8 @@ export type ChatStreamEvent =
   | { type: 'approval'; value: string }
   | { type: 'saved'; value: string }
   | { type: 'file'; value: string }
+  | { type: 'step'; value: string }
+  | { type: 'run-id'; value: string }
   | { type: 'error'; value: string }
   | { type: 'agent-log'; value: string }
   | { type: 'done'; value: '' };
@@ -64,6 +66,12 @@ function parseDataLine(line: string): ChatStreamEvent | null {
   // that appears inside a JSON string value) and parsed by the consumer.
   if (value.startsWith('[FILE:') && value.endsWith(']'))
     return { type: 'file', value: value.slice('[FILE:'.length, -1) };
+  // [STEP:{json}] — an agent-run tool step (agent mode only). [AGENT_RUN:{id}] —
+  // the run id, emitted first so the client can deep-link the run.
+  if (value.startsWith('[STEP:') && value.endsWith(']'))
+    return { type: 'step', value: value.slice('[STEP:'.length, -1) };
+  if (value.startsWith('[AGENT_RUN:') && value.endsWith(']'))
+    return { type: 'run-id', value: value.slice('[AGENT_RUN:'.length, -1).trim() };
   if (value.startsWith('[Agent invoked:')) return { type: 'agent-log', value };
   return { type: 'content', value };
 }

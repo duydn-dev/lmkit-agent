@@ -106,6 +106,20 @@ async function mockAuthenticatedApi(page: Page) {
     // --- Admin/management + AI-tools screens ---
     // Admin Hub stat card + Approvals inbox both read pending approvals.
     if (path === '/api/taskapproval/pending' && method === 'GET') return json(route, []);
+    // Agent mode: past-runs list + a streamed run (run id, thinking, one step, result).
+    if (path === '/api/agent-runs' && method === 'GET') return json(route, []);
+    if (path === '/api/agent-runs' && method === 'POST') {
+      return route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+        body:
+          'data: ' + JSON.stringify('[AGENT_RUN:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee]') + '\n\n' +
+          'data: ' + JSON.stringify('[THINKING]: đang lập kế hoạch') + '\n\n' +
+          'data: ' + JSON.stringify('[STEP:{"ordinal":1,"action":"run_python","input":"print(2+2)","observation":"4"}]') + '\n\n' +
+          'data: ' + JSON.stringify('Kết quả: 4') + '\n\n' +
+          'data: ' + JSON.stringify('[DONE]') + '\n\n'
+      });
+    }
     // Audit activity log: filter facets + one sample row so the table renders.
     if (path === '/api/audit/facets') {
       return json(route, { actorTypes: ['agent'], actions: ['AI.Tool.Invoke'], entityTypes: ['run_python'] });
@@ -231,6 +245,22 @@ test('files a tool produced render inline in the assistant reply', async ({ page
   const chart = page.getByRole('img', { name: 'chart.png' });
   await expect(chart).toBeVisible();
   await expect(chart).toHaveAttribute('src', /\/api\/files\/chart\.png$/);
+  await expectNoWcagViolations(page);
+  expect(browserErrors).toEqual([]);
+});
+
+test('agent mode streams a run and renders the step timeline and result', async ({ page }) => {
+  const browserErrors = await mockAuthenticatedApi(page);
+  await page.goto('/agent-mode');
+  await expect(page.getByRole('heading', { name: 'Agent tự hành' })).toBeVisible();
+
+  await page.getByLabel('Mục tiêu', { exact: true }).fill('Tính 2+2');
+  await page.getByRole('button', { name: 'Chạy', exact: true }).click();
+
+  // The streamed [STEP:] marker becomes a timeline card (action chip), and the
+  // streamed content becomes the result.
+  await expect(page.getByText('run_python').first()).toBeVisible();
+  await expect(page.getByText('Kết quả: 4')).toBeVisible();
   await expectNoWcagViolations(page);
   expect(browserErrors).toEqual([]);
 });

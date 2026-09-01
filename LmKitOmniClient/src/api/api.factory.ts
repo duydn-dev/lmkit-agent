@@ -94,5 +94,9 @@ export const ApiFactory = {
     PENDING: '/api/taskapproval/pending',
     APPROVE: (id: string) => `/api/taskapproval/${id}/approve`,
     REJECT: (id: string) => `/api/taskapproval/${id}/reject`
+  },
+  AGENT_RUNS: {
+    BASE: '/api/agent-runs',
+    BY_ID: (id: string) => `/api/agent-runs/${id}`
   }
 };

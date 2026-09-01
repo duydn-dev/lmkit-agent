@@ -175,7 +175,8 @@ public class AgentOrchestrator : IAgentOrchestrator
     public async IAsyncEnumerable<string> StreamProcessQueryAsync(
         Guid tenantId, Guid sessionId, Guid userId, string userRole, string query, ChatHistory history,
         AgentRequestOptions? options,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken,
+        IList<AgentRunStepData>? stepSink = null)
     {
         // ── Telemetry: Start trace ──
         using var activity = _telemetry.StartAgentExecution("StreamProcessQuery", tenantId, query);
@@ -226,7 +227,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(cancellationToken);
         _telemetry.RecordReActIteration(activity, 1, "native-react", query);
         var nativeRun = await ExecuteNativeReActAsync(
-            tenantId, userId, userRole, sessionId, query, memoryContext, options, cancellationToken);
+            tenantId, userId, userRole, sessionId, query, memoryContext, options, cancellationToken, stepSink);
 
         if (nativeRun.PendingApprovalId is Guid approvalId)
         {
@@ -235,6 +236,25 @@ public class AgentOrchestrator : IAgentOrchestrator
         }
 
         yield return $"[THINKING]: ✅ LM-Kit ReAct hoàn tất sau {nativeRun.InferenceCount} inference(s)\\n";
+
+        // Agent runs: surface the captured tool steps as [STEP:] markers (display
+        // twin of the stepSink the run handler persists). Never emitted for chat,
+        // which supplies no sink.
+        if (stepSink is not null)
+        {
+            var ordinal = 0;
+            foreach (var step in stepSink)
+            {
+                ordinal++;
+                yield return "[STEP:" + System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    ordinal,
+                    action = step.Action,
+                    input = step.Input,
+                    observation = step.Observation
+                }) + "]";
+            }
+        }
 
         // Emit a [FILE:] marker per file a tool produced (e.g. a chart PNG from
         // run_python). These ride the same in-band SSE marker channel as
@@ -421,7 +441,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         string query,
         string existingContext,
         AgentRequestOptions? options,
-        CancellationToken ct)
+        CancellationToken ct,
+        IList<AgentRunStepData>? stepSink = null)
     {
         var model = await _modelManager.GetChatModelAsync(ct: ct);
         Guid? pendingApprovalId = null;
@@ -444,6 +465,11 @@ public class AgentOrchestrator : IAgentOrchestrator
             {
                 pendingApprovalId = approvalId;
             }
+
+            // Agent-run step capture: one record per tool call at the single seam all
+            // tools flow through (action + input + the untrusted observation). No-op
+            // for ordinary chat (no sink supplied).
+            stepSink?.Add(new AgentRunStepData(action, toolQuery, output));
 
             return output;
         }

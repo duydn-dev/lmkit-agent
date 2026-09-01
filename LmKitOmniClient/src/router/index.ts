@@ -70,6 +70,12 @@ const router = createRouter({
           meta: { requiresAuth: true }
         },
         {
+          path: '/agent-mode',
+          name: 'AgentMode',
+          component: () => import('../views/agents/AgentRunsView.vue'),
+          meta: { requiresAuth: true }
+        },
+        {
           path: '/approvals',
           name: 'Approvals',
           component: () => import('../views/approvals/ApprovalsView.vue'),

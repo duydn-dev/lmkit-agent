@@ -29,6 +29,8 @@ public class HermesDbContext : DbContext
     public DbSet<TenantApiKey> TenantApiKeys { get; set; } = null!;
     public DbSet<TenantWidgetSettings> TenantWidgetSettings { get; set; } = null!;
     public DbSet<UserSession> UserSessions { get; set; } = null!;
+    public DbSet<AgentRun> AgentRuns { get; set; } = null!;
+    public DbSet<AgentRunStep> AgentRunSteps { get; set; } = null!;
 
     public HermesDbContext(DbContextOptions<HermesDbContext> options) : base(options)
     {
@@ -212,5 +214,14 @@ public class HermesDbContext : DbContext
         modelBuilder.Entity<UserSession>()
             .HasIndex(session => session.RefreshTokenHash)
             .IsUnique();
+
+        modelBuilder.Entity<AgentRun>()
+            .HasOne<ChatSession>().WithMany().HasForeignKey(r => r.ChatSessionId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<AgentRun>()
+            .HasIndex(r => new { r.TenantId, r.UserId, r.CreatedAtUtc });
+        modelBuilder.Entity<AgentRunStep>()
+            .HasOne(s => s.AgentRun).WithMany(r => r.Steps).HasForeignKey(s => s.AgentRunId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<AgentRunStep>()
+            .HasIndex(s => new { s.AgentRunId, s.Ordinal });
     }
 }

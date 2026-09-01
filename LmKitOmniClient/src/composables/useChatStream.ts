@@ -278,6 +278,9 @@ export function useChatStream() {
             continue;
           }
           if (event.type === 'saved') continue;
+          // Agent-run-only markers never reach chat (no step sink), but ignore them
+          // defensively so they can never leak into a chat bubble as raw text.
+          if (event.type === 'step' || event.type === 'run-id') continue;
           if (event.type === 'agent-log') continue;
 
           assistantMsg.content += (event as Extract<ChatStreamEvent, { type: 'content' }>).value;

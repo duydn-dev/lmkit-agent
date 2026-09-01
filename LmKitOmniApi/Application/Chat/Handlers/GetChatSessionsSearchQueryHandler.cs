@@ -31,7 +31,7 @@ namespace LmKitOmniApi.Application.Chat.Handlers
         {
             var scopedSessions = _dbContext.ChatSessions
                 .AsNoTracking()
-                .Where(s => s.TenantId == request.TenantId && s.UserId == request.UserId);
+                .Where(s => s.TenantId == request.TenantId && s.UserId == request.UserId && !s.IsAgentRun);
 
             if (string.IsNullOrWhiteSpace(request.Q))
             {
