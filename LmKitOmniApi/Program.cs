@@ -230,6 +230,9 @@ builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.Security.DbConnectionS
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Security.DbEgressValidator>();
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.PostgresDatabaseProvider>();
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.SqliteDatabaseProvider>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.MySqlDatabaseProvider>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.SqlServerDatabaseProvider>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.OracleDatabaseProvider>();
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.ExternalDatabaseService>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.ISchemaEmbedder, LmKitOmniApi.Infrastructure.AI.Database.LmKitSchemaEmbedder>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.SchemaIndexingService>();

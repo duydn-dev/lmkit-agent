@@ -61,8 +61,9 @@ public sealed class DatabaseConnectionsApiTests : IClassFixture<LmKitApiFactory>
             new { name = "  ", provider = "Postgres", connectionString = "Host=x" });
         Assert.Equal(HttpStatusCode.BadRequest, blank.StatusCode);
 
+        // Db2 is not one of the supported engines (Postgres/Sqlite/MySql/SqlServer/Oracle).
         var badProvider = await client.PostAsJsonAsync("/api/database-connections",
-            new { name = "x", provider = "Oracle", connectionString = "x" });
+            new { name = "x", provider = "Db2", connectionString = "x" });
         Assert.Equal(HttpStatusCode.BadRequest, badProvider.StatusCode);
     }
 

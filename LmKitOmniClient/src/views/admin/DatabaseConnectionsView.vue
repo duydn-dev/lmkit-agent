@@ -55,7 +55,7 @@
               v-model="createForm.connectionString"
               rows="3"
               required
-              placeholder="Host=...;Port=5432;Database=...;Username=...;Password=..."
+              :placeholder="providerPlaceholder(createForm.provider)"
               class="w-full font-mono"
               aria-describedby="db-create-connstr-help"
             />
@@ -242,7 +242,7 @@
             id="db-edit-connstr"
             v-model="editForm.connectionString"
             rows="3"
-            placeholder="Host=...;Port=5432;Database=...;Username=...;Password=..."
+            :placeholder="providerPlaceholder(editForm.provider)"
             class="w-full font-mono"
             aria-describedby="db-edit-connstr-help"
           />
@@ -292,11 +292,24 @@ interface TestResult {
   message: string;
 }
 
-// value MUST be exactly 'Postgres' / 'Sqlite' — the backend matches on these.
+// value MUST match the backend DbProvider enum names exactly.
 const providerOptions = [
   { label: 'PostgreSQL', value: 'Postgres' },
-  { label: 'SQLite', value: 'Sqlite' }
+  { label: 'SQLite', value: 'Sqlite' },
+  { label: 'MySQL / MariaDB', value: 'MySql' },
+  { label: 'SQL Server', value: 'SqlServer' },
+  { label: 'Oracle', value: 'Oracle' }
 ];
+
+// A representative connection string per engine, shown as the textarea placeholder.
+const connStringSamples: Record<string, string> = {
+  Postgres: 'Host=...;Port=5432;Database=...;Username=...;Password=...',
+  Sqlite: 'Data Source=/path/to/database.db',
+  MySql: 'Server=...;Port=3306;Database=...;User ID=...;Password=...',
+  SqlServer: 'Server=...,1433;Database=...;User ID=...;Password=...;Encrypt=True',
+  Oracle: 'Data Source=host:1521/service;User ID=...;Password=...'
+};
+const providerPlaceholder = (provider: string) => connStringSamples[provider] ?? connStringSamples.Postgres;
 
 const connections = ref<DatabaseConnection[]>([]);
 const loading = ref(false);

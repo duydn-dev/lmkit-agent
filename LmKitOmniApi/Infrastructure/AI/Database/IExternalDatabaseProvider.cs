@@ -1,10 +1,18 @@
 namespace LmKitOmniApi.Infrastructure.AI.Database;
 
-/// <summary>Supported external database engines. Postgres is the production target; SQLite enables CI-testable, file-based connections.</summary>
+/// <summary>
+/// Supported external database engines. Postgres is the production target and SQLite
+/// enables CI-testable, file-based connections; MySql/SqlServer/Oracle are relational
+/// engines that reuse the same NL→SQL + classifier + read-only pipeline. (MongoDB is
+/// NoSQL and handled by a separate, non-SQL path.)
+/// </summary>
 public enum DbProvider
 {
     Postgres,
-    Sqlite
+    Sqlite,
+    MySql,
+    SqlServer,
+    Oracle
 }
 
 /// <summary>One introspected column (Phase 1 schema indexing).</summary>
