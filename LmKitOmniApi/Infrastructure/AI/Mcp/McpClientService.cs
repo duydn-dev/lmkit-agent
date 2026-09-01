@@ -20,6 +20,7 @@ public class McpClientService
     private readonly ToolSandboxService _sandbox;
     private readonly McpHeaderProtector _headerProtector;
     private readonly IMcpProtocolClient _protocolClient;
+    private readonly IMcpOAuthTokenProvider _oauthTokenProvider;
 
     // Cache discovered tools from MCP servers per Tenant
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, IReadOnlyDictionary<string, List<McpToolDefinition>>> CachedTools = new();
@@ -32,12 +33,14 @@ public class McpClientService
         ToolSandboxService sandbox,
         McpHeaderProtector headerProtector,
         IMcpProtocolClient protocolClient,
+        IMcpOAuthTokenProvider oauthTokenProvider,
         ILogger<McpClientService> logger)
     {
         _scopeFactory = scopeFactory;
         _sandbox = sandbox;
         _headerProtector = headerProtector;
         _protocolClient = protocolClient;
+        _oauthTokenProvider = oauthTokenProvider;
         _logger = logger;
     }
 
@@ -146,7 +149,7 @@ public class McpClientService
             var result = await _protocolClient.CallToolAsync(
                 new Uri(server.Url),
                 server.Name,
-                ReadHeaders(server.HeadersJson),
+                await BuildRequestHeadersAsync(server, ct),
                 toolName,
                 parameters.ToDictionary(pair => pair.Key, pair => (object?)pair.Value),
                 ct);
@@ -197,7 +200,7 @@ public class McpClientService
             throw new InvalidOperationException(urlValidation.DenialReason ?? "MCP server URL was blocked.");
 
         var tools = await _protocolClient.ListToolsAsync(
-            new Uri(server.Url), server.Name, ReadHeaders(server.HeadersJson), ct);
+            new Uri(server.Url), server.Name, await BuildRequestHeadersAsync(server, ct), ct);
 
         return tools.Select(tool => new McpToolDefinition
         {
@@ -208,6 +211,25 @@ public class McpClientService
             InputSchema = tool.InputSchema.GetRawText(),
             Parameters = ExtractParameters(tool.InputSchema)
         }).ToList();
+    }
+
+    /// <summary>
+    /// Builds the outbound header set for a server: the admin-configured static headers,
+    /// plus a freshly-minted <c>Authorization: Bearer</c> header when the server uses the
+    /// OAuth client-credentials grant. The OAuth token takes precedence over any static
+    /// Authorization header so the two auth modes never collide.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string>> BuildRequestHeadersAsync(ExternalMcpServer server, CancellationToken ct)
+    {
+        var headers = new Dictionary<string, string>(ReadHeaders(server.HeadersJson), StringComparer.OrdinalIgnoreCase);
+
+        if (string.Equals(server.AuthMode, McpOAuthTokenProvider.ClientCredentialsMode, StringComparison.OrdinalIgnoreCase))
+        {
+            var token = await _oauthTokenProvider.GetAccessTokenAsync(server, ct);
+            headers["Authorization"] = $"Bearer {token}";
+        }
+
+        return headers;
     }
 
     private IReadOnlyDictionary<string, string> ReadHeaders(string? headersJson)

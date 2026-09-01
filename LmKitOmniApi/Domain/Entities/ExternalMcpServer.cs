@@ -19,6 +19,28 @@ public sealed class ExternalMcpServer
 
     public string? HeadersJson { get; set; }
 
+    /// <summary>
+    /// How outbound requests to this server are authenticated:
+    /// <c>"Static"</c> (default) uses only <see cref="HeadersJson"/>;
+    /// <c>"ClientCredentials"</c> fetches an OAuth 2.0 bearer token (RFC 6749 §4.4)
+    /// from <see cref="OAuthTokenUrl"/> and injects it as an Authorization header.
+    /// </summary>
+    [MaxLength(32)]
+    public string AuthMode { get; set; } = "Static";
+
+    [MaxLength(300)]
+    public string? OAuthClientId { get; set; }
+
+    /// <summary>DataProtection-encrypted client secret (never returned to the UI).</summary>
+    public string? OAuthClientSecretProtected { get; set; }
+
+    [MaxLength(500)]
+    public string? OAuthTokenUrl { get; set; }
+
+    /// <summary>Optional space-separated OAuth scopes sent with the token request.</summary>
+    [MaxLength(1000)]
+    public string? OAuthScopes { get; set; }
+
     public bool IsActive { get; set; } = true;
 
     /// <summary>

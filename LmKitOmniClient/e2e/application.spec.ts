@@ -306,6 +306,13 @@ test('admin can open the audit, MCP and knowledge-base management screens', asyn
   await expect(page.getByText('Chưa có máy chủ MCP nào được kết nối.')).toBeVisible();
   await expectNoWcagViolations(page);
 
+  // Selecting the OAuth client-credentials mode reveals its (accessible) fields.
+  await page.getByLabel('Phương thức xác thực máy chủ MCP').click();
+  await page.getByRole('option', { name: 'OAuth 2.0 Client Credentials' }).click();
+  await expect(page.getByLabel('Client ID')).toBeVisible();
+  await expect(page.getByLabel('Token URL')).toBeVisible();
+  await expectNoWcagViolations(page);
+
   await page.goto('/admin/knowledge');
   await expect(page.getByRole('heading', { name: 'Cơ sở tri thức' })).toBeVisible();
   await expectNoWcagViolations(page);

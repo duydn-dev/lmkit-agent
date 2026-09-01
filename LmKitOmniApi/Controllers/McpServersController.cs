@@ -54,7 +54,12 @@ public sealed class McpServersController : ApiControllerBase
             Headers = request.Headers,
             ReplaceHeaders = request.ReplaceHeaders,
             IsActive = request.IsActive,
-            TrustReadOnlyAnnotations = request.TrustReadOnlyAnnotations
+            TrustReadOnlyAnnotations = request.TrustReadOnlyAnnotations,
+            AuthMode = request.AuthMode,
+            OAuthClientId = request.OAuthClientId,
+            OAuthClientSecret = request.OAuthClientSecret,
+            OAuthTokenUrl = request.OAuthTokenUrl,
+            OAuthScopes = request.OAuthScopes
         }, ct);
 
         return result.Status switch
@@ -79,7 +84,12 @@ public sealed class McpServersController : ApiControllerBase
             Headers = request.Headers,
             ReplaceHeaders = request.ReplaceHeaders,
             IsActive = request.IsActive,
-            TrustReadOnlyAnnotations = request.TrustReadOnlyAnnotations
+            TrustReadOnlyAnnotations = request.TrustReadOnlyAnnotations,
+            AuthMode = request.AuthMode,
+            OAuthClientId = request.OAuthClientId,
+            OAuthClientSecret = request.OAuthClientSecret,
+            OAuthTokenUrl = request.OAuthTokenUrl,
+            OAuthScopes = request.OAuthScopes
         }, ct);
 
         return result.Status switch

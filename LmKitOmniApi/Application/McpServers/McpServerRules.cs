@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using LmKitOmniApi.Application.McpServers.Commands;
+using LmKitOmniApi.Infrastructure.AI.Mcp;
 using LmKitOmniApi.Infrastructure.AI.Security;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Infrastructure.Security;
@@ -45,8 +46,46 @@ internal static class McpServerRules
             return SaveMcpServerResult.NameConflict("An MCP server with this name already exists.");
         if (request.Headers?.Count > 20 || request.Headers?.Any(header => BlockedHeaders.Contains(header.Key) || header.Key.Length > 100 || header.Value is null || header.Value.Length > 2_000) == true)
             return SaveMcpServerResult.ValidationFailed("MCP headers exceeded the allowed limits or contained a blocked header.");
+
+        var authMode = NormalizeAuthMode(request.AuthMode);
+        if (authMode is null)
+            return SaveMcpServerResult.ValidationFailed("AuthMode must be 'Static' or 'ClientCredentials'.");
+        if (authMode == McpOAuthTokenProvider.ClientCredentialsMode)
+        {
+            if (string.IsNullOrWhiteSpace(request.OAuthClientId) || request.OAuthClientId.Length > 300)
+                return SaveMcpServerResult.ValidationFailed("OAuth client id is required (max 300 characters).");
+            if (!Uri.TryCreate(request.OAuthTokenUrl, UriKind.Absolute, out _) || request.OAuthTokenUrl!.Length > 500)
+                return SaveMcpServerResult.ValidationFailed("A valid absolute OAuth token URL is required (max 500 characters).");
+            // Same SSRF sandbox as the server URL: the token endpoint must not resolve to internal space.
+            var tokenUrl = await sandbox.ValidateUrlAsync(request.OAuthTokenUrl, ct);
+            if (!tokenUrl.IsAllowed) return SaveMcpServerResult.ValidationFailed(tokenUrl.DenialReason);
+            if (request.OAuthScopes is { Length: > 1_000 })
+                return SaveMcpServerResult.ValidationFailed("OAuth scopes exceeded 1000 characters.");
+            if (request.OAuthClientSecret is { Length: > 4_000 })
+                return SaveMcpServerResult.ValidationFailed("OAuth client secret exceeded the allowed length.");
+            // A brand-new client-credentials server must carry a secret; on update a blank
+            // secret means "keep the stored one", so the presence check lives in the handler.
+            if (id is null && string.IsNullOrWhiteSpace(request.OAuthClientSecret))
+                return SaveMcpServerResult.ValidationFailed("OAuth client secret is required.");
+        }
         return null;
     }
+
+    /// <summary>
+    /// Canonicalizes the auth mode: blank → "Static", case-insensitive match to the two
+    /// supported modes, otherwise null (invalid). Shared by validation and persistence so
+    /// the stored value is always canonical.
+    /// </summary>
+    internal static string? NormalizeAuthMode(string? mode)
+    {
+        if (string.IsNullOrWhiteSpace(mode)) return "Static";
+        if (string.Equals(mode, "Static", StringComparison.OrdinalIgnoreCase)) return "Static";
+        if (string.Equals(mode, McpOAuthTokenProvider.ClientCredentialsMode, StringComparison.OrdinalIgnoreCase))
+            return McpOAuthTokenProvider.ClientCredentialsMode;
+        return null;
+    }
+
+    internal static string ProtectSecret(McpHeaderProtector protector, string secret) => protector.Protect(secret);
 
     internal static string? ProtectHeaders(McpHeaderProtector protector, Dictionary<string, string>? headers)
     {

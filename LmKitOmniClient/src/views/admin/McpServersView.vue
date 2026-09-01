@@ -35,6 +35,40 @@
             <label for="mcp-create-headers" class="text-sm font-medium text-gray-700">Header JSON tùy chọn</label>
             <Textarea id="mcp-create-headers" v-model="createForm.headersJson" rows="3" placeholder='Ví dụ {"Authorization":"Bearer ..."}' class="w-full" />
           </div>
+          <div class="grid gap-1">
+            <label for="mcp-create-authmode" class="text-sm font-medium text-gray-700">Phương thức xác thực</label>
+            <Select
+              inputId="mcp-create-authmode"
+              v-model="createForm.authMode"
+              :options="authModeOptions"
+              optionLabel="label"
+              optionValue="value"
+              aria-label="Phương thức xác thực máy chủ MCP"
+              class="w-full"
+            />
+          </div>
+          <fieldset v-if="createForm.authMode === 'ClientCredentials'" class="grid gap-3 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3">
+            <legend class="px-1 text-xs font-semibold text-indigo-900">OAuth 2.0 Client Credentials</legend>
+            <p class="text-xs text-indigo-900">Hệ thống tự lấy access token từ Token URL và gắn vào header <code>Authorization</code>. Client secret được mã hóa và không bao giờ trả lại giao diện.</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div class="grid gap-1">
+                <label for="mcp-create-clientid" class="text-sm font-medium text-gray-700">Client ID</label>
+                <InputText id="mcp-create-clientid" v-model="createForm.oauthClientId" class="w-full" autocomplete="off" />
+              </div>
+              <div class="grid gap-1">
+                <label for="mcp-create-clientsecret" class="text-sm font-medium text-gray-700">Client Secret</label>
+                <InputText id="mcp-create-clientsecret" v-model="createForm.oauthClientSecret" type="password" class="w-full" autocomplete="off" />
+              </div>
+            </div>
+            <div class="grid gap-1">
+              <label for="mcp-create-tokenurl" class="text-sm font-medium text-gray-700">Token URL</label>
+              <InputText id="mcp-create-tokenurl" v-model="createForm.oauthTokenUrl" type="url" placeholder="https://issuer.example.com/oauth/token" class="w-full" />
+            </div>
+            <div class="grid gap-1">
+              <label for="mcp-create-scopes" class="text-sm font-medium text-gray-700">Scopes (tùy chọn)</label>
+              <InputText id="mcp-create-scopes" v-model="createForm.oauthScopes" placeholder="read:tools write:tools" class="w-full" />
+            </div>
+          </fieldset>
           <label for="mcp-create-trust" class="flex items-start gap-2 text-sm text-amber-800 rounded-lg border border-amber-200 bg-amber-50 p-3">
             <Checkbox inputId="mcp-create-trust" v-model="createForm.trustReadOnlyAnnotations" binary />
             <span>Tin cậy khai báo <code>readOnlyHint</code> của máy chủ này. Chỉ bật khi đã xác minh nhà cung cấp; nếu tắt, mọi MCP tool đều cần phê duyệt.</span>
@@ -115,6 +149,9 @@
                 <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border" :class="server.trustReadOnlyAnnotations ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-gray-50 text-gray-600 border-gray-200'">
                   {{ server.trustReadOnlyAnnotations ? 'Tin cậy read-only' : 'Mọi tool cần duyệt' }}
                 </span>
+                <span v-if="server.authMode === 'ClientCredentials'" class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border bg-indigo-50 text-indigo-800 border-indigo-200">
+                  OAuth Client Credentials
+                </span>
               </div>
             </div>
             <div class="flex items-center gap-2 flex-shrink-0">
@@ -185,6 +222,40 @@
           <p id="mcp-edit-headers-help" class="text-xs text-gray-500">Để trống = giữ nguyên header hiện tại. Nhập JSON mới để thay thế.</p>
         </div>
 
+        <div class="grid gap-1">
+          <label for="mcp-edit-authmode" class="text-sm font-medium text-gray-700">Phương thức xác thực</label>
+          <Select
+            inputId="mcp-edit-authmode"
+            v-model="editForm.authMode"
+            :options="authModeOptions"
+            optionLabel="label"
+            optionValue="value"
+            aria-label="Phương thức xác thực máy chủ MCP"
+            class="w-full"
+          />
+        </div>
+
+        <fieldset v-if="editForm.authMode === 'ClientCredentials'" class="grid gap-3 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3">
+          <legend class="px-1 text-xs font-semibold text-indigo-900">OAuth 2.0 Client Credentials</legend>
+          <div class="grid gap-1">
+            <label for="mcp-edit-clientid" class="text-sm font-medium text-gray-700">Client ID</label>
+            <InputText id="mcp-edit-clientid" v-model="editForm.oauthClientId" class="w-full" autocomplete="off" />
+          </div>
+          <div class="grid gap-1">
+            <label for="mcp-edit-clientsecret" class="text-sm font-medium text-gray-700">Client Secret</label>
+            <InputText id="mcp-edit-clientsecret" v-model="editForm.oauthClientSecret" type="password" class="w-full" autocomplete="off" aria-describedby="mcp-edit-clientsecret-help" />
+            <p id="mcp-edit-clientsecret-help" class="text-xs text-gray-500">Để trống = giữ nguyên secret hiện tại.</p>
+          </div>
+          <div class="grid gap-1">
+            <label for="mcp-edit-tokenurl" class="text-sm font-medium text-gray-700">Token URL</label>
+            <InputText id="mcp-edit-tokenurl" v-model="editForm.oauthTokenUrl" type="url" placeholder="https://issuer.example.com/oauth/token" class="w-full" />
+          </div>
+          <div class="grid gap-1">
+            <label for="mcp-edit-scopes" class="text-sm font-medium text-gray-700">Scopes (tùy chọn)</label>
+            <InputText id="mcp-edit-scopes" v-model="editForm.oauthScopes" placeholder="read:tools write:tools" class="w-full" />
+          </div>
+        </fieldset>
+
         <label for="mcp-edit-trust" class="flex items-start gap-2 text-sm text-amber-800 rounded-lg border border-amber-200 bg-amber-50 p-3">
           <Checkbox inputId="mcp-edit-trust" v-model="editForm.trustReadOnlyAnnotations" binary />
           <span>Tin cậy khai báo <code>readOnlyHint</code> của máy chủ này. Chỉ bật khi đã xác minh nhà cung cấp; nếu tắt, mọi MCP tool đều cần phê duyệt.</span>
@@ -209,6 +280,8 @@ import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 
+type AuthMode = 'Static' | 'ClientCredentials';
+
 interface McpServer {
   id: string;
   name: string;
@@ -216,7 +289,17 @@ interface McpServer {
   isActive: boolean;
   hasHeaders: boolean;
   trustReadOnlyAnnotations: boolean;
+  authMode: AuthMode;
+  oauthClientId?: string | null;
+  oauthTokenUrl?: string | null;
+  oauthScopes?: string | null;
+  hasOAuthSecret: boolean;
 }
+
+const authModeOptions: { label: string; value: AuthMode }[] = [
+  { label: 'Chỉ dùng header tĩnh (Static)', value: 'Static' },
+  { label: 'OAuth 2.0 Client Credentials', value: 'ClientCredentials' }
+];
 interface McpCatalogEntry {
   name: string;
   baseUrl: string;
@@ -230,13 +313,19 @@ const pageError = ref('');
 
 const creating = ref(false);
 const createError = ref('');
-const emptyCreateForm = () => ({ name: '', url: '', headersJson: '', isActive: true, trustReadOnlyAnnotations: false });
+const emptyCreateForm = () => ({
+  name: '', url: '', headersJson: '', isActive: true, trustReadOnlyAnnotations: false,
+  authMode: 'Static' as AuthMode, oauthClientId: '', oauthClientSecret: '', oauthTokenUrl: '', oauthScopes: ''
+});
 const createForm = ref(emptyCreateForm());
 
 const editVisible = ref(false);
 const savingEdit = ref(false);
 const editError = ref('');
-const editForm = ref({ id: '', name: '', url: '', headersJson: '', isActive: true, trustReadOnlyAnnotations: false });
+const editForm = ref({
+  id: '', name: '', url: '', headersJson: '', isActive: true, trustReadOnlyAnnotations: false,
+  authMode: 'Static' as AuthMode, oauthClientId: '', oauthClientSecret: '', oauthTokenUrl: '', oauthScopes: ''
+});
 
 const togglingId = ref<string | null>(null);
 const deletingId = ref<string | null>(null);
@@ -275,6 +364,21 @@ const applyCatalogEntry = (entry: McpCatalogEntry) => {
   createForm.value.url = entry.baseUrl;
 };
 
+/**
+ * OAuth fields for the request body. Sent only in ClientCredentials mode; scopes are
+ * omitted when blank. On edit, a blank secret is intentionally sent as '' so the API
+ * keeps the stored secret (matching the headers "leave blank = keep" convention).
+ */
+const oauthPayload = (form: { authMode: AuthMode; oauthClientId: string; oauthClientSecret: string; oauthTokenUrl: string; oauthScopes: string }) =>
+  form.authMode === 'ClientCredentials'
+    ? {
+        oauthClientId: form.oauthClientId.trim(),
+        oauthClientSecret: form.oauthClientSecret,
+        oauthTokenUrl: form.oauthTokenUrl.trim(),
+        oauthScopes: form.oauthScopes.trim() || undefined
+      }
+    : {};
+
 const createServer = async () => {
   createError.value = '';
   let headers: Record<string, string> | undefined;
@@ -284,6 +388,12 @@ const createServer = async () => {
     createError.value = 'Header JSON không hợp lệ.';
     return;
   }
+  if (createForm.value.authMode === 'ClientCredentials') {
+    if (!createForm.value.oauthClientId.trim() || !createForm.value.oauthTokenUrl.trim() || !createForm.value.oauthClientSecret) {
+      createError.value = 'OAuth Client Credentials cần Client ID, Client Secret và Token URL.';
+      return;
+    }
+  }
   creating.value = true;
   try {
     const response = await http.post(ApiFactory.MCP.BASE, {
@@ -292,7 +402,9 @@ const createServer = async () => {
       headers,
       replaceHeaders: true,
       isActive: createForm.value.isActive,
-      trustReadOnlyAnnotations: createForm.value.trustReadOnlyAnnotations
+      trustReadOnlyAnnotations: createForm.value.trustReadOnlyAnnotations,
+      authMode: createForm.value.authMode,
+      ...oauthPayload(createForm.value)
     });
     if (!response.ok) {
       createError.value = await readApiError(response, 'Không thể thêm máy chủ MCP');
@@ -316,7 +428,14 @@ const openEdit = (server: McpServer) => {
     url: server.url,
     headersJson: '',
     isActive: server.isActive,
-    trustReadOnlyAnnotations: server.trustReadOnlyAnnotations
+    trustReadOnlyAnnotations: server.trustReadOnlyAnnotations,
+    authMode: server.authMode ?? 'Static',
+    // Non-secret OAuth config is pre-filled; the secret field starts EMPTY and a blank
+    // value on save preserves the stored secret.
+    oauthClientId: server.oauthClientId ?? '',
+    oauthClientSecret: '',
+    oauthTokenUrl: server.oauthTokenUrl ?? '',
+    oauthScopes: server.oauthScopes ?? ''
   };
   editError.value = '';
   editVisible.value = true;
@@ -341,6 +460,10 @@ const saveEdit = async () => {
       return;
     }
   }
+  if (editForm.value.authMode === 'ClientCredentials' && (!editForm.value.oauthClientId.trim() || !editForm.value.oauthTokenUrl.trim())) {
+    editError.value = 'OAuth Client Credentials cần Client ID và Token URL.';
+    return;
+  }
   savingEdit.value = true;
   try {
     const response = await http.put(ApiFactory.MCP.BY_ID(editForm.value.id), {
@@ -349,7 +472,9 @@ const saveEdit = async () => {
       isActive: editForm.value.isActive,
       trustReadOnlyAnnotations: editForm.value.trustReadOnlyAnnotations,
       headers,
-      replaceHeaders
+      replaceHeaders,
+      authMode: editForm.value.authMode,
+      ...oauthPayload(editForm.value)
     });
     if (!response.ok) {
       editError.value = await readApiError(response, 'Không thể cập nhật máy chủ MCP');
@@ -369,12 +494,23 @@ const toggleActive = async (server: McpServer) => {
   pageError.value = '';
   try {
     // replaceHeaders:false so flipping the active flag never wipes stored headers.
+    // The current auth mode + OAuth config are resent (secret left blank = kept) so the
+    // PUT preserves them instead of resetting the server to Static.
     const response = await http.put(ApiFactory.MCP.BY_ID(server.id), {
       name: server.name,
       url: server.url,
       isActive: !server.isActive,
       trustReadOnlyAnnotations: server.trustReadOnlyAnnotations,
-      replaceHeaders: false
+      replaceHeaders: false,
+      authMode: server.authMode,
+      ...(server.authMode === 'ClientCredentials'
+        ? {
+            oauthClientId: server.oauthClientId ?? '',
+            oauthClientSecret: '',
+            oauthTokenUrl: server.oauthTokenUrl ?? '',
+            oauthScopes: server.oauthScopes ?? undefined
+          }
+        : {})
     });
     if (response.ok) await loadServers();
     else pageError.value = await readApiError(response, 'Không thể cập nhật trạng thái máy chủ MCP');

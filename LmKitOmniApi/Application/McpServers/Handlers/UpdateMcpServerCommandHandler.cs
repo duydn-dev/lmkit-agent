@@ -34,11 +34,38 @@ public class UpdateMcpServerCommandHandler : IRequestHandler<UpdateMcpServerComm
         var validation = await McpServerRules.ValidateAsync(_db, _sandbox, request.TenantId, request.ServerId, request, cancellationToken);
         if (validation is not null) return validation;
 
+        var authMode = McpServerRules.NormalizeAuthMode(request.AuthMode)!; // validated above
+        if (authMode == McpOAuthTokenProvider.ClientCredentialsMode)
+        {
+            // A blank secret means "keep the stored one"; reject only when neither the
+            // request nor the existing record supplies a secret.
+            if (string.IsNullOrWhiteSpace(request.OAuthClientSecret) &&
+                string.IsNullOrWhiteSpace(server.OAuthClientSecretProtected))
+                return SaveMcpServerResult.ValidationFailed("OAuth client secret is required.");
+        }
+
         server.Name = request.Name.Trim().ToLowerInvariant();
         server.Url = request.Url.TrimEnd('/');
         server.IsActive = request.IsActive;
         server.TrustReadOnlyAnnotations = request.TrustReadOnlyAnnotations;
         if (request.ReplaceHeaders) server.HeadersJson = McpServerRules.ProtectHeaders(_protector, request.Headers);
+        server.AuthMode = authMode;
+        if (authMode == McpOAuthTokenProvider.ClientCredentialsMode)
+        {
+            server.OAuthClientId = request.OAuthClientId!.Trim();
+            server.OAuthTokenUrl = request.OAuthTokenUrl!.Trim();
+            server.OAuthScopes = string.IsNullOrWhiteSpace(request.OAuthScopes) ? null : request.OAuthScopes.Trim();
+            if (!string.IsNullOrWhiteSpace(request.OAuthClientSecret))
+                server.OAuthClientSecretProtected = McpServerRules.ProtectSecret(_protector, request.OAuthClientSecret);
+        }
+        else
+        {
+            // Switching back to Static clears the OAuth config so no stale secret lingers.
+            server.OAuthClientId = null;
+            server.OAuthTokenUrl = null;
+            server.OAuthScopes = null;
+            server.OAuthClientSecretProtected = null;
+        }
         server.UpdatedAtUtc = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
         await _mcp.InvalidateTenantCacheAsync(request.TenantId, cancellationToken);

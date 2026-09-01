@@ -12,6 +12,18 @@ public sealed class SaveMcpServerRequest
     public bool ReplaceHeaders { get; set; }
     public bool IsActive { get; set; } = true;
     public bool TrustReadOnlyAnnotations { get; set; }
+
+    /// <summary>"Static" (default) or "ClientCredentials" for the OAuth 2.0 grant.</summary>
+    public string? AuthMode { get; set; }
+    public string? OAuthClientId { get; set; }
+
+    /// <summary>
+    /// Plaintext client secret from the form. On update, a null/blank value keeps the
+    /// stored secret (mirrors how blank <see cref="Headers"/> preserves stored headers).
+    /// </summary>
+    public string? OAuthClientSecret { get; set; }
+    public string? OAuthTokenUrl { get; set; }
+    public string? OAuthScopes { get; set; }
 }
 
 /// <summary>
@@ -28,6 +40,11 @@ public abstract class SaveMcpServerCommandBase
     public bool ReplaceHeaders { get; set; }
     public bool IsActive { get; set; } = true;
     public bool TrustReadOnlyAnnotations { get; set; }
+    public string? AuthMode { get; set; }
+    public string? OAuthClientId { get; set; }
+    public string? OAuthClientSecret { get; set; }
+    public string? OAuthTokenUrl { get; set; }
+    public string? OAuthScopes { get; set; }
 }
 
 /// <summary>
@@ -74,4 +91,5 @@ public sealed class CreatedMcpServerDto
     public string Url { get; init; } = string.Empty;
     public bool IsActive { get; init; }
     public bool TrustReadOnlyAnnotations { get; init; }
+    public string AuthMode { get; init; } = "Static";
 }

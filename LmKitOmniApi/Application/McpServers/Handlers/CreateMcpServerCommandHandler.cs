@@ -28,6 +28,7 @@ public class CreateMcpServerCommandHandler : IRequestHandler<CreateMcpServerComm
         var validation = await McpServerRules.ValidateAsync(_db, _sandbox, request.TenantId, null, request, cancellationToken);
         if (validation is not null) return validation;
 
+        var authMode = McpServerRules.NormalizeAuthMode(request.AuthMode)!; // validated above
         var server = new ExternalMcpServer
         {
             TenantId = request.TenantId,
@@ -35,8 +36,17 @@ public class CreateMcpServerCommandHandler : IRequestHandler<CreateMcpServerComm
             Url = request.Url.TrimEnd('/'),
             HeadersJson = McpServerRules.ProtectHeaders(_protector, request.Headers),
             IsActive = request.IsActive,
-            TrustReadOnlyAnnotations = request.TrustReadOnlyAnnotations
+            TrustReadOnlyAnnotations = request.TrustReadOnlyAnnotations,
+            AuthMode = authMode
         };
+        if (authMode == McpOAuthTokenProvider.ClientCredentialsMode)
+        {
+            server.OAuthClientId = request.OAuthClientId!.Trim();
+            server.OAuthTokenUrl = request.OAuthTokenUrl!.Trim();
+            server.OAuthScopes = string.IsNullOrWhiteSpace(request.OAuthScopes) ? null : request.OAuthScopes.Trim();
+            // Validation guarantees a non-blank secret on create.
+            server.OAuthClientSecretProtected = McpServerRules.ProtectSecret(_protector, request.OAuthClientSecret!);
+        }
         _db.ExternalMcpServers.Add(server);
         await _db.SaveChangesAsync(cancellationToken);
         await _mcp.InvalidateTenantCacheAsync(request.TenantId, cancellationToken);
@@ -50,7 +60,8 @@ public class CreateMcpServerCommandHandler : IRequestHandler<CreateMcpServerComm
                 Name = server.Name,
                 Url = server.Url,
                 IsActive = server.IsActive,
-                TrustReadOnlyAnnotations = server.TrustReadOnlyAnnotations
+                TrustReadOnlyAnnotations = server.TrustReadOnlyAnnotations,
+                AuthMode = server.AuthMode
             }
         };
     }

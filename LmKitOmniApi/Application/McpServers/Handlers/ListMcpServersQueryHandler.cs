@@ -27,6 +27,11 @@ public class ListMcpServersQueryHandler : IRequestHandler<ListMcpServersQuery, L
                 IsActive = server.IsActive,
                 TrustReadOnlyAnnotations = server.TrustReadOnlyAnnotations,
                 HasHeaders = server.HeadersJson != null,
+                AuthMode = server.AuthMode,
+                OAuthClientId = server.OAuthClientId,
+                OAuthTokenUrl = server.OAuthTokenUrl,
+                OAuthScopes = server.OAuthScopes,
+                HasOAuthSecret = server.OAuthClientSecretProtected != null,
                 CreatedAtUtc = server.CreatedAtUtc,
                 UpdatedAtUtc = server.UpdatedAtUtc
             })

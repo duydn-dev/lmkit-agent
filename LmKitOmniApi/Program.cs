@@ -343,6 +343,21 @@ builder.Services.AddHttpClient("MCP", client =>
     ConnectCallback = SsrfSafeConnect.CreateVettedConnectCallback()
 });
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.IMcpProtocolClient, LmKitOmniApi.Infrastructure.AI.Mcp.McpProtocolClient>();
+
+// OAuth 2.0 client-credentials token endpoint for MCP servers. Separate named client
+// (shorter timeout, smaller buffer) but the SAME connect-time SSRF re-vetting as the MCP
+// transport, so a rebinding token host is refused at the socket just like a tool host.
+builder.Services.AddHttpClient(LmKitOmniApi.Infrastructure.AI.Mcp.McpOAuthTokenProvider.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.MaxResponseContentBufferSize = 262_144;
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+    ConnectCallback = SsrfSafeConnect.CreateVettedConnectCallback()
+});
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.IMcpOAuthTokenProvider, LmKitOmniApi.Infrastructure.AI.Mcp.McpOAuthTokenProvider>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.McpClientService>();
 
 // ============================================================
