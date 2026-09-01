@@ -3,6 +3,12 @@ using Microsoft.Extensions.Logging;
 
 namespace LmKitOmniApi.Infrastructure.AI.Database;
 
+/// <summary>Retrieves the schema context most relevant to a request — the seam the query tool depends on (fakeable without Qdrant).</summary>
+public interface ISchemaRetriever
+{
+    Task<string> RetrieveContextAsync(Guid tenantId, Guid connectionId, string nlQuery, int topK, CancellationToken ct);
+}
+
 /// <summary>
 /// Indexes an external database's schema into a PER-CONNECTION Qdrant collection
 /// (physical tenant isolation, like the per-tenant agent-memory collections) and
@@ -10,7 +16,7 @@ namespace LmKitOmniApi.Infrastructure.AI.Database;
 /// generation. Re-index clears the connection's points first (delete-before-
 /// reingest) so dropped tables/columns never linger.
 /// </summary>
-public sealed class SchemaIndexingService
+public sealed class SchemaIndexingService : ISchemaRetriever
 {
     private const string ConnectionIdField = "ConnectionId";
 

@@ -50,6 +50,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     // which is only forwarded to the dispatcher) because CreateNativeActionToolsAsync
     // must check IsEnabled to decide whether to offer the run_python tool.
     private readonly IPythonCodeExecutor _pythonExecutor;
+    private readonly LmKitOmniApi.Infrastructure.AI.Database.DbQueryService _dbQuery;
 
     // ── Memory ──
     private readonly IAgentMemoryService _memoryService;
@@ -98,6 +99,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["SUMMARIZE"] = "AnalyzeText",
         ["CODE"] = "RunCode",
         ["PYTHON"] = "RunPython",
+        ["DBSCHEMA"] = "DbQuery",
+        ["DBQUERY"] = "DbQuery",
     };
 
     // H6 path-extraction regexes moved to AgentActionDispatcher alongside the
@@ -116,6 +119,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         IPromptGuardService promptGuard,
         IExecutionSandboxEngine executionSandbox,
         IPythonCodeExecutor pythonExecutor,
+        LmKitOmniApi.Infrastructure.AI.Database.DbQueryService dbQueryService,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
         McpClientService mcpClient,
@@ -136,6 +140,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         _sandbox = sandbox;
         _promptGuard = promptGuard;
         _pythonExecutor = pythonExecutor;
+        _dbQuery = dbQueryService;
         _mcpClient = mcpClient;
         _telemetry = telemetry;
         _toolAudit = toolAudit;
@@ -156,6 +161,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             toolPermission,
             executionSandbox,
             pythonExecutor,
+            dbQueryService,
             resources,
             multiAgent,
             mcpClient,
@@ -603,6 +609,25 @@ public class AgentOrchestrator : IAgentOrchestrator
                     + "kết quả trả về là nội dung in ra stdout. "
                     + "Giới hạn 15 giây / bộ nhớ hạn chế; không có internet, không có bí mật.",
                 (q, ct) => invoke("PYTHON", q, ct)));
+        }
+
+        // External database agent (read-only). Two model-free tools, offered only
+        // when an operator enabled the feature (_dbQuery.IsEnabled) and the mapped
+        // "DbQuery" permission is allowed. The agent first gets the relevant schema,
+        // then writes its own read-only SQL and runs it; writes are refused here and
+        // require a separate approval flow.
+        if (_dbQuery.IsEnabled && ActionAllowed("DBQUERY"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "get_database_schema",
+                "Lấy cấu trúc (bảng/cột/khoá) liên quan của cơ sở dữ liệu đã kết nối cho một yêu cầu bằng ngôn ngữ tự nhiên. "
+                    + "Dùng trước khi viết SQL. Nếu có nhiều kết nối, thêm tiền tố \"db=<tên>;\".",
+                (q, ct) => invoke("DBSCHEMA", q, ct)));
+            tools.Add(new DelegatedActionTool(
+                "run_database_query",
+                "Chạy MỘT câu SQL CHỈ-ĐỌC (SELECT/WITH…SELECT) trên cơ sở dữ liệu đã kết nối và trả về kết quả dạng bảng. "
+                    + "Chỉ đọc — câu lệnh ghi (INSERT/UPDATE/DELETE) hay DDL sẽ bị từ chối. Nhiều kết nối: thêm \"db=<tên>;\" trước câu SQL.",
+                (q, ct) => invoke("DBQUERY", q, ct)));
         }
 
         if (profile.HasFlag(AgentToolProfile.ImageRead) && ActionAllowed("VISION"))

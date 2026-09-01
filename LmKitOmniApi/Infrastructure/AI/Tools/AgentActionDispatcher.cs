@@ -50,6 +50,7 @@ public sealed class AgentActionDispatcher
     private readonly IToolPermissionService _toolPermission;
     private readonly IExecutionSandboxEngine _executionSandbox;
     private readonly IPythonCodeExecutor _pythonExecutor;
+    private readonly LmKitOmniApi.Infrastructure.AI.Database.DbQueryService _dbQuery;
     private readonly UserResourceAccessService _resources;
     private readonly MultiAgentOrchestrator _multiAgent;
     private readonly McpClientService _mcpClient;
@@ -64,6 +65,7 @@ public sealed class AgentActionDispatcher
         IToolPermissionService toolPermission,
         IExecutionSandboxEngine executionSandbox,
         IPythonCodeExecutor pythonExecutor,
+        LmKitOmniApi.Infrastructure.AI.Database.DbQueryService dbQuery,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
         McpClientService mcpClient,
@@ -77,6 +79,7 @@ public sealed class AgentActionDispatcher
         _toolPermission = toolPermission;
         _executionSandbox = executionSandbox;
         _pythonExecutor = pythonExecutor;
+        _dbQuery = dbQuery;
         _resources = resources;
         _multiAgent = multiAgent;
         _mcpClient = mcpClient;
@@ -144,6 +147,12 @@ public sealed class AgentActionDispatcher
             // ── Code Interpreter (v2: sandboxed Python via isolated container) ──
             case "PYTHON":
                 return await ExecutePythonAsync(tenantId, userId, query, fileSink, ct);
+
+            // ── External database agent (read-only) ──
+            case "DBSCHEMA":
+                return await ExecuteDbSchemaAsync(tenantId, userId, query, ct);
+            case "DBQUERY":
+                return await ExecuteDbQueryAsync(tenantId, userId, query, ct);
 
             default:
                 return $"Unknown action: {action}";
@@ -325,6 +334,24 @@ public sealed class AgentActionDispatcher
                 fileSink.Add(file);
         }
         return codeResult.Output;
+    }
+
+    private async Task<string> ExecuteDbSchemaAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
+    {
+        _logger.LogInformation("🗄️ Retrieving external database schema context...");
+        var result = await _dbQuery.GetSchemaAsync(tenantId, query, ct);
+        await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "DbQuery", null, ct);
+        return result;
+    }
+
+    private async Task<string> ExecuteDbQueryAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
+    {
+        _logger.LogInformation("🗄️ Running read-only external database query...");
+        // Parameters recorded as null (like CODE/PYTHON) — a statement may embed user
+        // data; the orchestrator's audit layer still records the action + duration.
+        var result = await _dbQuery.RunQueryAsync(tenantId, query, ct);
+        await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "DbQuery", null, ct);
+        return result;
     }
 
     private async Task<string> ExecuteSummarizationAsync(string query, CancellationToken ct)

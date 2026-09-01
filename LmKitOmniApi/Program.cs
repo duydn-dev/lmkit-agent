@@ -233,6 +233,8 @@ builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalD
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.ExternalDatabaseService>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.ISchemaEmbedder, LmKitOmniApi.Infrastructure.AI.Database.LmKitSchemaEmbedder>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.SchemaIndexingService>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.ISchemaRetriever>(sp => sp.GetRequiredService<LmKitOmniApi.Infrastructure.AI.Database.SchemaIndexingService>());
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.DbQueryService>();
 
 // Filter Pipeline (ordered execution)
 builder.Services.AddScoped<IAgentFilter, InputSanitizationFilter>();

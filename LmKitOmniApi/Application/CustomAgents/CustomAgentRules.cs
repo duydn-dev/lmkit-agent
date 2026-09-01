@@ -61,6 +61,12 @@ public static class CustomAgentRules
         },
         new()
         {
+            Name = "DbQuery",
+            Label = "Truy vấn cơ sở dữ liệu (chỉ đọc)",
+            Description = "Lấy schema và chạy truy vấn CHỈ-ĐỌC trên cơ sở dữ liệu ngoài đã kết nối; câu lệnh ghi bị từ chối (cần phê duyệt)."
+        },
+        new()
+        {
             Name = "AnalyzeImage",
             Label = "Phân tích hình ảnh",
             Description = "Đọc OCR và phân tích nội dung hình ảnh được phép truy cập."

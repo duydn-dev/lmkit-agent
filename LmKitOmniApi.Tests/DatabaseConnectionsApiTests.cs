@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace LmKitOmniApi.Tests;
 
@@ -161,6 +162,18 @@ public sealed class DatabaseConnectionsApiTests : IClassFixture<LmKitApiFactory>
 
         // Still there for the owner.
         Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"/api/database-connections/{id}")).StatusCode);
+    }
+
+    [Fact]
+    public void AgentOrchestrator_ResolvesFromDi_IncludingTheDatabaseToolGraph()
+    {
+        // Resolving the scoped orchestrator constructs its whole dependency graph —
+        // including the new DbQueryService → SchemaIndexingService → providers/egress
+        // — so a DI misconfiguration in the DB agent is caught here, not at runtime.
+        using var scope = _factory.Services.CreateScope();
+        var orchestrator = scope.ServiceProvider
+            .GetRequiredService<LmKitOmniApi.Application.Abstractions.IAgentOrchestrator>();
+        Assert.NotNull(orchestrator);
     }
 
     [Fact]

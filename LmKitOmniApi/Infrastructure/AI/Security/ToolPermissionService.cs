@@ -37,13 +37,13 @@ public class ToolPermissionService : IToolPermissionService
         {
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
             "AnalyzeText", "QueryKnowledgeBase", "IngestDocument",
-            "ReadWordDocument", "ReadExcelDocument", "RunCode", "RunPython",
+            "ReadWordDocument", "ReadExcelDocument", "RunCode", "RunPython", "DbQuery",
             "Delegate", "MCP" // C3 Fix: added for action→tool mapping
         },
         ["User"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
-            "AnalyzeText", "QueryKnowledgeBase", "RunCode", "RunPython",
+            "AnalyzeText", "QueryKnowledgeBase", "RunCode", "RunPython", "DbQuery",
             "Delegate" // C3 Fix: Users can delegate but not use MCP
         },
         ["Guest"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -72,6 +72,7 @@ public class ToolPermissionService : IToolPermissionService
         // default, and unavailable to Guests entirely (see RoleToolPermissions).
         ["RunCode"] = 5,
         ["RunPython"] = 5,
+        ["DbQuery"] = 10,
         ["ReadWordDocument"] = 15,
         ["ReadExcelDocument"] = 15,
     };
