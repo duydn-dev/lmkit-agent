@@ -27,6 +27,7 @@ public sealed class DbQueryService
     private readonly HermesDbContext _dbContext;
     private readonly ISchemaRetriever _schema;
     private readonly ExternalDatabaseService _databases;
+    private readonly MongoDatabaseService _mongo;
     private readonly DbConnectionSecretProtector _protector;
     private readonly DatabaseAgentOptions _options;
     private readonly ILogger<DbQueryService> _logger;
@@ -35,6 +36,7 @@ public sealed class DbQueryService
         HermesDbContext dbContext,
         ISchemaRetriever schema,
         ExternalDatabaseService databases,
+        MongoDatabaseService mongo,
         DbConnectionSecretProtector protector,
         IOptions<DatabaseAgentOptions> options,
         ILogger<DbQueryService> logger)
@@ -42,6 +44,7 @@ public sealed class DbQueryService
         _dbContext = dbContext;
         _schema = schema;
         _databases = databases;
+        _mongo = mongo;
         _protector = protector;
         _options = options.Value;
         _logger = logger;
@@ -56,6 +59,10 @@ public sealed class DbQueryService
         var resolution = await ResolveConnectionAsync(tenantId, nameHint, ct);
         if (resolution.Message is not null) return resolution.Message;
         var connection = resolution.Connection!;
+
+        // MongoDB is schemaless — sample it live rather than reading a Qdrant index.
+        if (MongoDatabaseService.Handles(connection.Provider))
+            return await _mongo.GetSchemaAsync(connection.Name, _protector.Unprotect(connection.ConnectionStringProtected), ct);
 
         var context = await _schema.RetrieveContextAsync(tenantId, connection.Id, question, SchemaTopK, ct);
         if (string.IsNullOrWhiteSpace(context))
@@ -78,6 +85,10 @@ public sealed class DbQueryService
         var resolution = await ResolveConnectionAsync(tenantId, nameHint, ct);
         if (resolution.Message is not null) return resolution.Message;
         var connection = resolution.Connection!;
+
+        // MongoDB: JSON command, classified + executed on its own (non-SQL) path.
+        if (MongoDatabaseService.Handles(connection.Provider))
+            return await _mongo.RunReadAsync(connection.Name, _protector.Unprotect(connection.ConnectionStringProtected), sql, ct);
 
         if (!_databases.TryParseProvider(connection.Provider, out var provider))
             return $"[CSDL] Loại cơ sở dữ liệu không được hỗ trợ: {connection.Provider}.";
@@ -162,6 +173,11 @@ public sealed class DbQueryService
 
         if (!connection.AllowWrites)
             return $"[CSDL] Kết nối '{connection.Name}' CHƯA bật ghi. Quản trị viên phải bật 'Cho phép ghi' trước.";
+
+        // MongoDB: approved write (backup-first) on its own path.
+        if (MongoDatabaseService.Handles(connection.Provider))
+            return await _mongo.RunWriteApprovedAsync(connection.Name, _protector.Unprotect(connection.ConnectionStringProtected), sql, ct);
+
         if (!_databases.TryParseProvider(connection.Provider, out var provider))
             return $"[CSDL] Loại cơ sở dữ liệu không được hỗ trợ: {connection.Provider}.";
 

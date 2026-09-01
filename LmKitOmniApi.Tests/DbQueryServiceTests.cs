@@ -70,10 +70,16 @@ public sealed class DbQueryServiceTests : IDisposable
             _db,
             new FakeSchemaRetriever(),
             databases,
+            CreateMongo(),
             _protector,
             Options.Create(new DatabaseAgentOptions { Enabled = enabled }),
             NullLogger<DbQueryService>.Instance);
     }
+
+    private static MongoDatabaseService CreateMongo() =>
+        new(new DbEgressValidator(Options.Create(new DatabaseAgentOptions())),
+            Options.Create(new DatabaseAgentOptions()),
+            NullLogger<MongoDatabaseService>.Instance);
 
     [Fact]
     public async Task RunQuery_ReadOnly_ReturnsRows()
@@ -189,7 +195,7 @@ public sealed class DbQueryServiceTests : IDisposable
             new IExternalDatabaseProvider[] { new SqliteDatabaseProvider() },
             new DbEgressValidator(Options.Create(new DatabaseAgentOptions())),
             Options.Create(new DatabaseAgentOptions { Enabled = true }));
-        var service = new DbQueryService(_db, new FakeSchemaRetriever(), databases, _protector,
+        var service = new DbQueryService(_db, new FakeSchemaRetriever(), databases, CreateMongo(), _protector,
             Options.Create(new DatabaseAgentOptions { Enabled = true }), NullLogger<DbQueryService>.Instance);
 
         var result = await service.RunQueryAsync(Guid.NewGuid(), "SELECT 1", CancellationToken.None);

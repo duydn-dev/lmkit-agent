@@ -12,7 +12,8 @@ public enum DbProvider
     Sqlite,
     MySql,
     SqlServer,
-    Oracle
+    Oracle,
+    Mongo
 }
 
 /// <summary>One introspected column (Phase 1 schema indexing).</summary>

@@ -72,6 +72,20 @@ public sealed class SchemaVectorizationWorker : BackgroundService
                     if (claimed != 1) continue;
 
                     var connection = await dbContext.DatabaseConnections.SingleAsync(c => c.Id == connectionId, stoppingToken);
+
+                    // MongoDB is schemaless — never SQL-introspected. Should never reach the
+                    // worker (created IsIndexed=true), but if one does, complete it in place
+                    // rather than failing on an unsupported-provider introspection.
+                    if (MongoDatabaseService.Handles(connection.Provider))
+                    {
+                        connection.IsIndexed = true;
+                        connection.IndexStatus = "Completed";
+                        connection.IndexLeaseUntilUtc = null;
+                        connection.LastIndexError = null;
+                        await dbContext.SaveChangesAsync(stoppingToken);
+                        continue;
+                    }
+
                     try
                     {
                         if (!databases.TryParseProvider(connection.Provider, out var provider))

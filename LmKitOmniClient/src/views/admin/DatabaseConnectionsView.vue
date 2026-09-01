@@ -298,7 +298,8 @@ const providerOptions = [
   { label: 'SQLite', value: 'Sqlite' },
   { label: 'MySQL / MariaDB', value: 'MySql' },
   { label: 'SQL Server', value: 'SqlServer' },
-  { label: 'Oracle', value: 'Oracle' }
+  { label: 'Oracle', value: 'Oracle' },
+  { label: 'MongoDB', value: 'Mongo' }
 ];
 
 // A representative connection string per engine, shown as the textarea placeholder.
@@ -307,7 +308,8 @@ const connStringSamples: Record<string, string> = {
   Sqlite: 'Data Source=/path/to/database.db',
   MySql: 'Server=...;Port=3306;Database=...;User ID=...;Password=...',
   SqlServer: 'Server=...,1433;Database=...;User ID=...;Password=...;Encrypt=True',
-  Oracle: 'Data Source=host:1521/service;User ID=...;Password=...'
+  Oracle: 'Data Source=host:1521/service;User ID=...;Password=...',
+  Mongo: 'mongodb://user:pass@host:27017/database'
 };
 const providerPlaceholder = (provider: string) => connStringSamples[provider] ?? connStringSamples.Postgres;
 

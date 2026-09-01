@@ -16,7 +16,8 @@ internal static class DatabaseConnectionValidation
     {
         if (string.IsNullOrWhiteSpace(request.Name)) return "Tên kết nối là bắt buộc.";
         if (request.Name.Length > MaxNameLength) return $"Tên kết nối không được vượt quá {MaxNameLength} ký tự.";
-        if (!databases.TryParseProvider(request.Provider, out _)) return "Loại cơ sở dữ liệu không được hỗ trợ.";
+        if (!databases.TryParseProvider(request.Provider, out _) && !MongoDatabaseService.Handles(request.Provider))
+            return "Loại cơ sở dữ liệu không được hỗ trợ.";
         if (requireConnectionString && string.IsNullOrWhiteSpace(request.ConnectionString))
             return "Chuỗi kết nối là bắt buộc.";
         return null;
@@ -56,6 +57,14 @@ public sealed class CreateDatabaseConnectionCommandHandler : IRequestHandler<Cre
             IsActive = request.IsActive,
             AllowWrites = request.AllowWrites
         };
+        // MongoDB is schemaless — nothing to index into Qdrant; it is queryable at once
+        // and its schema is sampled live per request. Mark it "indexed" so the agent's
+        // connection resolver (which requires IsIndexed) can use it and the worker skips it.
+        if (MongoDatabaseService.Handles(entity.Provider))
+        {
+            entity.IsIndexed = true;
+            entity.IndexStatus = "Completed";
+        }
         _dbContext.DatabaseConnections.Add(entity);
         await _dbContext.SaveChangesAsync(ct);
         return DatabaseConnectionResult.Ok(entity.Id);
@@ -98,6 +107,13 @@ public sealed class UpdateDatabaseConnectionCommandHandler : IRequestHandler<Upd
             entity.IsIndexed = false;
             entity.IndexStatus = "Pending";
         }
+        // MongoDB is never Qdrant-indexed (sampled live) — keep it usable and out of the
+        // worker regardless of a connection-string change or a switch to Mongo.
+        if (MongoDatabaseService.Handles(entity.Provider))
+        {
+            entity.IsIndexed = true;
+            entity.IndexStatus = "Completed";
+        }
         entity.UpdatedAtUtc = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(ct);
         return DatabaseConnectionResult.Ok(entity.Id);
@@ -133,6 +149,10 @@ public sealed class ReindexDatabaseConnectionCommandHandler : IRequestHandler<Re
             .FirstOrDefaultAsync(c => c.Id == command.Id && c.TenantId == command.TenantId, ct);
         if (entity is null) return false;
 
+        // MongoDB has no Qdrant index (schema is sampled live) — re-index is a no-op;
+        // never flip IsIndexed off or the worker would try to SQL-introspect it.
+        if (MongoDatabaseService.Handles(entity.Provider)) return true;
+
         // Enqueue: reset index state so the background worker re-picks this row.
         entity.IsIndexed = false;
         entity.IndexStatus = "Pending";
@@ -150,15 +170,17 @@ public sealed class TestDatabaseConnectionCommandHandler : IRequestHandler<TestD
     private readonly HermesDbContext _dbContext;
     private readonly DbConnectionSecretProtector _protector;
     private readonly ExternalDatabaseService _databases;
+    private readonly MongoDatabaseService _mongo;
     private readonly ILogger<TestDatabaseConnectionCommandHandler> _logger;
 
     public TestDatabaseConnectionCommandHandler(
         HermesDbContext dbContext, DbConnectionSecretProtector protector, ExternalDatabaseService databases,
-        ILogger<TestDatabaseConnectionCommandHandler> logger)
+        MongoDatabaseService mongo, ILogger<TestDatabaseConnectionCommandHandler> logger)
     {
         _dbContext = dbContext;
         _protector = protector;
         _databases = databases;
+        _mongo = mongo;
         _logger = logger;
     }
 
@@ -167,13 +189,18 @@ public sealed class TestDatabaseConnectionCommandHandler : IRequestHandler<TestD
         var entity = await _dbContext.DatabaseConnections
             .FirstOrDefaultAsync(c => c.Id == command.Id && c.TenantId == command.TenantId, ct);
         if (entity is null) return DatabaseConnectionResult.Fail("Không tìm thấy kết nối.");
-        if (!_databases.TryParseProvider(entity.Provider, out var provider))
+
+        var isMongo = MongoDatabaseService.Handles(entity.Provider);
+        DbProvider provider = default;
+        if (!isMongo && !_databases.TryParseProvider(entity.Provider, out provider))
             return DatabaseConnectionResult.Fail("Loại cơ sở dữ liệu không được hỗ trợ.");
 
         try
         {
             var connectionString = _protector.Unprotect(entity.ConnectionStringProtected);
-            var egressDenial = await _databases.TestConnectionAsync(provider, connectionString, ct);
+            var egressDenial = isMongo
+                ? await _mongo.TestConnectionAsync(connectionString, ct)
+                : await _databases.TestConnectionAsync(provider, connectionString, ct);
             if (egressDenial is not null) return DatabaseConnectionResult.Fail(egressDenial);
             return DatabaseConnectionResult.Ok(entity.Id);
         }

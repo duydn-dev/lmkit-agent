@@ -234,6 +234,7 @@ builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalD
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.SqlServerDatabaseProvider>();
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.OracleDatabaseProvider>();
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.ExternalDatabaseService>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.MongoDatabaseService>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.ISchemaEmbedder, LmKitOmniApi.Infrastructure.AI.Database.LmKitSchemaEmbedder>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.SchemaIndexingService>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.ISchemaRetriever>(sp => sp.GetRequiredService<LmKitOmniApi.Infrastructure.AI.Database.SchemaIndexingService>());
