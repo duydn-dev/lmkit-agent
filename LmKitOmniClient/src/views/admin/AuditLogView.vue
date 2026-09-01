@@ -31,11 +31,11 @@
             </div>
             <div class="grid gap-1">
               <label for="audit-from" class="text-sm font-medium text-gray-700">Từ ngày</label>
-              <input id="audit-from" v-model="filters.fromDate" type="date" class="min-h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-sky-500 focus:outline-none" />
+              <input id="audit-from" v-model="filters.fromDate" type="date" class="min-h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-sky-500 focus:ring-2 focus:ring-sky-500" />
             </div>
             <div class="grid gap-1">
               <label for="audit-to" class="text-sm font-medium text-gray-700">Đến ngày</label>
-              <input id="audit-to" v-model="filters.toDate" type="date" class="min-h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-sky-500 focus:outline-none" />
+              <input id="audit-to" v-model="filters.toDate" type="date" class="min-h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-sky-500 focus:ring-2 focus:ring-sky-500" />
             </div>
             <div class="grid gap-1">
               <label for="audit-pagesize" class="text-sm font-medium text-gray-700">Số dòng mỗi trang</label>
