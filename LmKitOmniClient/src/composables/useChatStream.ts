@@ -1,6 +1,7 @@
 import { onUnmounted, ref } from 'vue';
 import type { Ref } from 'vue';
 import { http } from '@/api/http';
+import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import { ChatSseParser, type ChatStreamEvent } from '@/utils/chatSse';
 
@@ -31,6 +32,8 @@ export interface ChatMessage {
   attachedFiles?: string[];
   producedFiles?: ProducedFile[];
   hitlTaskId?: string;
+  hitlActionName?: string;
+  hitlDetails?: string;
   hitlResolved?: string;
   hitlBusy?: boolean;
   hitlError?: string;
@@ -264,6 +267,21 @@ export function useChatStream() {
           }
           if (event.type === 'approval') {
             assistantMsg.hitlTaskId = event.value;
+            // Fetch the owner-scoped action details (e.g. the SQL a DB write wants
+            // to run) so the approval card shows what is actually being approved.
+            try {
+              const res = await http.get(ApiFactory.TASK_APPROVAL.PENDING);
+              if (res.ok) {
+                const pending = (await res.json()) as Array<{ id: string; actionName?: string; details?: string }>;
+                const match = pending.find((item) => item.id === event.value);
+                if (match) {
+                  assistantMsg.hitlActionName = match.actionName;
+                  assistantMsg.hitlDetails = match.details;
+                }
+              }
+            } catch {
+              // The card still works (approve/reject) without the detail preview.
+            }
             scheduleScroll();
             streamFinished = true;
             break;

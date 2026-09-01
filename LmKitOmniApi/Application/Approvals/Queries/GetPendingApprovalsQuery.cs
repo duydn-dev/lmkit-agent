@@ -18,5 +18,11 @@ public class PendingApprovalDto
 {
     public Guid Id { get; set; }
     public string ActionName { get; set; } = string.Empty;
+    /// <summary>
+    /// The decrypted action payload (e.g. the SQL a write tool wants to run) so a
+    /// human can meaningfully approve/reject it. Owner-scoped: only ever returned to
+    /// the user the approval belongs to. Capped for display.
+    /// </summary>
+    public string Details { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; }
 }

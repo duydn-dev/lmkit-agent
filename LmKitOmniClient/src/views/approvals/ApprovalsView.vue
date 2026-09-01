@@ -66,6 +66,7 @@
                     <span aria-hidden="true">·</span>
                     <span>{{ absoluteTime(row.createdAtUtc) }}</span>
                   </p>
+                  <pre v-if="row.details" class="mt-2 text-xs text-gray-800 bg-gray-50 border border-gray-200 rounded-lg p-3 max-h-40 overflow-auto whitespace-pre-wrap break-words">{{ row.details }}</pre>
                 </div>
 
                 <!-- Pending actions -->
@@ -150,6 +151,7 @@ import { errorMessage, readApiError } from '@/api/errors';
 interface PendingApproval {
   id: string;
   actionName: string;
+  details?: string;
   createdAtUtc: string;
 }
 

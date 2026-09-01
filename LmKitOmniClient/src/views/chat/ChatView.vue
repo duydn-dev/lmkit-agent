@@ -165,8 +165,12 @@
                   <i class="pi pi-exclamation-triangle"></i>
                   Yêu cầu xác nhận (Human-in-the-loop)
                 </div>
-                <div class="text-sm text-orange-700 mb-4">
+                <div class="text-sm text-orange-700 mb-3">
                   Agent đang cố gắng thực thi một công cụ nhạy cảm. Hệ thống đã tạm dừng để chờ bạn phê duyệt.
+                </div>
+                <div v-if="msg.hitlActionName || msg.hitlDetails" class="mb-4">
+                  <div v-if="msg.hitlActionName" class="text-xs font-semibold text-orange-800 mb-1">Hành động: {{ msg.hitlActionName }}</div>
+                  <pre v-if="msg.hitlDetails" class="text-xs text-gray-800 bg-white border border-orange-200 rounded-lg p-3 max-h-48 overflow-auto whitespace-pre-wrap break-words">{{ msg.hitlDetails }}</pre>
                 </div>
                 <div v-if="msg.hitlError" class="text-sm text-red-700 mb-3" role="alert">{{ msg.hitlError }}</div>
                 <div class="flex gap-2" v-if="!msg.hitlResolved">
