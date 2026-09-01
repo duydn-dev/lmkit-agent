@@ -67,6 +67,12 @@ public static class CustomAgentRules
         },
         new()
         {
+            Name = "DbWrite",
+            Label = "Ghi cơ sở dữ liệu (cần phê duyệt)",
+            Description = "Đề xuất câu lệnh GHI (INSERT/UPDATE/DELETE) trên cơ sở dữ liệu ngoài; LUÔN cần người dùng phê duyệt và hệ thống sao lưu bảng trước khi thực thi."
+        },
+        new()
+        {
             Name = "AnalyzeImage",
             Label = "Phân tích hình ảnh",
             Description = "Đọc OCR và phân tích nội dung hình ảnh được phép truy cập."

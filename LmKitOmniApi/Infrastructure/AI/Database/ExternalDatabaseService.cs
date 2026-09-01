@@ -72,6 +72,32 @@ public sealed class ExternalDatabaseService
         return await impl.ExecuteReadOnlyAsync(connectionString, sql, _options.MaxRows, _options.QueryTimeoutSeconds, ct);
     }
 
+    /// <summary>
+    /// Executes an APPROVED write with the mandatory safety sequence, centrally:
+    /// classify (must be a write, else refuse) → resolve the single target table
+    /// (else refuse) → egress vet → BACK UP the table (if backup throws, the write
+    /// never runs) → execute. Returns a human summary incl. the backup name.
+    /// </summary>
+    public async Task<string> ExecuteApprovedWriteAsync(DbProvider provider, string connectionString, string sql, CancellationToken ct)
+    {
+        var classification = SqlStatementClassifier.Classify(sql);
+        if (classification.Kind != SqlStatementKind.Write)
+            throw new DatabaseOperationRefusedException($"Chỉ thực thi câu lệnh GHI đã được phê duyệt. {classification.Reason}");
+
+        var table = SqlTargetTableParser.TryGetTargetTable(sql);
+        if (table is null)
+            throw new DatabaseOperationRefusedException("Không xác định được bảng mục tiêu để sao lưu an toàn — từ chối ghi.");
+
+        var impl = _providers[provider];
+        var egress = await VetAsync(impl, connectionString, ct);
+        if (egress is not null) throw new DatabaseOperationRefusedException(egress);
+
+        // Back up BEFORE writing. A backup failure aborts the write (never write unbacked).
+        var backup = await impl.BackupTableAsync(connectionString, table, _options.QueryTimeoutSeconds, ct);
+        var affected = await impl.ExecuteWriteAsync(connectionString, sql, _options.QueryTimeoutSeconds, ct);
+        return $"Đã sao lưu bảng '{table}' → '{backup}', rồi thực thi. Số dòng ảnh hưởng: {affected}.";
+    }
+
     private async Task<string?> VetAsync(IExternalDatabaseProvider impl, string connectionString, CancellationToken ct)
     {
         var host = impl.ExtractHost(connectionString);

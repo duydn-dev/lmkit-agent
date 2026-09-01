@@ -10,6 +10,7 @@ namespace LmKitOmniApi.Tests;
 /// classifier refuses writes, the provider enforces read-only at the connection
 /// level, and row/output caps apply. Proves the DB agent's read path is safe in CI.
 /// </summary>
+[Collection("DbSqlite")]
 public sealed class ExternalDatabaseServiceSqliteTests : IDisposable
 {
     private readonly string _dbPath;

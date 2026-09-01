@@ -138,6 +138,40 @@ public sealed class PostgresDatabaseProvider : IExternalDatabaseProvider
             foreignKeys.TryGetValue(entry.Key, out var fks) ? fks : new List<string>())).ToList();
     }
 
+    public async Task<string> BackupTableAsync(string connectionString, string table, int timeoutSeconds, CancellationToken ct)
+    {
+        // {table} is a validated plain (optionally schema-qualified) identifier from
+        // SqlTargetTableParser; the backup name is derived from it → safe DDL.
+        var backupName = $"{table.Replace('.', '_')}_{DateTime.UtcNow:yyyyMMddHHmmssfff}";
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+
+        await using (var schema = connection.CreateCommand())
+        {
+            schema.CommandText = "CREATE SCHEMA IF NOT EXISTS lmkit_backup";
+            schema.CommandTimeout = timeoutSeconds;
+            await schema.ExecuteNonQueryAsync(ct);
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"CREATE TABLE lmkit_backup.\"{backupName}\" AS TABLE {table}";
+        command.CommandTimeout = timeoutSeconds;
+        await command.ExecuteNonQueryAsync(ct);
+        return $"lmkit_backup.{backupName}";
+    }
+
+    public async Task<int> ExecuteWriteAsync(string connectionString, string sql, int timeoutSeconds, CancellationToken ct)
+    {
+        // The approved write path — a normal (not read-only) connection.
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.CommandTimeout = timeoutSeconds;
+        return await command.ExecuteNonQueryAsync(ct);
+    }
+
     internal static async Task<DbQueryResult> ReadCappedAsync(System.Data.Common.DbDataReader reader, int maxRows, CancellationToken ct)
     {
         var columns = new List<string>();

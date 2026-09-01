@@ -53,7 +53,8 @@ public sealed class CreateDatabaseConnectionCommandHandler : IRequestHandler<Cre
             Name = request.Name.Trim(),
             Provider = request.Provider.Trim(),
             ConnectionStringProtected = _protector.Protect(request.ConnectionString!.Trim()),
-            IsActive = request.IsActive
+            IsActive = request.IsActive,
+            AllowWrites = request.AllowWrites
         };
         _dbContext.DatabaseConnections.Add(entity);
         await _dbContext.SaveChangesAsync(ct);
@@ -89,6 +90,7 @@ public sealed class UpdateDatabaseConnectionCommandHandler : IRequestHandler<Upd
         entity.Name = request.Name.Trim();
         entity.Provider = request.Provider.Trim();
         entity.IsActive = request.IsActive;
+        entity.AllowWrites = request.AllowWrites;
         if (replacing)
         {
             entity.ConnectionStringProtected = _protector.Protect(request.ConnectionString!.Trim());

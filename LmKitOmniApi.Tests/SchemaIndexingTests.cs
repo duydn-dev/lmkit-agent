@@ -15,6 +15,7 @@ namespace LmKitOmniApi.Tests;
 /// wiring — per-connection collection, delete-before-reingest, payloads,
 /// retrieval — is fully exercised.
 /// </summary>
+[Collection("DbSqlite")]
 public sealed class SchemaIndexingTests : IDisposable
 {
     private readonly string _dbPath;

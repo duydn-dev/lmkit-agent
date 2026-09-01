@@ -25,6 +25,7 @@ public sealed class GetDatabaseConnectionsQueryHandler : IRequestHandler<GetData
                 Name = c.Name,
                 Provider = c.Provider,
                 IsActive = c.IsActive,
+                AllowWrites = c.AllowWrites,
                 IsIndexed = c.IsIndexed,
                 IndexStatus = c.IndexStatus,
                 LastIndexError = c.LastIndexError,

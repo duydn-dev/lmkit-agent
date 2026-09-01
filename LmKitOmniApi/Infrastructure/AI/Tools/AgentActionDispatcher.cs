@@ -153,6 +153,8 @@ public sealed class AgentActionDispatcher
                 return await ExecuteDbSchemaAsync(tenantId, userId, query, ct);
             case "DBQUERY":
                 return await ExecuteDbQueryAsync(tenantId, userId, query, ct);
+            case "DBWRITE":
+                return await ExecuteDbWriteAsync(tenantId, userId, query, ct);
 
             default:
                 return $"Unknown action: {action}";
@@ -351,6 +353,17 @@ public sealed class AgentActionDispatcher
         // data; the orchestrator's audit layer still records the action + duration.
         var result = await _dbQuery.RunQueryAsync(tenantId, query, ct);
         await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "DbQuery", null, ct);
+        return result;
+    }
+
+    private async Task<string> ExecuteDbWriteAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
+    {
+        // Reached ONLY on the approved-resume path (DbWrite is approval-required, so
+        // the first call returns [HITL_APPROVAL_REQUIRED] before getting here). The
+        // service backs up the target table before executing.
+        _logger.LogInformation("🗄️ Executing APPROVED external database write...");
+        var result = await _dbQuery.RunWriteAsync(tenantId, query, ct);
+        await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "DbWrite", null, ct);
         return result;
     }
 

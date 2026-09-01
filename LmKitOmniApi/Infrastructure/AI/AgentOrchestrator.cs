@@ -101,6 +101,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["PYTHON"] = "RunPython",
         ["DBSCHEMA"] = "DbQuery",
         ["DBQUERY"] = "DbQuery",
+        ["DBWRITE"] = "DbWrite",
     };
 
     // H6 path-extraction regexes moved to AgentActionDispatcher alongside the
@@ -628,6 +629,12 @@ public class AgentOrchestrator : IAgentOrchestrator
                 "Chạy MỘT câu SQL CHỈ-ĐỌC (SELECT/WITH…SELECT) trên cơ sở dữ liệu đã kết nối và trả về kết quả dạng bảng. "
                     + "Chỉ đọc — câu lệnh ghi (INSERT/UPDATE/DELETE) hay DDL sẽ bị từ chối. Nhiều kết nối: thêm \"db=<tên>;\" trước câu SQL.",
                 (q, ct) => invoke("DBQUERY", q, ct)));
+            tools.Add(new DelegatedActionTool(
+                "run_database_write",
+                "Đề xuất MỘT câu SQL GHI dữ liệu (INSERT/UPDATE/DELETE) trên cơ sở dữ liệu đã kết nối. "
+                    + "LUÔN cần người dùng phê duyệt; khi được duyệt, hệ thống sao lưu bảng liên quan RỒI mới thực thi. "
+                    + "Chỉ dùng khi người dùng yêu cầu thay đổi dữ liệu. Nhiều kết nối: thêm \"db=<tên>;\".",
+                (q, ct) => invoke("DBWRITE", q, ct)));
         }
 
         if (profile.HasFlag(AgentToolProfile.ImageRead) && ActionAllowed("VISION"))

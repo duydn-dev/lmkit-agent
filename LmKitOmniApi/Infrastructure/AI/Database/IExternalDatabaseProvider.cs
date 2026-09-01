@@ -42,4 +42,15 @@ public interface IExternalDatabaseProvider
 
     /// <summary>Lists tables + columns + FKs for schema indexing (Phase 1).</summary>
     Task<IReadOnlyList<DbTableInfo>> IntrospectAsync(string connectionString, int timeoutSeconds, CancellationToken ct);
+
+    /// <summary>
+    /// Snapshots <paramref name="table"/> (a validated plain identifier) into a
+    /// timestamped backup copy BEFORE an approved write, returning the backup's
+    /// name. Throws if the backup cannot be made — the caller must then refuse the
+    /// write (never write without a backup).
+    /// </summary>
+    Task<string> BackupTableAsync(string connectionString, string table, int timeoutSeconds, CancellationToken ct);
+
+    /// <summary>Executes an approved write statement (NOT read-only) and returns affected rows.</summary>
+    Task<int> ExecuteWriteAsync(string connectionString, string sql, int timeoutSeconds, CancellationToken ct);
 }

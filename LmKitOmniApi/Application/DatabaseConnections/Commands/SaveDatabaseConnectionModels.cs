@@ -10,6 +10,8 @@ public sealed class SaveDatabaseConnectionRequest
     /// <summary>Plaintext connection string. On update, leave null/empty to keep the stored one.</summary>
     public string? ConnectionString { get; set; }
     public bool IsActive { get; set; } = true;
+    /// <summary>Per-connection opt-in to allow (approval-gated, backed-up) writes. Default false.</summary>
+    public bool AllowWrites { get; set; }
     /// <summary>On update, true means the supplied ConnectionString replaces the stored secret.</summary>
     public bool ReplaceConnectionString { get; set; }
 }

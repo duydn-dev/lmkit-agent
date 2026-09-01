@@ -96,6 +96,30 @@ public sealed class SqliteDatabaseProvider : IExternalDatabaseProvider
         return tables;
     }
 
+    public async Task<string> BackupTableAsync(string connectionString, string table, int timeoutSeconds, CancellationToken ct)
+    {
+        var backupName = $"{table.Replace('.', '_')}_backup_{DateTime.UtcNow:yyyyMMddHHmmssfff}";
+        // Writable connection (as-stored, NOT forced read-only) — the snapshot is a write.
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        // {table}/{backupName} are validated plain identifiers → safe to interpolate.
+        command.CommandText = $"CREATE TABLE {backupName} AS SELECT * FROM {table}";
+        command.CommandTimeout = timeoutSeconds;
+        await command.ExecuteNonQueryAsync(ct);
+        return backupName;
+    }
+
+    public async Task<int> ExecuteWriteAsync(string connectionString, string sql, int timeoutSeconds, CancellationToken ct)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.CommandTimeout = timeoutSeconds;
+        return await command.ExecuteNonQueryAsync(ct);
+    }
+
     private static string ForceReadOnly(string connectionString)
     {
         var builder = new SqliteConnectionStringBuilder(connectionString) { Mode = SqliteOpenMode.ReadOnly };

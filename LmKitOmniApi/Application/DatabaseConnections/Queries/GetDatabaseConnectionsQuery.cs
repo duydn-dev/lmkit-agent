@@ -14,6 +14,7 @@ public sealed class DatabaseConnectionDto
     public string Name { get; set; } = string.Empty;
     public string Provider { get; set; } = string.Empty;
     public bool IsActive { get; set; }
+    public bool AllowWrites { get; set; }
     public bool IsIndexed { get; set; }
     public string IndexStatus { get; set; } = string.Empty;
     public string? LastIndexError { get; set; }

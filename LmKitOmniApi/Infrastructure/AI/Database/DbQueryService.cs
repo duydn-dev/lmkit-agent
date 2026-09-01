@@ -109,6 +109,42 @@ public sealed class DbQueryService
         }
     }
 
+    /// <summary>
+    /// Executes an APPROVED write. Only ever reached on the HITL approved-resume path
+    /// (the tool is approval-required, so the first call returns an approval marker).
+    /// Refuses unless the connection has AllowWrites; the central write path then
+    /// re-classifies, resolves the target table, and backs it up before executing.
+    /// </summary>
+    public async Task<string> RunWriteAsync(Guid tenantId, string input, CancellationToken ct)
+    {
+        var (nameHint, sql) = ParseInput(input);
+        var resolution = await ResolveConnectionAsync(tenantId, nameHint, ct);
+        if (resolution.Message is not null) return resolution.Message;
+        var connection = resolution.Connection!;
+
+        if (!connection.AllowWrites)
+            return $"[CSDL] Kết nối '{connection.Name}' CHƯA bật ghi. Quản trị viên phải bật 'Cho phép ghi' trước.";
+        if (!_databases.TryParseProvider(connection.Provider, out var provider))
+            return $"[CSDL] Loại cơ sở dữ liệu không được hỗ trợ: {connection.Provider}.";
+
+        try
+        {
+            var connectionString = _protector.Unprotect(connection.ConnectionStringProtected);
+            var summary = await _databases.ExecuteApprovedWriteAsync(provider, connectionString, sql, ct);
+            return $"[CSDL: {connection.Name}] {summary}";
+        }
+        catch (DatabaseOperationRefusedException ex)
+        {
+            return $"[CSDL] {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Approved write failed for connection {ConnectionId}.", connection.Id);
+            var message = ex.Message.Length > 300 ? ex.Message[..300] : ex.Message;
+            return $"[CSDL] Ghi thất bại (đã cố sao lưu trước): {message}";
+        }
+    }
+
     private sealed record ConnectionResolution(DatabaseConnection? Connection, string? Message);
 
     private async Task<ConnectionResolution> ResolveConnectionAsync(Guid tenantId, string? nameHint, CancellationToken ct)

@@ -17,6 +17,7 @@ namespace LmKitOmniApi.Tests;
 /// are refused (never executed), DDL/unknown are refused, and the tool is
 /// tenant-scoped. Schema retrieval is faked (no Qdrant/model).
 /// </summary>
+[Collection("DbSqlite")]
 public sealed class DbQueryServiceTests : IDisposable
 {
     private readonly SqliteConnection _appConnection;
@@ -45,7 +46,7 @@ public sealed class DbQueryServiceTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
-    private DbQueryService CreateService(bool enabled = true, string connectionName = "primary")
+    private DbQueryService CreateService(bool enabled = true, string connectionName = "primary", bool allowWrites = false)
     {
         _db.DatabaseConnections.Add(new DatabaseConnection
         {
@@ -55,7 +56,8 @@ public sealed class DbQueryServiceTests : IDisposable
             Provider = "Sqlite",
             ConnectionStringProtected = _protector.Protect($"Data Source={_targetDbPath};Pooling=False"),
             IsActive = true,
-            IsIndexed = true
+            IsIndexed = true,
+            AllowWrites = allowWrites
         });
         _db.SaveChanges();
 
@@ -112,6 +114,53 @@ public sealed class DbQueryServiceTests : IDisposable
         var result = await CreateService().GetSchemaAsync(_tenantId, "khách hàng", CancellationToken.None);
         Assert.Contains("SCHEMA_CONTEXT_FOR", result);
         Assert.Contains("CHỈ-ĐỌC", result);
+    }
+
+    [Fact]
+    public async Task RunWrite_NotAllowed_IsRefused_AndDataUntouched()
+    {
+        var service = CreateService(allowWrites: false);
+        var result = await service.RunWriteAsync(_tenantId, "UPDATE t SET name = 'z' WHERE id = 1", CancellationToken.None);
+
+        Assert.Contains("CHƯA bật ghi", result);
+        var check = await service.RunQueryAsync(_tenantId, "SELECT name FROM t WHERE id = 1", CancellationToken.None);
+        Assert.Contains("a", check); // still the original value
+    }
+
+    [Fact]
+    public async Task RunWrite_Allowed_BacksUpTargetTable_ThenWrites()
+    {
+        var service = CreateService(allowWrites: true);
+        var result = await service.RunWriteAsync(_tenantId, "UPDATE t SET name = 'z' WHERE id = 1", CancellationToken.None);
+
+        Assert.Contains("Đã sao lưu", result);
+        Assert.Contains("Số dòng ảnh hưởng: 1", result);
+
+        // The write applied…
+        var check = await service.RunQueryAsync(_tenantId, "SELECT name FROM t WHERE id = 1", CancellationToken.None);
+        Assert.Contains("z", check);
+
+        // …and a backup copy of the table now exists in the target DB.
+        using var connection = new SqliteConnection($"Data Source={_targetDbPath};Pooling=False");
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 't_backup_%'";
+        Assert.True(Convert.ToInt32(cmd.ExecuteScalar()) >= 1, "A backup table must have been created before the write.");
+    }
+
+    [Fact]
+    public async Task RunWrite_NonWriteStatement_IsRefused()
+    {
+        var result = await CreateService(allowWrites: true).RunWriteAsync(_tenantId, "SELECT * FROM t", CancellationToken.None);
+        Assert.Contains("câu lệnh GHI", result);
+    }
+
+    [Fact]
+    public async Task RunWrite_UndeterminableTarget_IsRefused_NoWrite()
+    {
+        // Classifies as a write (leading UPDATE) but the target can't be pinned → refuse before any backup/write.
+        var result = await CreateService(allowWrites: true).RunWriteAsync(_tenantId, "UPDATE (SELECT 1) SET x = 1", CancellationToken.None);
+        Assert.Contains("Không xác định được bảng", result);
     }
 
     [Fact]

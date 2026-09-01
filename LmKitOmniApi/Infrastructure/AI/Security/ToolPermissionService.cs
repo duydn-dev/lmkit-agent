@@ -37,13 +37,13 @@ public class ToolPermissionService : IToolPermissionService
         {
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
             "AnalyzeText", "QueryKnowledgeBase", "IngestDocument",
-            "ReadWordDocument", "ReadExcelDocument", "RunCode", "RunPython", "DbQuery",
+            "ReadWordDocument", "ReadExcelDocument", "RunCode", "RunPython", "DbQuery", "DbWrite",
             "Delegate", "MCP" // C3 Fix: added for action→tool mapping
         },
         ["User"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
-            "AnalyzeText", "QueryKnowledgeBase", "RunCode", "RunPython", "DbQuery",
+            "AnalyzeText", "QueryKnowledgeBase", "RunCode", "RunPython", "DbQuery", "DbWrite",
             "Delegate" // C3 Fix: Users can delegate but not use MCP
         },
         ["Guest"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -55,7 +55,10 @@ public class ToolPermissionService : IToolPermissionService
     // Tools that require human approval before execution
     private static readonly HashSet<string> ApprovalRequiredTools = new(StringComparer.OrdinalIgnoreCase)
     {
-        "IngestDocument", "DeleteDocument"
+        "IngestDocument", "DeleteDocument",
+        // Database writes ALWAYS require human approval; on approval the write path
+        // backs up the target table before executing. Reads ("DbQuery") run directly.
+        "DbWrite"
     };
 
     // Rate limits: max invocations per minute per user
@@ -73,6 +76,7 @@ public class ToolPermissionService : IToolPermissionService
         ["RunCode"] = 5,
         ["RunPython"] = 5,
         ["DbQuery"] = 10,
+        ["DbWrite"] = 3,
         ["ReadWordDocument"] = 15,
         ["ReadExcelDocument"] = 15,
     };

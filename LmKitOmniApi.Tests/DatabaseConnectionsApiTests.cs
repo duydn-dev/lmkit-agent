@@ -12,6 +12,7 @@ namespace LmKitOmniApi.Tests;
 /// tenant-scoped, the connection string is never returned, egress refuses an
 /// internal Postgres target, and a valid SQLite file tests green.
 /// </summary>
+[Collection("DbSqlite")]
 public sealed class DatabaseConnectionsApiTests : IClassFixture<LmKitApiFactory>
 {
     private static readonly SemaphoreSlim ClientGate = new(1, 1);

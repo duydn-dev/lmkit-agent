@@ -37,6 +37,14 @@ public sealed class DatabaseConnection
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>
+    /// Explicit per-connection opt-in for writes. FALSE by default: even an approved
+    /// write is refused unless an admin turned this on for this connection. Combined
+    /// with the DB account's own privileges, it is the app-level gate for the write
+    /// path (reads never consult it).
+    /// </summary>
+    public bool AllowWrites { get; set; }
+
     // ── Schema-index (Qdrant) tracking — mirrors Document's vectorization columns ──
     public bool IsIndexed { get; set; }
 

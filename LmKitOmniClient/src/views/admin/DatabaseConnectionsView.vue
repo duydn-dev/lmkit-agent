@@ -64,6 +64,10 @@
               <span>Hãy dùng tài khoản chỉ có quyền đọc (read-only). Chuỗi kết nối sẽ được mã hoá và không hiển thị lại.</span>
             </p>
           </div>
+          <label for="db-create-writes" class="flex items-start gap-2 text-sm text-amber-800 rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <Checkbox inputId="db-create-writes" v-model="createForm.allowWrites" binary />
+            <span>Cho phép ghi (INSERT/UPDATE/DELETE). Mặc định TẮT — nên để tắt và dùng tài khoản chỉ-đọc. Khi bật, lệnh ghi vẫn LUÔN cần bạn phê duyệt và hệ thống sao lưu bảng trước.</span>
+          </label>
           <div class="flex flex-wrap items-center justify-between gap-3">
             <label for="db-create-active" class="flex items-center gap-2 text-sm text-gray-700">
               <Checkbox inputId="db-create-active" v-model="createForm.isActive" binary /> Kích hoạt
@@ -115,6 +119,12 @@
                     :class="conn.isActive ? 'bg-emerald-50 text-emerald-900 border-emerald-200' : 'bg-gray-50 text-gray-600 border-gray-200'"
                   >
                     {{ conn.isActive ? 'Đang hoạt động' : 'Đã tắt' }}
+                  </span>
+                  <span
+                    class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border"
+                    :class="conn.allowWrites ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-gray-50 text-gray-600 border-gray-200'"
+                  >
+                    {{ conn.allowWrites ? 'Cho phép ghi (cần duyệt)' : 'Chỉ đọc' }}
                   </span>
                   <span
                     class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border"
@@ -244,6 +254,10 @@
         <label for="db-edit-active" class="flex items-center gap-2 text-sm text-gray-700">
           <Checkbox inputId="db-edit-active" v-model="editForm.isActive" binary /> Kích hoạt
         </label>
+        <label for="db-edit-writes" class="flex items-start gap-2 text-sm text-amber-800 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <Checkbox inputId="db-edit-writes" v-model="editForm.allowWrites" binary />
+          <span>Cho phép ghi (INSERT/UPDATE/DELETE) — vẫn cần phê duyệt + sao lưu trước.</span>
+        </label>
 
         <div class="flex items-center justify-end gap-2 pt-1">
           <Button type="button" label="Hủy" text severity="secondary" :disabled="savingEdit" class="!min-h-11 !px-4 !rounded-xl !text-sm" @click="editVisible = false" />
@@ -265,6 +279,7 @@ interface DatabaseConnection {
   name: string;
   provider: string;
   isActive: boolean;
+  allowWrites: boolean;
   isIndexed: boolean;
   indexStatus: string;
   lastIndexError?: string | null;
@@ -289,13 +304,13 @@ const pageError = ref('');
 
 const creating = ref(false);
 const createError = ref('');
-const emptyCreateForm = () => ({ name: '', provider: 'Postgres', connectionString: '', isActive: true });
+const emptyCreateForm = () => ({ name: '', provider: 'Postgres', connectionString: '', isActive: true, allowWrites: false });
 const createForm = ref(emptyCreateForm());
 
 const editVisible = ref(false);
 const savingEdit = ref(false);
 const editError = ref('');
-const editForm = ref({ id: '', name: '', provider: 'Postgres', connectionString: '', isActive: true });
+const editForm = ref({ id: '', name: '', provider: 'Postgres', connectionString: '', isActive: true, allowWrites: false });
 
 const deletingId = ref<string | null>(null);
 const testingId = ref<string | null>(null);
@@ -369,7 +384,8 @@ const createConnection = async () => {
       name,
       provider: createForm.value.provider,
       connectionString,
-      isActive: createForm.value.isActive
+      isActive: createForm.value.isActive,
+      allowWrites: createForm.value.allowWrites
     });
     if (!response.ok) {
       createError.value = await readApiError(response, 'Không thể thêm kết nối cơ sở dữ liệu');
@@ -392,7 +408,8 @@ const openEdit = (conn: DatabaseConnection) => {
     name: conn.name,
     provider: conn.provider,
     connectionString: '',
-    isActive: conn.isActive
+    isActive: conn.isActive,
+    allowWrites: conn.allowWrites
   };
   editError.value = '';
   editVisible.value = true;
@@ -413,6 +430,7 @@ const saveEdit = async () => {
       name,
       provider: editForm.value.provider,
       isActive: editForm.value.isActive,
+      allowWrites: editForm.value.allowWrites,
       replaceConnectionString,
       connectionString: replaceConnectionString ? connectionString : undefined
     });
