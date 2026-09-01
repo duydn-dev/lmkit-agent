@@ -241,6 +241,7 @@ const navGroups: NavGroup[] = [
       { to: '/admin/users', icon: 'pi pi-users', label: 'Quản lý User' },
       { to: '/admin/mcp-servers', icon: 'pi pi-server', label: 'Máy chủ MCP' },
       { to: '/admin/knowledge', icon: 'pi pi-database', label: 'Cơ sở tri thức' },
+      { to: '/admin/databases', icon: 'pi pi-server', label: 'Kết nối CSDL' },
       { to: '/admin/audit', icon: 'pi pi-shield', label: 'Nhật ký hoạt động' }
     ]
   }

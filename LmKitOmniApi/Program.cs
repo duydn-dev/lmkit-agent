@@ -222,6 +222,16 @@ builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Security.IProcessRu
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Security.IPythonCodeExecutor, LmKitOmniApi.Infrastructure.AI.Security.PythonContainerExecutor>();
 builder.Services.AddScoped<AgentToolGateway>();
 
+// External database agent (read-only by default; db_query tool gated off unless
+// DatabaseAgent:Enabled). Connection secrets encrypted via DbConnectionSecretProtector;
+// egress-vetted per-provider; both engines registered as IExternalDatabaseProvider.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Security.DatabaseAgentOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Security.DatabaseAgentOptions.SectionName));
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.Security.DbConnectionSecretProtector>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Security.DbEgressValidator>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.PostgresDatabaseProvider>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.SqliteDatabaseProvider>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.ExternalDatabaseService>();
+
 // Filter Pipeline (ordered execution)
 builder.Services.AddScoped<IAgentFilter, InputSanitizationFilter>();
 builder.Services.AddScoped<IAgentFilter, OutputGuardrailFilter>();

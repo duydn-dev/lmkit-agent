@@ -98,5 +98,10 @@ export const ApiFactory = {
   AGENT_RUNS: {
     BASE: '/api/agent-runs',
     BY_ID: (id: string) => `/api/agent-runs/${id}`
+  },
+  DATABASE_CONNECTIONS: {
+    BASE: '/api/database-connections',
+    BY_ID: (id: string) => `/api/database-connections/${id}`,
+    TEST: (id: string) => `/api/database-connections/${id}/test`
   }
 };

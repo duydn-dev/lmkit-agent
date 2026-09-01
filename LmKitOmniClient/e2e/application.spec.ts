@@ -106,6 +106,8 @@ async function mockAuthenticatedApi(page: Page) {
     // --- Admin/management + AI-tools screens ---
     // Admin Hub stat card + Approvals inbox both read pending approvals.
     if (path === '/api/taskapproval/pending' && method === 'GET') return json(route, []);
+    // Admin database-connections list (empty is enough to render the screen).
+    if (path === '/api/database-connections' && method === 'GET') return json(route, []);
     // Agent mode: past-runs list + a streamed run (run id, thinking, one step, result).
     if (path === '/api/agent-runs' && method === 'GET') return json(route, []);
     if (path === '/api/agent-runs' && method === 'POST') {
@@ -279,6 +281,15 @@ test('admin sidebar exposes grouped management navigation and opens the hub', as
   await sidebar.getByRole('link', { name: 'Bảng điều khiển' }).click();
   await expect(page).toHaveURL(/\/admin$/);
   await expect(page.getByRole('heading', { name: 'Bảng điều khiển quản trị' })).toBeVisible();
+  await expectNoWcagViolations(page);
+  expect(browserErrors).toEqual([]);
+});
+
+test('admin can open the database-connections management screen', async ({ page }) => {
+  const browserErrors = await mockAuthenticatedApi(page);
+  await page.goto('/admin/databases');
+  await expect(page.getByRole('heading', { name: 'Kết nối cơ sở dữ liệu' })).toBeVisible();
+  await expect(page.getByText('Chưa có kết nối cơ sở dữ liệu nào.')).toBeVisible();
   await expectNoWcagViolations(page);
   expect(browserErrors).toEqual([]);
 });
