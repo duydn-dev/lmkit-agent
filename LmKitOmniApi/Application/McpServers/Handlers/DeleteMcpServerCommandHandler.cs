@@ -24,6 +24,11 @@ public class DeleteMcpServerCommandHandler : IRequestHandler<DeleteMcpServerComm
             .ExecuteDeleteAsync(cancellationToken);
         if (deleted == 0) return false;
 
+        // Purge any per-user authorization-code tokens for this server (no DB FK cascade).
+        await _db.McpUserOAuthTokens
+            .Where(token => token.ServerId == request.ServerId && token.TenantId == request.TenantId)
+            .ExecuteDeleteAsync(cancellationToken);
+
         await _mcp.InvalidateTenantCacheAsync(request.TenantId, cancellationToken);
         return true;
     }

@@ -49,8 +49,8 @@ internal static class McpServerRules
 
         var authMode = NormalizeAuthMode(request.AuthMode);
         if (authMode is null)
-            return SaveMcpServerResult.ValidationFailed("AuthMode must be 'Static' or 'ClientCredentials'.");
-        if (authMode == McpOAuthTokenProvider.ClientCredentialsMode)
+            return SaveMcpServerResult.ValidationFailed("AuthMode must be 'Static', 'ClientCredentials' or 'AuthorizationCode'.");
+        if (authMode is McpOAuthTokenProvider.ClientCredentialsMode or McpOAuthTokenProvider.AuthorizationCodeMode)
         {
             if (string.IsNullOrWhiteSpace(request.OAuthClientId) || request.OAuthClientId.Length > 300)
                 return SaveMcpServerResult.ValidationFailed("OAuth client id is required (max 300 characters).");
@@ -59,12 +59,21 @@ internal static class McpServerRules
             // Same SSRF sandbox as the server URL: the token endpoint must not resolve to internal space.
             var tokenUrl = await sandbox.ValidateUrlAsync(request.OAuthTokenUrl, ct);
             if (!tokenUrl.IsAllowed) return SaveMcpServerResult.ValidationFailed(tokenUrl.DenialReason);
+            // The authorization-code grant additionally redirects the user's browser to an
+            // authorize endpoint, which is SSRF-gated exactly like the token endpoint.
+            if (authMode == McpOAuthTokenProvider.AuthorizationCodeMode)
+            {
+                if (!Uri.TryCreate(request.OAuthAuthorizeUrl, UriKind.Absolute, out _) || request.OAuthAuthorizeUrl!.Length > 500)
+                    return SaveMcpServerResult.ValidationFailed("A valid absolute OAuth authorize URL is required (max 500 characters).");
+                var authorizeUrl = await sandbox.ValidateUrlAsync(request.OAuthAuthorizeUrl, ct);
+                if (!authorizeUrl.IsAllowed) return SaveMcpServerResult.ValidationFailed(authorizeUrl.DenialReason);
+            }
             if (request.OAuthScopes is { Length: > 1_000 })
                 return SaveMcpServerResult.ValidationFailed("OAuth scopes exceeded 1000 characters.");
             if (request.OAuthClientSecret is { Length: > 4_000 })
                 return SaveMcpServerResult.ValidationFailed("OAuth client secret exceeded the allowed length.");
-            // A brand-new client-credentials server must carry a secret; on update a blank
-            // secret means "keep the stored one", so the presence check lives in the handler.
+            // A brand-new OAuth server must carry a secret; on update a blank secret means
+            // "keep the stored one", so the presence check lives in the handler.
             if (id is null && string.IsNullOrWhiteSpace(request.OAuthClientSecret))
                 return SaveMcpServerResult.ValidationFailed("OAuth client secret is required.");
         }
@@ -82,6 +91,8 @@ internal static class McpServerRules
         if (string.Equals(mode, "Static", StringComparison.OrdinalIgnoreCase)) return "Static";
         if (string.Equals(mode, McpOAuthTokenProvider.ClientCredentialsMode, StringComparison.OrdinalIgnoreCase))
             return McpOAuthTokenProvider.ClientCredentialsMode;
+        if (string.Equals(mode, McpOAuthTokenProvider.AuthorizationCodeMode, StringComparison.OrdinalIgnoreCase))
+            return McpOAuthTokenProvider.AuthorizationCodeMode;
         return null;
     }
 

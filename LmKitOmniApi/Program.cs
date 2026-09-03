@@ -388,6 +388,10 @@ builder.Services.AddHttpClient(LmKitOmniApi.Infrastructure.AI.Mcp.McpOAuthTokenP
     ConnectCallback = SsrfSafeConnect.CreateVettedConnectCallback()
 });
 builder.Services.AddSingleton(TimeProvider.System);
+// Per-user OAuth 2.0 authorization-code support for MCP servers: an encrypted per-user
+// token store (scoped, wraps HermesDbContext) and the PKCE/state store (wraps IDistributedCache).
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.IMcpUserTokenStore, LmKitOmniApi.Infrastructure.AI.Mcp.McpUserTokenStore>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.McpOAuthStateStore>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.IMcpOAuthTokenProvider, LmKitOmniApi.Infrastructure.AI.Mcp.McpOAuthTokenProvider>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.McpClientService>();
 

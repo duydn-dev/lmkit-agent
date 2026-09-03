@@ -1,4 +1,6 @@
+using System.Security.Claims;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
@@ -21,6 +23,7 @@ public class McpClientService
     private readonly McpHeaderProtector _headerProtector;
     private readonly IMcpProtocolClient _protocolClient;
     private readonly IMcpOAuthTokenProvider _oauthTokenProvider;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
     // Cache discovered tools from MCP servers per Tenant
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, IReadOnlyDictionary<string, List<McpToolDefinition>>> CachedTools = new();
@@ -34,6 +37,7 @@ public class McpClientService
         McpHeaderProtector headerProtector,
         IMcpProtocolClient protocolClient,
         IMcpOAuthTokenProvider oauthTokenProvider,
+        IHttpContextAccessor httpContextAccessor,
         ILogger<McpClientService> logger)
     {
         _scopeFactory = scopeFactory;
@@ -41,6 +45,7 @@ public class McpClientService
         _headerProtector = headerProtector;
         _protocolClient = protocolClient;
         _oauthTokenProvider = oauthTokenProvider;
+        _httpContextAccessor = httpContextAccessor;
         _logger = logger;
     }
 
@@ -61,9 +66,27 @@ public class McpClientService
 
     /// <summary>
     /// Discover available tools from all configured MCP servers for a specific tenant.
-    /// Caches results for 10 minutes.
+    /// Caches results for 10 minutes. The current end user is resolved from the ambient
+    /// HTTP context, so per-user (AuthorizationCode) servers are discovered with the caller's
+    /// own token when one is available.
     /// </summary>
-    public async Task<List<McpToolDefinition>> DiscoverToolsAsync(Guid tenantId, CancellationToken ct = default)
+    public Task<List<McpToolDefinition>> DiscoverToolsAsync(Guid tenantId, CancellationToken ct = default)
+        => DiscoverToolsCoreAsync(tenantId, ResolveAmbientUserId(), ct);
+
+    /// <summary>
+    /// Discover tools for a tenant on behalf of an explicit user. Used where the caller
+    /// already knows the user id (and cannot rely on an ambient HTTP context).
+    /// </summary>
+    public Task<List<McpToolDefinition>> DiscoverToolsAsync(Guid tenantId, Guid userId, CancellationToken ct = default)
+        => DiscoverToolsCoreAsync(tenantId, userId, ct);
+
+    // NOTE on scoping: the discovered-tool cache is keyed by tenant only. Tool *definitions*
+    // are not user-specific, so sharing them across a tenant is intentional. For an
+    // AuthorizationCode server, listing tools still needs an access token, so discovery uses
+    // whichever user triggered the (re)discovery; a user who has not connected simply causes
+    // that one server to be skipped (its failure is caught per-server). Per-user *token
+    // application* is always correct on the invoke path — see BuildRequestHeadersAsync.
+    private async Task<List<McpToolDefinition>> DiscoverToolsCoreAsync(Guid tenantId, Guid? userId, CancellationToken ct)
     {
         var cacheLock = TenantCacheLocks.GetOrAdd(tenantId, static _ => new SemaphoreSlim(1, 1));
         await cacheLock.WaitAsync(ct);
@@ -89,7 +112,7 @@ public class McpClientService
             {
                 try
                 {
-                    var tools = await DiscoverToolsFromServerAsync(server, ct);
+                    var tools = await DiscoverToolsFromServerAsync(server, userId, ct);
                     discoveredForTenant[server.Name] = tools;
                     _logger.LogInformation("🔗 [MCP] Discovered {Count} tools from '{Server}' for Tenant {Tenant}", tools.Count, server.Name, tenantId);
                 }
@@ -114,15 +137,26 @@ public class McpClientService
     }
 
     /// <summary>
-    /// Invoke a tool on an MCP server by name.
+    /// Invoke a tool on an MCP server by name. The current end user is resolved from the
+    /// ambient HTTP context so per-user (AuthorizationCode) bearers are applied correctly.
     /// </summary>
-    public async Task<McpInvocationResult> InvokeToolAsync(Guid tenantId, string serverName, string toolName, Dictionary<string, object> parameters, CancellationToken ct = default)
+    public Task<McpInvocationResult> InvokeToolAsync(Guid tenantId, string serverName, string toolName, Dictionary<string, object> parameters, CancellationToken ct = default)
+        => InvokeToolCoreAsync(tenantId, ResolveAmbientUserId(), serverName, toolName, parameters, ct);
+
+    /// <summary>
+    /// Invoke a tool on behalf of an explicit user. Used where the caller already knows the
+    /// user id (and cannot rely on an ambient HTTP context).
+    /// </summary>
+    public Task<McpInvocationResult> InvokeToolAsync(Guid tenantId, Guid userId, string serverName, string toolName, Dictionary<string, object> parameters, CancellationToken ct = default)
+        => InvokeToolCoreAsync(tenantId, userId, serverName, toolName, parameters, ct);
+
+    private async Task<McpInvocationResult> InvokeToolCoreAsync(Guid tenantId, Guid? userId, string serverName, string toolName, Dictionary<string, object> parameters, CancellationToken ct)
     {
         if (!CachedTools.TryGetValue(tenantId, out var tenantCache) ||
             !tenantCache.TryGetValue(serverName, out var serverTools) ||
             !serverTools.Any(tool => tool.Name.Equals(toolName, StringComparison.Ordinal)))
         {
-            await DiscoverToolsAsync(tenantId, ct);
+            await DiscoverToolsCoreAsync(tenantId, userId, ct);
             if (!CachedTools.TryGetValue(tenantId, out tenantCache) ||
                 !tenantCache.TryGetValue(serverName, out serverTools) ||
                 !serverTools.Any(tool => tool.Name.Equals(toolName, StringComparison.Ordinal)))
@@ -149,7 +183,7 @@ public class McpClientService
             var result = await _protocolClient.CallToolAsync(
                 new Uri(server.Url),
                 server.Name,
-                await BuildRequestHeadersAsync(server, ct),
+                await BuildRequestHeadersAsync(server, userId, ct),
                 toolName,
                 parameters.ToDictionary(pair => pair.Key, pair => (object?)pair.Value),
                 ct);
@@ -193,14 +227,14 @@ public class McpClientService
         return builder.ToString();
     }
 
-    private async Task<List<McpToolDefinition>> DiscoverToolsFromServerAsync(ExternalMcpServer server, CancellationToken ct)
+    private async Task<List<McpToolDefinition>> DiscoverToolsFromServerAsync(ExternalMcpServer server, Guid? userId, CancellationToken ct)
     {
         var urlValidation = await _sandbox.ValidateUrlAsync(server.Url, ct);
         if (!urlValidation.IsAllowed)
             throw new InvalidOperationException(urlValidation.DenialReason ?? "MCP server URL was blocked.");
 
         var tools = await _protocolClient.ListToolsAsync(
-            new Uri(server.Url), server.Name, await BuildRequestHeadersAsync(server, ct), ct);
+            new Uri(server.Url), server.Name, await BuildRequestHeadersAsync(server, userId, ct), ct);
 
         return tools.Select(tool => new McpToolDefinition
         {
@@ -215,11 +249,14 @@ public class McpClientService
 
     /// <summary>
     /// Builds the outbound header set for a server: the admin-configured static headers,
-    /// plus a freshly-minted <c>Authorization: Bearer</c> header when the server uses the
-    /// OAuth client-credentials grant. The OAuth token takes precedence over any static
-    /// Authorization header so the two auth modes never collide.
+    /// plus a freshly-minted <c>Authorization: Bearer</c> header when the server uses an
+    /// OAuth grant. Client-credentials uses a tenant-wide token; AuthorizationCode uses the
+    /// per-user token for <paramref name="userId"/> (refreshing it if needed). The OAuth
+    /// token takes precedence over any static Authorization header so the modes never
+    /// collide. Throws when an AuthorizationCode server is reached with no user in context or
+    /// the user has not connected — the caller surfaces that as a failed invocation.
     /// </summary>
-    private async Task<IReadOnlyDictionary<string, string>> BuildRequestHeadersAsync(ExternalMcpServer server, CancellationToken ct)
+    private async Task<IReadOnlyDictionary<string, string>> BuildRequestHeadersAsync(ExternalMcpServer server, Guid? userId, CancellationToken ct)
     {
         var headers = new Dictionary<string, string>(ReadHeaders(server.HeadersJson), StringComparer.OrdinalIgnoreCase);
 
@@ -228,8 +265,27 @@ public class McpClientService
             var token = await _oauthTokenProvider.GetAccessTokenAsync(server, ct);
             headers["Authorization"] = $"Bearer {token}";
         }
+        else if (string.Equals(server.AuthMode, McpOAuthTokenProvider.AuthorizationCodeMode, StringComparison.OrdinalIgnoreCase))
+        {
+            if (userId is null)
+                throw new InvalidOperationException($"MCP server '{server.Name}' requires a per-user OAuth connection but no user is in context.");
+            var token = await _oauthTokenProvider.GetUserAccessTokenAsync(server, server.TenantId, userId.Value, ct);
+            headers["Authorization"] = $"Bearer {token}";
+        }
 
         return headers;
+    }
+
+    /// <summary>
+    /// The current end user's id from the ambient HTTP context, or null when there is no
+    /// authenticated request (e.g. a background worker). Used so the tenant-scoped public
+    /// entry points can still apply per-user OAuth tokens without threading the id through
+    /// every caller.
+    /// </summary>
+    private Guid? ResolveAmbientUserId()
+    {
+        var value = _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        return Guid.TryParse(value, out var userId) ? userId : null;
     }
 
     private IReadOnlyDictionary<string, string> ReadHeaders(string? headersJson)
