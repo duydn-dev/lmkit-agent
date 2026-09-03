@@ -254,17 +254,19 @@ builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.DbQueryServic
 // ============================================================
 // 🎙️ Voice "Live" groundwork (OFF BY DEFAULT — see VoiceOptions)
 // ============================================================
-// TTS: SynthesizeSpeechCommandHandler is auto-registered by MediatR. No ISpeechSynthesizer
-// is registered here because LM-Kit.NET (2026.8.2) ships NO speech-synthesis engine — the
-// handler therefore returns "engine not configured" (HTTP 501) until a real engine is added.
-// To enable TTS: implement ISpeechSynthesizer, register it, and set Voice:TtsEnabled=true.
+// TTS: SynthesizeSpeechCommandHandler is auto-registered by MediatR. The registered engine
+// is Piper (local/offline CLI), kept off by default — LM-Kit.NET (2026.8.2) ships NO
+// speech-synthesis, and Piper's IsAvailable is false until Voice:TtsEnabled is true AND the
+// binary + a voice model are configured, so the handler still returns "engine not configured"
+// (HTTP 501) until an operator provisions Piper.
 // Streaming STT: TranscribeAudioStreamCommandHandler (MediatR) streams partial transcripts
 // behind the shared speech inference lease.
 // Room agent: VoiceRoomAgent and its STT/LLM/TTS turn seams are a live-only skeleton and are
-// intentionally NOT registered (they require engines + LiveKit media this build lacks). The
-// hosted service below is a STRICT NO-OP unless Voice:LiveAgentEnabled is true (default false).
+// intentionally NOT registered (they require LiveKit media this build lacks). The hosted
+// service below is a STRICT NO-OP unless Voice:LiveAgentEnabled is true (default false).
 builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Voice.VoiceOptions>(
     builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Voice.VoiceOptions.SectionName));
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Voice.ISpeechSynthesizer, LmKitOmniApi.Infrastructure.AI.Voice.PiperSpeechSynthesizer>();
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.AI.Voice.VoiceRoomAgentHostedService>();
 
 // Filter Pipeline (ordered execution)

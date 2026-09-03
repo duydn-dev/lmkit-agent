@@ -35,4 +35,18 @@ public sealed class VoiceOptions
 
     /// <summary>Hard cap on the number of characters accepted by a single synthesis request.</summary>
     public int MaxSynthesisCharacters { get; set; } = 2000;
+
+    // ── Piper local TTS engine (the registered ISpeechSynthesizer) ──
+    // Piper is offline/on-prem, so it keeps the local-first posture. All empty by
+    // default → the engine reports IsAvailable=false and the endpoint stays 501 until
+    // an operator installs the binary + a voice model and points these at them.
+
+    /// <summary>Path to the Piper executable (a full path, or a name resolvable on PATH like "piper").</summary>
+    public string? PiperExecutablePath { get; set; }
+
+    /// <summary>Map of voice name → Piper ONNX voice-model file path (e.g. "vi" → "/models/vi_VN.onnx").</summary>
+    public Dictionary<string, string> PiperVoices { get; set; } = new();
+
+    /// <summary>Wall-clock budget for one Piper synthesis run.</summary>
+    public int SynthesisTimeoutSeconds { get; set; } = 30;
 }

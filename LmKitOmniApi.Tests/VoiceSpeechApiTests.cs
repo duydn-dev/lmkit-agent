@@ -133,8 +133,12 @@ public sealed class VoiceSpeechApiTests : IClassFixture<LmKitApiFactory>
         Assert.False(options.TtsEnabled);
         Assert.False(options.LiveAgentEnabled);
 
-        // No TTS engine is registered by default — the honest "no engine" state.
-        Assert.Null(provider.GetService<ISpeechSynthesizer>());
+        // The Piper TTS engine is registered but OFF by default: with TtsEnabled=false and no
+        // binary/model configured it reports IsAvailable=false, so the synthesize endpoint
+        // still answers 501 (honest "not configured" state, no fake audio).
+        var synth = provider.GetService<ISpeechSynthesizer>();
+        Assert.NotNull(synth);
+        Assert.False(synth!.IsAvailable);
     }
 
     private Task<HttpClient> CreateAuthenticatedClientAsync() => CreateAuthenticatedClientAsync(_factory);
