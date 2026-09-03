@@ -29,6 +29,8 @@ export interface ChatMessage {
   isTyping?: boolean;
   webUrls?: string[];
   thinkingSteps?: string[];
+  /** Model chain-of-thought (DeepSeek-R1 style), shown collapsed and separate from the answer. */
+  reasoning?: string;
   attachedFiles?: string[];
   producedFiles?: ProducedFile[];
   hitlTaskId?: string;
@@ -86,6 +88,7 @@ export interface StoredAssistantContent {
   content: string;
   webUrls?: string[];
   thinkingSteps?: string[];
+  reasoning?: string;
   producedFiles?: ProducedFile[];
 }
 
@@ -100,6 +103,7 @@ export function parseStoredAssistantContent(raw: string): StoredAssistantContent
   let content = (raw || '').replace(/\[Agent invoked:.*?\][\n\r]*/g, '');
   let webUrls: string[] | undefined;
   let thinkingSteps: string[] | undefined;
+  let reasoning: string | undefined;
   let producedFiles: ProducedFile[] | undefined;
 
   // [FILE:{json}] markers persisted with the message: rebuild the produced-file
@@ -126,6 +130,16 @@ export function parseStoredAssistantContent(raw: string): StoredAssistantContent
     }
   }
 
+  // Model reasoning (DeepSeek-R1 style) persisted as [REASONING]: fragments — rejoin
+  // them into one block, then strip the markers from the displayed answer.
+  if (content.includes('[REASONING]:')) {
+    const reasoningMatches = content.match(/\[REASONING\]:([^\n\r]+)/g);
+    if (reasoningMatches) {
+      reasoning = reasoningMatches.map((match) => match.replace('[REASONING]:', '')).join('\n').trim();
+      content = content.replace(/\[REASONING\]:[^\n\r]+[\n\r]*/g, '').trimStart();
+    }
+  }
+
   if (content.includes('[WEB_SEARCH]:')) {
     const match = content.match(/\[WEB_SEARCH\]:([^\n\r]+)/);
     if (match) {
@@ -134,7 +148,7 @@ export function parseStoredAssistantContent(raw: string): StoredAssistantContent
     }
   }
 
-  return { content, webUrls, thinkingSteps, producedFiles };
+  return { content, webUrls, thinkingSteps, reasoning, producedFiles };
 }
 
 export interface ConsumeStreamOptions {
@@ -262,6 +276,13 @@ export function useChatStream() {
               assistantMsg.thinkingSteps = [];
             }
             assistantMsg.thinkingSteps.push(event.value);
+            scheduleScroll();
+            continue;
+          }
+          if (event.type === 'reasoning') {
+            // Fragments stream in; the terminator is a real newline (trimmed here) and
+            // each fragment becomes its own line in the collapsible reasoning panel.
+            assistantMsg.reasoning = (assistantMsg.reasoning ?? '') + event.value.replace(/[\r\n]+$/, '') + '\n';
             scheduleScroll();
             continue;
           }

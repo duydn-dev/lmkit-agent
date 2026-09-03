@@ -39,13 +39,16 @@ public class CreateMcpServerCommandHandler : IRequestHandler<CreateMcpServerComm
             TrustReadOnlyAnnotations = request.TrustReadOnlyAnnotations,
             AuthMode = authMode
         };
-        if (authMode == McpOAuthTokenProvider.ClientCredentialsMode)
+        if (authMode is McpOAuthTokenProvider.ClientCredentialsMode or McpOAuthTokenProvider.AuthorizationCodeMode)
         {
             server.OAuthClientId = request.OAuthClientId!.Trim();
             server.OAuthTokenUrl = request.OAuthTokenUrl!.Trim();
             server.OAuthScopes = string.IsNullOrWhiteSpace(request.OAuthScopes) ? null : request.OAuthScopes.Trim();
             // Validation guarantees a non-blank secret on create.
             server.OAuthClientSecretProtected = McpServerRules.ProtectSecret(_protector, request.OAuthClientSecret!);
+            // The authorize endpoint is only meaningful for the per-user authorization-code grant.
+            if (authMode == McpOAuthTokenProvider.AuthorizationCodeMode)
+                server.OAuthAuthorizeUrl = request.OAuthAuthorizeUrl!.Trim();
         }
         _db.ExternalMcpServers.Add(server);
         await _db.SaveChangesAsync(cancellationToken);

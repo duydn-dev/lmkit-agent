@@ -59,6 +59,7 @@ public sealed class McpServersController : ApiControllerBase
             OAuthClientId = request.OAuthClientId,
             OAuthClientSecret = request.OAuthClientSecret,
             OAuthTokenUrl = request.OAuthTokenUrl,
+            OAuthAuthorizeUrl = request.OAuthAuthorizeUrl,
             OAuthScopes = request.OAuthScopes
         }, ct);
 
@@ -89,6 +90,7 @@ public sealed class McpServersController : ApiControllerBase
             OAuthClientId = request.OAuthClientId,
             OAuthClientSecret = request.OAuthClientSecret,
             OAuthTokenUrl = request.OAuthTokenUrl,
+            OAuthAuthorizeUrl = request.OAuthAuthorizeUrl,
             OAuthScopes = request.OAuthScopes
         }, ct);
 

@@ -67,6 +67,12 @@ export const ApiFactory = {
     BY_ID: (id: string) => `/api/mcp-servers/${id}`,
     CATALOG: '/api/mcp-servers/catalog'
   },
+  MCP_OAUTH: {
+    // Per-user OAuth 2.0 authorization-code connect flow.
+    AUTHORIZE: (serverId: string) => `/api/mcp-oauth/${serverId}/authorize`,
+    STATUS: (serverId: string) => `/api/mcp-oauth/${serverId}/status`,
+    TOKEN: (serverId: string) => `/api/mcp-oauth/${serverId}/token`
+  },
   KNOWLEDGE: {
     INGEST: '/api/knowledgebase/ingest',
     QUERY: '/api/knowledgebase/query'

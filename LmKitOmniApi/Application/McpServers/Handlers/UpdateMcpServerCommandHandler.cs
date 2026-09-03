@@ -35,7 +35,7 @@ public class UpdateMcpServerCommandHandler : IRequestHandler<UpdateMcpServerComm
         if (validation is not null) return validation;
 
         var authMode = McpServerRules.NormalizeAuthMode(request.AuthMode)!; // validated above
-        if (authMode == McpOAuthTokenProvider.ClientCredentialsMode)
+        if (authMode is McpOAuthTokenProvider.ClientCredentialsMode or McpOAuthTokenProvider.AuthorizationCodeMode)
         {
             // A blank secret means "keep the stored one"; reject only when neither the
             // request nor the existing record supplies a secret.
@@ -50,11 +50,15 @@ public class UpdateMcpServerCommandHandler : IRequestHandler<UpdateMcpServerComm
         server.TrustReadOnlyAnnotations = request.TrustReadOnlyAnnotations;
         if (request.ReplaceHeaders) server.HeadersJson = McpServerRules.ProtectHeaders(_protector, request.Headers);
         server.AuthMode = authMode;
-        if (authMode == McpOAuthTokenProvider.ClientCredentialsMode)
+        if (authMode is McpOAuthTokenProvider.ClientCredentialsMode or McpOAuthTokenProvider.AuthorizationCodeMode)
         {
             server.OAuthClientId = request.OAuthClientId!.Trim();
             server.OAuthTokenUrl = request.OAuthTokenUrl!.Trim();
             server.OAuthScopes = string.IsNullOrWhiteSpace(request.OAuthScopes) ? null : request.OAuthScopes.Trim();
+            // The authorize endpoint only applies to the per-user authorization-code grant.
+            server.OAuthAuthorizeUrl = authMode == McpOAuthTokenProvider.AuthorizationCodeMode
+                ? request.OAuthAuthorizeUrl!.Trim()
+                : null;
             if (!string.IsNullOrWhiteSpace(request.OAuthClientSecret))
                 server.OAuthClientSecretProtected = McpServerRules.ProtectSecret(_protector, request.OAuthClientSecret);
         }
@@ -63,9 +67,17 @@ public class UpdateMcpServerCommandHandler : IRequestHandler<UpdateMcpServerComm
             // Switching back to Static clears the OAuth config so no stale secret lingers.
             server.OAuthClientId = null;
             server.OAuthTokenUrl = null;
+            server.OAuthAuthorizeUrl = null;
             server.OAuthScopes = null;
             server.OAuthClientSecretProtected = null;
         }
+
+        // Leaving the per-user authorization-code grant invalidates every stored per-user
+        // token for this server, so purge them rather than let a later switch back resurrect
+        // stale bearers.
+        if (authMode != McpOAuthTokenProvider.AuthorizationCodeMode)
+            await _db.McpUserOAuthTokens.Where(t => t.ServerId == server.Id).ExecuteDeleteAsync(cancellationToken);
+
         server.UpdatedAtUtc = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
         await _mcp.InvalidateTenantCacheAsync(request.TenantId, cancellationToken);

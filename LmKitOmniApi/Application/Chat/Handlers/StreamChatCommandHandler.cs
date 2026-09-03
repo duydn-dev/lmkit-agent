@@ -9,8 +9,10 @@ using LmKitOmniApi.Application.CustomAgents;
 using LmKitOmniApi.Application.Projects;
 using LmKitOmniApi.Services;
 using LmKitOmniApi.Infrastructure.Data;
+using LmKitOmniApi.Infrastructure.AI;
 using LmKitOmniApi.Domain.Entities;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Options;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -23,6 +25,7 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
     private readonly ITokenManagementService _tokenManagement;
     private readonly HermesDbContext _dbContext;
     private readonly IDistributedCache _cache;
+    private readonly ChatReasoningOptions _reasoning;
     private readonly ILogger<StreamChatCommandHandler> _logger;
 
     // Maximum messages to load from DB (absolute cap)
@@ -36,6 +39,7 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         ITokenManagementService tokenManagement,
         HermesDbContext dbContext,
         IDistributedCache cache,
+        IOptions<ChatReasoningOptions> reasoningOptions,
         ILogger<StreamChatCommandHandler> logger)
     {
         _modelManager = modelManager;
@@ -43,6 +47,7 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         _tokenManagement = tokenManagement;
         _dbContext = dbContext;
         _cache = cache;
+        _reasoning = reasoningOptions.Value;
         _logger = logger;
     }
 
@@ -455,6 +460,10 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
             };
         }
 
+        // Operator-gated DeepSeek-R1-style reasoning display (a `with` so the later
+        // project-instructions composition preserves it).
+        options = options with { ShowReasoning = _reasoning.Enabled };
+
         // ── Project instructions (ChatGPT-Projects style shared context) ──
         // A session inside a project prepends the project's instructions to the
         // persona prompt. Tenant+owner scoped; a missing/foreign project or
@@ -499,12 +508,16 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
     private static readonly Regex WebSearchMarker =
         new Regex(@"\[WEB_SEARCH\]:[^\n\r]+[\n\r]*", RegexOptions.Compiled);
 
+    private static readonly Regex ReasoningMarker =
+        new Regex(@"\[REASONING\]:[^\n\r]+[\n\r]*", RegexOptions.Compiled);
+
     private static string StripProtocolMarkers(string raw)
     {
         if (string.IsNullOrEmpty(raw)) return string.Empty;
         var stripped = AgentInvokedMarker.Replace(raw, string.Empty);
         stripped = ThinkingMarker.Replace(stripped, string.Empty);
         stripped = WebSearchMarker.Replace(stripped, string.Empty);
+        stripped = ReasoningMarker.Replace(stripped, string.Empty);
         return stripped;
     }
 }

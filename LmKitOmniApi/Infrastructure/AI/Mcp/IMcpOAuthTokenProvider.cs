@@ -17,4 +17,30 @@ public interface IMcpOAuthTokenProvider
     /// sandbox, or the token request fails.
     /// </summary>
     Task<string> GetAccessTokenAsync(ExternalMcpServer server, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the per-user access token for a server using the OAuth 2.0 authorization-code
+    /// grant (RFC 6749 §4.1). Reads the token persisted for (<paramref name="tenantId"/>,
+    /// <paramref name="userId"/>, server); when it is within 30s of expiry and a refresh
+    /// token exists, transparently refreshes via <c>grant_type=refresh_token</c> and
+    /// persists the result. Throws <see cref="InvalidOperationException"/> when the user has
+    /// not connected the server, the token has expired with no way to refresh, or the token
+    /// endpoint is blocked/failing.
+    /// </summary>
+    Task<string> GetUserAccessTokenAsync(ExternalMcpServer server, Guid tenantId, Guid userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Exchanges an authorization <paramref name="code"/> (plus the PKCE
+    /// <paramref name="codeVerifier"/> and the exact <paramref name="redirectUri"/> used in
+    /// the authorize request) for tokens at the server's token endpoint, then persists the
+    /// encrypted per-user token. SSRF-gates the token endpoint. Throws on failure.
+    /// </summary>
+    Task ExchangeAuthorizationCodeAsync(
+        ExternalMcpServer server,
+        Guid tenantId,
+        Guid userId,
+        string code,
+        string codeVerifier,
+        string redirectUri,
+        CancellationToken ct = default);
 }

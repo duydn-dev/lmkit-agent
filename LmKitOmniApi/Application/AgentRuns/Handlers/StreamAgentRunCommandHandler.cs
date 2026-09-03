@@ -24,7 +24,7 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
 {
     // Strips the orchestrator's status/step markers so the stored Result is clean prose.
     private static readonly Regex MarkerRegex = new(
-        @"\[(?:THINKING|WEB_SEARCH|Agent invoked|STEP|FILE|HITL_APPROVAL_REQUIRED|AGENT_RUN|RESEARCH_SAVED)[:\]][^\n\r]*?(?:\][\n\r]*|(?=\[)|$)",
+        @"\[(?:THINKING|REASONING|WEB_SEARCH|Agent invoked|STEP|FILE|HITL_APPROVAL_REQUIRED|AGENT_RUN|RESEARCH_SAVED)[:\]][^\n\r]*?(?:\][\n\r]*|(?=\[)|$)",
         RegexOptions.Compiled);
 
     private readonly IAgentOrchestrator _orchestrator;

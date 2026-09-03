@@ -13,7 +13,7 @@ public sealed class SaveMcpServerRequest
     public bool IsActive { get; set; } = true;
     public bool TrustReadOnlyAnnotations { get; set; }
 
-    /// <summary>"Static" (default) or "ClientCredentials" for the OAuth 2.0 grant.</summary>
+    /// <summary>"Static" (default), "ClientCredentials", or "AuthorizationCode" for the OAuth 2.0 grant.</summary>
     public string? AuthMode { get; set; }
     public string? OAuthClientId { get; set; }
 
@@ -23,6 +23,9 @@ public sealed class SaveMcpServerRequest
     /// </summary>
     public string? OAuthClientSecret { get; set; }
     public string? OAuthTokenUrl { get; set; }
+
+    /// <summary>OAuth authorize endpoint; required for the "AuthorizationCode" grant.</summary>
+    public string? OAuthAuthorizeUrl { get; set; }
     public string? OAuthScopes { get; set; }
 }
 
@@ -44,6 +47,7 @@ public abstract class SaveMcpServerCommandBase
     public string? OAuthClientId { get; set; }
     public string? OAuthClientSecret { get; set; }
     public string? OAuthTokenUrl { get; set; }
+    public string? OAuthAuthorizeUrl { get; set; }
     public string? OAuthScopes { get; set; }
 }
 

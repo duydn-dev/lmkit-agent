@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using MediatR;
 
 namespace LmKitOmniApi.Application.McpServers.Queries;
@@ -21,12 +22,20 @@ public sealed class McpServerSummaryDto
     public bool TrustReadOnlyAnnotations { get; set; }
     public bool HasHeaders { get; set; }
 
-    /// <summary>"Static" or "ClientCredentials".</summary>
+    /// <summary>"Static", "ClientCredentials" or "AuthorizationCode".</summary>
     public string AuthMode { get; set; } = "Static";
 
-    /// <summary>Non-secret OAuth config, returned so the edit form can pre-fill it.</summary>
+    // Non-secret OAuth config, returned so the edit form can pre-fill it. The JSON names are
+    // pinned to lowercase "oauth*" so they round-trip with the admin UI: the default Web
+    // camelCase policy would otherwise emit "oAuthClientId" (capital A), which the client
+    // reads as "oauthClientId" and silently drops on read-back.
+    [JsonPropertyName("oauthClientId")]
     public string? OAuthClientId { get; set; }
+    [JsonPropertyName("oauthTokenUrl")]
     public string? OAuthTokenUrl { get; set; }
+    [JsonPropertyName("oauthAuthorizeUrl")]
+    public string? OAuthAuthorizeUrl { get; set; }
+    [JsonPropertyName("oauthScopes")]
     public string? OAuthScopes { get; set; }
 
     /// <summary>Whether an encrypted client secret is stored. The secret itself is never returned.</summary>

@@ -29,6 +29,20 @@ describe('ChatSseParser', () => {
     ]);
   });
 
+  it('routes model reasoning to a distinct reasoning event, kept separate from the answer', () => {
+    const parser = new ChatSseParser();
+    const events = parser.push([
+      'data: ' + JSON.stringify('[REASONING]:Đầu tiên, phân tích yêu cầu.\n'),
+      'data: "Câu trả lời cuối cùng."',
+      ''
+    ].join('\n'));
+
+    expect(events).toEqual([
+      { type: 'reasoning', value: 'Đầu tiên, phân tích yêu cầu.\n' },
+      { type: 'content', value: 'Câu trả lời cuối cùng.' }
+    ]);
+  });
+
   it('decodes the research-saved marker instead of leaking it as content', () => {
     const parser = new ChatSseParser();
     const events = parser.push([

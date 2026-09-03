@@ -102,6 +102,15 @@
                 </div>
               </div>
 
+              <!-- Model reasoning (DeepSeek-R1 style): the model's own chain-of-thought,
+                   collapsible and kept distinct from the pipeline-status steps above. -->
+              <details v-if="msg.reasoning" class="mb-4 w-fit max-w-[90%] rounded-xl border border-indigo-200 bg-indigo-50/60 p-3">
+                <summary class="cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wider text-indigo-700">
+                  Suy luận của mô hình
+                </summary>
+                <div class="mt-2 whitespace-pre-wrap text-[13px] leading-snug text-indigo-900">{{ msg.reasoning }}</div>
+              </details>
+
               <!-- Web Search Chip -->
               <button v-if="msg.webUrls && msg.webUrls.length > 0" type="button" class="mb-3 min-h-11 flex items-center gap-2 cursor-pointer group/chip w-max" @click="openDrawer(msg.webUrls)">
                 <div class="bg-blue-50 hover:bg-blue-100 text-gray-700 border border-gray-200 px-3 py-1.5 rounded-full flex items-center gap-2 transition-colors shadow-sm inline-flex">
@@ -522,6 +531,7 @@ const loadMessages = async () => {
           content: parsed.content,
           webUrls: parsed.webUrls,
           thinkingSteps: parsed.thinkingSteps,
+          reasoning: parsed.reasoning,
           producedFiles: parsed.producedFiles
         };
       });
