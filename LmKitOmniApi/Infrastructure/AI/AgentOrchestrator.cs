@@ -296,16 +296,25 @@ public class AgentOrchestrator : IAgentOrchestrator
         // UserVisible tokens are forwarded to the client as they are generated,
         // after passing the same redaction the output guardrail applies, evaluated
         // incrementally with a holdback window (see StreamingGuardrailGate).
-        var channel = System.Threading.Channels.Channel.CreateUnbounded<string>();
+        var channel = System.Threading.Channels.Channel.CreateUnbounded<(bool IsReasoning, string Text)>();
         var streamGate = new StreamingGuardrailGate(_promptGuard);
+
+        // DeepSeek-R1-style reasoning display (operator-gated). When on, the model runs
+        // with reasoning enabled and its InternalReasoning segments are streamed as a
+        // separate [REASONING] channel — never mixed into the answer or its guardrail
+        // gate, so the persisted answer and memory extraction stay reasoning-free.
+        var showReasoning = options?.ShowReasoning == true;
+        if (showReasoning)
+            chat.ReasoningLevel = ReasoningLevel.Medium;
 
         chat.AfterTextCompletion += (sender, e) =>
         {
-            // Tool arguments and internal reasoning are execution details, not user output.
             if (e.SegmentType == TextSegmentType.UserVisible)
-            {
-                channel.Writer.TryWrite(e.Text);
-            }
+                channel.Writer.TryWrite((false, e.Text));
+            // Tool arguments are execution details; internal reasoning is surfaced only
+            // when the operator enabled reasoning display.
+            else if (showReasoning && e.SegmentType == TextSegmentType.InternalReasoning)
+                channel.Writer.TryWrite((true, e.Text));
         };
 
         // C1 Fix: Use dedicated thread instead of Task.Run to avoid ThreadPool starvation.
@@ -350,8 +359,18 @@ public class AgentOrchestrator : IAgentOrchestrator
 
         try
         {
-            await foreach (var text in channel.Reader.ReadAllAsync(cancellationToken))
+            await foreach (var (isReasoning, text) in channel.Reader.ReadAllAsync(cancellationToken))
             {
+                if (isReasoning)
+                {
+                    // Keep each reasoning fragment single-line so the persisted body's
+                    // single-line [REASONING] regex (mirroring [THINKING]) extracts it on
+                    // reload; collapse real newlines to spaces.
+                    var oneLine = text.ReplaceLineEndings(" ");
+                    if (oneLine.Length > 0)
+                        yield return "[REASONING]:" + oneLine + "\n";
+                    continue;
+                }
                 var chunk = await streamGate.AppendAndTryEmitAsync(text, cancellationToken);
                 if (chunk.Length > 0)
                     yield return chunk;

@@ -218,6 +218,7 @@ builder.Services.AddScoped<IExecutionSandboxEngine, ExecutionSandboxEngine>();
 // JS sandbox engine above. When disabled, the executor reports IsEnabled=false
 // and the run_python tool is never offered.
 builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Security.CodeInterpreterOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Security.CodeInterpreterOptions.SectionName));
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.ChatReasoningOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.ChatReasoningOptions.SectionName));
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Security.IProcessRunner, LmKitOmniApi.Infrastructure.AI.Security.ProcessRunner>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Security.IPythonCodeExecutor, LmKitOmniApi.Infrastructure.AI.Security.PythonContainerExecutor>();
 builder.Services.AddScoped<AgentToolGateway>();
