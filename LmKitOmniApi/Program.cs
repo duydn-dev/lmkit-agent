@@ -221,6 +221,16 @@ builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Security.CodeInterpret
 builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.ChatReasoningOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.ChatReasoningOptions.SectionName));
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Security.IProcessRunner, LmKitOmniApi.Infrastructure.AI.Security.ProcessRunner>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Security.IPythonCodeExecutor, LmKitOmniApi.Infrastructure.AI.Security.PythonContainerExecutor>();
+
+// Container-backed headless-browser BROWSE tool (disabled by default — see
+// BrowserFetchOptions). Options bound from "BrowserTool"; reuses the shared
+// IProcessRunner seam and is scoped like the Python executor above. UNLIKE the Python
+// sandbox this container HAS network (browsing needs egress), so the SSRF gate
+// (ToolSandboxService.ValidateUrlAsync) + optional AllowedHosts allowlist are the
+// primary defense. When disabled, the executor reports IsEnabled=false and the
+// browse_web tool is never offered.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Security.BrowserFetchOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Security.BrowserFetchOptions.SectionName));
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Security.IBrowserFetchExecutor, LmKitOmniApi.Infrastructure.AI.Security.BrowserFetchExecutor>();
 builder.Services.AddScoped<AgentToolGateway>();
 
 // External database agent (read-only by default; db_query tool gated off unless

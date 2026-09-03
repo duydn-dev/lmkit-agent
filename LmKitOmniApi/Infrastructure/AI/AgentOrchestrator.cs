@@ -50,6 +50,11 @@ public class AgentOrchestrator : IAgentOrchestrator
     // which is only forwarded to the dispatcher) because CreateNativeActionToolsAsync
     // must check IsEnabled to decide whether to offer the run_python tool.
     private readonly IPythonCodeExecutor _pythonExecutor;
+
+    // Container-backed headless-browser BROWSE tool. Held here (like _pythonExecutor)
+    // because CreateNativeActionToolsAsync must check IsEnabled to decide whether to
+    // offer the browse_web tool.
+    private readonly IBrowserFetchExecutor _browserExecutor;
     private readonly LmKitOmniApi.Infrastructure.AI.Database.DbQueryService _dbQuery;
 
     // ── Memory ──
@@ -99,6 +104,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["SUMMARIZE"] = "AnalyzeText",
         ["CODE"] = "RunCode",
         ["PYTHON"] = "RunPython",
+        ["BROWSE"] = "BrowseWeb",
         ["DBSCHEMA"] = "DbQuery",
         ["DBQUERY"] = "DbQuery",
         ["DBWRITE"] = "DbWrite",
@@ -120,6 +126,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         IPromptGuardService promptGuard,
         IExecutionSandboxEngine executionSandbox,
         IPythonCodeExecutor pythonExecutor,
+        IBrowserFetchExecutor browserExecutor,
         LmKitOmniApi.Infrastructure.AI.Database.DbQueryService dbQueryService,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
@@ -141,6 +148,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         _sandbox = sandbox;
         _promptGuard = promptGuard;
         _pythonExecutor = pythonExecutor;
+        _browserExecutor = browserExecutor;
         _dbQuery = dbQueryService;
         _mcpClient = mcpClient;
         _telemetry = telemetry;
@@ -162,6 +170,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             toolPermission,
             executionSandbox,
             pythonExecutor,
+            browserExecutor,
             dbQueryService,
             resources,
             multiAgent,
@@ -631,6 +640,24 @@ public class AgentOrchestrator : IAgentOrchestrator
                 (q, ct) => invoke("PYTHON", q, ct)));
         }
 
+        // Headless-browser page fetch (read-only "computer-use" slice). Offered ONLY when
+        // an operator has explicitly enabled AND provisioned the browser container
+        // (_browserExecutor.IsEnabled); when disabled it is simply never registered (no
+        // error surfaced) — same gating shape as run_python. The whitelist filters
+        // registration here, and the invoke path still runs the full RBAC check on the
+        // mapped "BrowseWeb" permission (ActionToToolMap), which is approval-required, so
+        // navigation is human-gated before it ever runs. NAVIGATION IS NETWORKED EGRESS:
+        // the executor SSRF-validates the URL before launching the browser.
+        if (_browserExecutor.IsEnabled && ActionAllowed("BROWSE"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "browse_web",
+                "Mở MỘT trang web (URL http/https) trong trình duyệt ẩn cô lập và trả về nội dung văn bản đã kết xuất. "
+                    + "Chỉ đọc — không đăng nhập, không nhấp/nhập liệu. Có thể thêm hướng dẫn sau dấu \"|\" (vd: \"https://…|tóm tắt giá\"). "
+                    + "Cần người dùng phê duyệt; địa chỉ nội bộ/loopback bị chặn.",
+                (q, ct) => invoke("BROWSE", q, ct)));
+        }
+
         // External database agent (read-only). Two model-free tools, offered only
         // when an operator enabled the feature (_dbQuery.IsEnabled) and the mapped
         // "DbQuery" permission is allowed. The agent first gets the relevant schema,
@@ -867,9 +894,10 @@ public class AgentOrchestrator : IAgentOrchestrator
     // CODE and PYTHON are retry-safe: both run side-effect-free from the app's
     // perspective — the Jint sandbox (no network/filesystem/CLR) and the ephemeral
     // no-network Python container — so re-running a snippet cannot double-apply
-    // anything.
+    // anything. BROWSE is likewise retry-safe: it is a read-only page fetch (like
+    // WEB_SEARCH) that mutates no application state.
     private static bool IsRetrySafeAction(string action) => action is
-        "RAG" or "VISION" or "SPEECH" or "NLP" or "WEB_SEARCH" or "DELEGATE" or "SUMMARIZE" or "CODE" or "PYTHON";
+        "RAG" or "VISION" or "SPEECH" or "NLP" or "WEB_SEARCH" or "DELEGATE" or "SUMMARIZE" or "CODE" or "PYTHON" or "BROWSE";
 
     /// <summary>
     /// Build system prompt using template engine. A custom-agent persona, when

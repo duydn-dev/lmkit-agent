@@ -50,6 +50,7 @@ public sealed class AgentActionDispatcher
     private readonly IToolPermissionService _toolPermission;
     private readonly IExecutionSandboxEngine _executionSandbox;
     private readonly IPythonCodeExecutor _pythonExecutor;
+    private readonly IBrowserFetchExecutor _browserExecutor;
     private readonly LmKitOmniApi.Infrastructure.AI.Database.DbQueryService _dbQuery;
     private readonly UserResourceAccessService _resources;
     private readonly MultiAgentOrchestrator _multiAgent;
@@ -65,6 +66,7 @@ public sealed class AgentActionDispatcher
         IToolPermissionService toolPermission,
         IExecutionSandboxEngine executionSandbox,
         IPythonCodeExecutor pythonExecutor,
+        IBrowserFetchExecutor browserExecutor,
         LmKitOmniApi.Infrastructure.AI.Database.DbQueryService dbQuery,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
@@ -79,6 +81,7 @@ public sealed class AgentActionDispatcher
         _toolPermission = toolPermission;
         _executionSandbox = executionSandbox;
         _pythonExecutor = pythonExecutor;
+        _browserExecutor = browserExecutor;
         _dbQuery = dbQuery;
         _resources = resources;
         _multiAgent = multiAgent;
@@ -147,6 +150,10 @@ public sealed class AgentActionDispatcher
             // ── Code Interpreter (v2: sandboxed Python via isolated container) ──
             case "PYTHON":
                 return await ExecutePythonAsync(tenantId, userId, query, fileSink, ct);
+
+            // ── Headless-browser page fetch (read-only "computer-use" slice) ──
+            case "BROWSE":
+                return await ExecuteBrowseAsync(tenantId, userId, query, ct);
 
             // ── External database agent (read-only) ──
             case "DBSCHEMA":
@@ -336,6 +343,29 @@ public sealed class AgentActionDispatcher
                 fileSink.Add(file);
         }
         return codeResult.Output;
+    }
+
+    /// <summary>
+    /// BROWSE action: fetches and renders ONE web page in the OS-isolated browser
+    /// container (see <see cref="IBrowserFetchExecutor"/>) and returns the rendered
+    /// text. The single-string query is the URL, optionally "url|instruction" — only
+    /// the URL portion is used to navigate (the trailing instruction is context for the
+    /// agent's own reasoning, never executed). Mirrors the PYTHON case: the whitelist
+    /// guard at the top of <see cref="ExecuteAsync"/> covers this via the BROWSE →
+    /// BrowseWeb mapping, and the orchestrator has already run the RBAC check on
+    /// "BrowseWeb" (approval-required) and only offered the tool when the browser is
+    /// enabled. The executor SSRF-validates the URL and never throws for fetch-level
+    /// failures — errors come back as bracketed, agent-readable text. Parameters are
+    /// recorded as null (like CODE/PYTHON); the orchestrator's audit layer stores the query.
+    /// </summary>
+    private async Task<string> ExecuteBrowseAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
+    {
+        _logger.LogInformation("🌐 Fetching a web page in the browser sandbox...");
+        var separator = query.IndexOf('|');
+        var url = (separator >= 0 ? query[..separator] : query).Trim();
+        var fetchResult = await _browserExecutor.FetchAsync(url, tenantId, userId ?? Guid.Empty, ct);
+        await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "BrowseWeb", null, ct);
+        return fetchResult.Text;
     }
 
     private async Task<string> ExecuteDbSchemaAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)

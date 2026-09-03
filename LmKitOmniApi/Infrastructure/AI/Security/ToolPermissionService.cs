@@ -38,12 +38,14 @@ public class ToolPermissionService : IToolPermissionService
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
             "AnalyzeText", "QueryKnowledgeBase", "IngestDocument",
             "ReadWordDocument", "ReadExcelDocument", "RunCode", "RunPython", "DbQuery", "DbWrite",
+            "BrowseWeb", // headless-browser page fetch — networked egress, approval-required below
             "Delegate", "MCP" // C3 Fix: added for action→tool mapping
         },
         ["User"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
             "AnalyzeText", "QueryKnowledgeBase", "RunCode", "RunPython", "DbQuery", "DbWrite",
+            "BrowseWeb", // headless-browser page fetch — networked egress, approval-required below
             "Delegate" // C3 Fix: Users can delegate but not use MCP
         },
         ["Guest"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -58,7 +60,11 @@ public class ToolPermissionService : IToolPermissionService
         "IngestDocument", "DeleteDocument",
         // Database writes ALWAYS require human approval; on approval the write path
         // backs up the target table before executing. Reads ("DbQuery") run directly.
-        "DbWrite"
+        "DbWrite",
+        // Headless-browser navigation ALWAYS requires human approval: it is
+        // side-effecting egress (a live outbound request to an operator-approved URL),
+        // so a human vets the target before the browser is launched.
+        "BrowseWeb"
     };
 
     // Rate limits: max invocations per minute per user
@@ -75,6 +81,9 @@ public class ToolPermissionService : IToolPermissionService
         // default, and unavailable to Guests entirely (see RoleToolPermissions).
         ["RunCode"] = 5,
         ["RunPython"] = 5,
+        // Browsing spins a container and makes live network egress — the most expensive
+        // and side-effecting tool — so it carries the same tight limit as code execution.
+        ["BrowseWeb"] = 5,
         ["DbQuery"] = 10,
         ["DbWrite"] = 3,
         ["ReadWordDocument"] = 15,
