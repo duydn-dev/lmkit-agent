@@ -3,8 +3,11 @@ using Microsoft.AspNetCore.Mvc;
 using LmKitOmniApi.Application.Speech.Commands;
 using LmKitOmniApi.Models;
 using LmKitOmniApi.Infrastructure.AI.Security;
+using LmKitOmniApi.Infrastructure.AI.Voice;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
+using System.Text.Json;
 
 namespace LmKitOmniApi.Controllers;
 
@@ -217,6 +220,189 @@ public class SpeechController : ApiControllerBase
             _logger.LogError(ex, "Audio language detection failed.");
             return Problem(statusCode: 500, title: "Audio language detection failed.");
         }
+    }
+
+    /// <summary>
+    /// Text-to-speech: POST /api/speech/synthesize with <c>{ text, voice? }</c>.
+    /// OFF BY DEFAULT — returns 501 with a clear message unless <c>Voice:TtsEnabled</c> is true
+    /// AND an <see cref="ISpeechSynthesizer"/> engine is registered and available. LM-Kit.NET
+    /// ships no speech-synthesis engine, so out of the box this always answers 501.
+    /// On success returns <c>audio/wav</c> bytes.
+    /// </summary>
+    [HttpPost("synthesize")]
+    public async Task<IActionResult> Synthesize(
+        [FromBody] SpeechSynthesisRequest request,
+        [FromServices] IOptions<VoiceOptions> voiceOptions,
+        CancellationToken cancellationToken)
+    {
+        var text = request?.Text?.Trim() ?? string.Empty;
+        if (text.Length == 0)
+            return BadRequest(new { message = "Text to synthesize must not be empty." });
+
+        var maxChars = voiceOptions.Value.MaxSynthesisCharacters;
+        if (maxChars > 0 && text.Length > maxChars)
+            return BadRequest(new { message = $"Text must not exceed {maxChars} characters." });
+
+        try
+        {
+            var result = await _mediator.Send(new SynthesizeSpeechCommand
+            {
+                Text = text,
+                Voice = request?.Voice
+            }, cancellationToken);
+
+            if (result.Status == SynthesizeSpeechStatus.EngineNotConfigured)
+                return StatusCode(StatusCodes.Status501NotImplemented, new { message = result.Message });
+
+            return File(result.Audio, result.ContentType);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Speech synthesis failed.");
+            return Problem(statusCode: 500, title: "Speech synthesis failed.");
+        }
+    }
+
+    /// <summary>
+    /// Streaming / partial speech-to-text: POST /api/speech/transcribe-stream with a multipart
+    /// <c>audio</c> WAV blob. Streams partial transcripts as Server-Sent Events — one
+    /// <c>data: {"type":"partial",...}</c> per decoded segment, a final
+    /// <c>data: {"type":"final",...}</c>, then <c>data: "[DONE]"</c>.
+    ///
+    /// Validation (auth / presence / size / format) runs before any model work so it is
+    /// CI-verifiable. The decode itself needs the whisper model and is LIVE-ONLY: LM-Kit
+    /// transcribes a complete WAV and emits segments incrementally, so latency for a truly live
+    /// speaker (mic windowing/endpointing) cannot be measured here.
+    /// </summary>
+    [HttpPost("transcribe-stream")]
+    [RequestSizeLimit(MaxUploadedAudioRequestBytes)]
+    public async Task TranscribeStream([FromForm] IFormFile? audio, CancellationToken cancellationToken)
+    {
+        if (!TryGetIdentity(out var tenantId, out var userId))
+        {
+            Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+
+        var validationError = ValidateAudioUpload(audio, out var scratchExtension);
+        if (validationError is not null)
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await Response.WriteAsJsonAsync(new { message = validationError }, cancellationToken);
+            return;
+        }
+
+        var uploadDir = Path.Combine(
+            Directory.GetCurrentDirectory(),
+            "Uploads",
+            tenantId.ToString("N"),
+            userId.ToString("N"),
+            "SpeechStream");
+        Directory.CreateDirectory(uploadDir);
+        var savedPath = Path.Combine(uploadDir, $"{Guid.NewGuid():N}{scratchExtension}");
+
+        try
+        {
+            await using (var stream = new FileStream(savedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                await audio!.CopyToAsync(stream, cancellationToken);
+            }
+
+            Response.Headers.Append("Content-Type", "text/event-stream");
+            Response.Headers.Append("Cache-Control", "no-cache");
+            Response.Headers.Append("Connection", "keep-alive");
+
+            var command = new TranscribeAudioStreamCommand { AudioPath = savedPath, EnableVad = true };
+            try
+            {
+                await foreach (var partial in _mediator.CreateStream(command, cancellationToken).WithCancellation(cancellationToken))
+                    await WriteTranscriptionPartialAsync(partial, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex) when (ex is LMKit.Exceptions.LicenseException
+                or LMKit.Exceptions.ModelNotLoadedException
+                or LMKit.Exceptions.ModelNotDownloadedException
+                or LMKit.Exceptions.InvalidModelException)
+            {
+                _logger.LogWarning(ex, "Speech model unavailable for streaming transcription.");
+                await WriteSseMarkerAsync("[ERROR]: mô hình nhận dạng giọng nói chưa sẵn sàng.", cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Streaming transcription failed.");
+                await WriteSseMarkerAsync("[ERROR]: transcription failed.", cancellationToken);
+            }
+
+            await WriteSseMarkerAsync("[DONE]", cancellationToken);
+        }
+        finally
+        {
+            try
+            {
+                if (System.IO.File.Exists(savedPath)) System.IO.File.Delete(savedPath);
+                if (Directory.Exists(uploadDir) && !Directory.EnumerateFileSystemEntries(uploadDir).Any())
+                    Directory.Delete(uploadDir);
+            }
+            catch (Exception cleanupError)
+            {
+                _logger.LogWarning(cleanupError, "Unable to delete temporary speech stream upload {Path}", savedPath);
+            }
+        }
+    }
+
+    /// <summary>Shared upload validation for the streaming endpoint; mirrors transcribe-upload.</summary>
+    private static string? ValidateAudioUpload(IFormFile? audio, out string scratchExtension)
+    {
+        scratchExtension = ".bin";
+        if (audio is null || audio.Length == 0)
+            return "Vui lòng gửi kèm file âm thanh trong trường 'audio'.";
+        if (audio.Length > MaxUploadedAudioBytes)
+            return "File âm thanh không được vượt quá 25 MB.";
+
+        var extension = Path.GetExtension(Path.GetFileName(audio.FileName ?? string.Empty));
+        var normalizedContentType = audio.ContentType?.Split(';')[0].Trim() ?? string.Empty;
+        var contentTypeAllowed = AllowedAudioContentTypes.Contains(normalizedContentType);
+        var extensionAllowed = !string.IsNullOrEmpty(extension) && AllowedAudioExtensions.Contains(extension);
+        if (!contentTypeAllowed && !extensionAllowed)
+            return "Định dạng âm thanh không được hỗ trợ. Chấp nhận: webm, ogg, wav, mp3, m4a/mp4.";
+
+        scratchExtension = extensionAllowed
+            ? extension!.ToLowerInvariant()
+            : normalizedContentType.ToLowerInvariant() switch
+            {
+                "audio/webm" => ".webm",
+                "audio/ogg" => ".ogg",
+                "audio/wav" => ".wav",
+                "audio/mpeg" => ".mp3",
+                "audio/mp4" => ".m4a",
+                _ => ".bin"
+            };
+        return null;
+    }
+
+    private async Task WriteTranscriptionPartialAsync(TranscriptionPartial partial, CancellationToken ct)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = partial.Kind == TranscriptionPartialKind.Final ? "final" : "partial",
+            text = partial.Text,
+            start = partial.StartSeconds,
+            end = partial.EndSeconds,
+            confidence = partial.Confidence,
+            language = partial.Language
+        });
+        await Response.WriteAsync($"data: {payload}\n\n", ct);
+        await Response.Body.FlushAsync(ct);
+    }
+
+    private async Task WriteSseMarkerAsync(string marker, CancellationToken ct)
+    {
+        // JSON-encode the marker so it stays a single SSE event (same convention as ChatController).
+        await Response.WriteAsync($"data: {JsonSerializer.Serialize(marker)}\n\n", ct);
+        await Response.Body.FlushAsync(ct);
     }
 
     [HttpGet("token")]

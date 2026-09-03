@@ -66,6 +66,19 @@ public class AudioLanguageDetectionResponse
     public float Confidence { get; set; }
 }
 
+/// <summary>
+/// Body of <c>POST /api/speech/synthesize</c>. Wire shape: <c>{ "text": string, "voice"?: string }</c>.
+/// Length/empty validation runs in SpeechController against <c>Voice:MaxSynthesisCharacters</c>.
+/// </summary>
+public class SpeechSynthesisRequest
+{
+    [Required]
+    public string Text { get; set; } = string.Empty;
+
+    /// <summary>Optional engine voice/preset; falls back to <c>Voice:DefaultVoice</c>.</summary>
+    public string? Voice { get; set; }
+}
+
 public class ClassifyTextRequest
 {
     [Required]
