@@ -9,6 +9,8 @@
   <ItemGroup>
     <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
     <PackageReference Include="Jint" Version="4.15.3" />
+    <PackageReference Include="Livekit.Rtc.Dotnet" Version="0.1.4" />
+    <PackageReference Include="Livekit.Server.Sdk.Dotnet" Version="1.2.3" />
     <PackageReference Include="LM-Kit.NET" Version="2026.8.2" />
     <PackageReference Include="MediatR" Version="14.2.0" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />

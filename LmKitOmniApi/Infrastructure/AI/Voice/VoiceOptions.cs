@@ -49,4 +49,18 @@ public sealed class VoiceOptions
 
     /// <summary>Wall-clock budget for one Piper synthesis run.</summary>
     public int SynthesisTimeoutSeconds { get; set; } = 30;
+
+    // ── LiveKit real-time room agent (used only when LiveAgentEnabled) ──
+    // All empty by default → the hosted service logs "not configured" and stands down.
+
+    /// <summary>LiveKit server URL, e.g. wss://livekit.example.com.</summary>
+    public string LiveKitUrl { get; set; } = string.Empty;
+
+    /// <summary>LiveKit API key/secret used to mint the agent's join token.</summary>
+    public string LiveKitApiKey { get; set; } = string.Empty;
+    public string LiveKitApiSecret { get; set; } = string.Empty;
+
+    /// <summary>Room the agent joins, and the identity/voice it uses.</summary>
+    public string Room { get; set; } = "omni-room";
+    public string AgentIdentity { get; set; } = "voice-agent";
 }

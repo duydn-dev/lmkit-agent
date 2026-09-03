@@ -267,6 +267,13 @@ builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.DbQueryServic
 builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Voice.VoiceOptions>(
     builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Voice.VoiceOptions.SectionName));
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Voice.ISpeechSynthesizer, LmKitOmniApi.Infrastructure.AI.Voice.PiperSpeechSynthesizer>();
+// Real voice-turn seams + room agent (used only when Voice:LiveAgentEnabled). The LiveKit
+// media session is transient (one Room per join) and holds the native runtime; it is
+// constructed only when the hosted service actually joins a room.
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Voice.IVoiceTurnStt, LmKitOmniApi.Infrastructure.AI.Voice.LmKitVoiceTurnStt>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Voice.IVoiceTurnLlm, LmKitOmniApi.Infrastructure.AI.Voice.AgentVoiceTurnLlm>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Voice.IVoiceRoomAgent, LmKitOmniApi.Infrastructure.AI.Voice.VoiceRoomAgent>();
+builder.Services.AddTransient<LmKitOmniApi.Infrastructure.AI.Voice.ILiveKitMediaSession, LmKitOmniApi.Infrastructure.AI.Voice.LiveKitMediaSession>();
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.AI.Voice.VoiceRoomAgentHostedService>();
 
 // Filter Pipeline (ordered execution)
