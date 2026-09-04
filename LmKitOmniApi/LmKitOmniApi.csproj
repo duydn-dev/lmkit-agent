@@ -11,7 +11,7 @@
     <PackageReference Include="Jint" Version="4.16.1" />
     <PackageReference Include="Livekit.Rtc.Dotnet" Version="0.1.4" />
     <PackageReference Include="Livekit.Server.Sdk.Dotnet" Version="1.2.3" />
-    <PackageReference Include="LM-Kit.NET" Version="2026.8.6" />
+    <PackageReference Include="LM-Kit.NET" Version="2026.9.0" />
     <PackageReference Include="MediatR" Version="14.2.0" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
     <PackageReference Include="ModelContextProtocol" Version="2.0.0" />
