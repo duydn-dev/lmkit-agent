@@ -31,4 +31,13 @@ public sealed record AgentRequestOptions
     /// document ids (already validated as accessible to the caller).
     /// </summary>
     public IReadOnlyCollection<Guid>? KnowledgeDocumentIds { get; init; }
+
+    /// <summary>
+    /// When true, the model's own chain-of-thought (LM-Kit
+    /// <c>InternalReasoning</c> segments) is streamed to the client as
+    /// <c>[REASONING]:</c> markers and shown in a collapsible panel — DeepSeek-R1
+    /// style. Off by default (it raises latency/token cost and depends on model
+    /// support); operator-gated via the "ChatReasoning" config section.
+    /// </summary>
+    public bool ShowReasoning { get; init; }
 }

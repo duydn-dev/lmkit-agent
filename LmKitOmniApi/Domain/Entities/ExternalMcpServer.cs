@@ -23,7 +23,10 @@ public sealed class ExternalMcpServer
     /// How outbound requests to this server are authenticated:
     /// <c>"Static"</c> (default) uses only <see cref="HeadersJson"/>;
     /// <c>"ClientCredentials"</c> fetches an OAuth 2.0 bearer token (RFC 6749 §4.4)
-    /// from <see cref="OAuthTokenUrl"/> and injects it as an Authorization header.
+    /// from <see cref="OAuthTokenUrl"/> and injects it as an Authorization header;
+    /// <c>"AuthorizationCode"</c> uses a per-user OAuth 2.0 authorization-code grant
+    /// (RFC 6749 §4.1 + PKCE RFC 7636): each end user connects via <see cref="OAuthAuthorizeUrl"/>
+    /// and the resulting per-user bearer is injected on their behalf.
     /// </summary>
     [MaxLength(32)]
     public string AuthMode { get; set; } = "Static";
@@ -36,6 +39,14 @@ public sealed class ExternalMcpServer
 
     [MaxLength(500)]
     public string? OAuthTokenUrl { get; set; }
+
+    /// <summary>
+    /// The OAuth 2.0 authorization endpoint the user's browser is redirected to for the
+    /// authorization-code grant. Only used when <see cref="AuthMode"/> is
+    /// <c>"AuthorizationCode"</c>.
+    /// </summary>
+    [MaxLength(500)]
+    public string? OAuthAuthorizeUrl { get; set; }
 
     /// <summary>Optional space-separated OAuth scopes sent with the token request.</summary>
     [MaxLength(1000)]

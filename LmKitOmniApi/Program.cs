@@ -218,8 +218,29 @@ builder.Services.AddScoped<IExecutionSandboxEngine, ExecutionSandboxEngine>();
 // JS sandbox engine above. When disabled, the executor reports IsEnabled=false
 // and the run_python tool is never offered.
 builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Security.CodeInterpreterOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Security.CodeInterpreterOptions.SectionName));
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.ChatReasoningOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.ChatReasoningOptions.SectionName));
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Security.IProcessRunner, LmKitOmniApi.Infrastructure.AI.Security.ProcessRunner>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Security.IPythonCodeExecutor, LmKitOmniApi.Infrastructure.AI.Security.PythonContainerExecutor>();
+
+// Container-backed headless-browser BROWSE tool (disabled by default — see
+// BrowserFetchOptions). Options bound from "BrowserTool"; reuses the shared
+// IProcessRunner seam and is scoped like the Python executor above. UNLIKE the Python
+// sandbox this container HAS network (browsing needs egress), so the SSRF gate
+// (ToolSandboxService.ValidateUrlAsync) + optional AllowedHosts allowlist are the
+// primary defense. When disabled, the executor reports IsEnabled=false and the
+// browse_web tool is never offered.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Security.BrowserFetchOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Security.BrowserFetchOptions.SectionName));
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Security.IBrowserFetchExecutor, LmKitOmniApi.Infrastructure.AI.Security.BrowserFetchExecutor>();
+
+// Native LM-Kit fetch-and-read tool (disabled by default — see WebReadOptions). Options
+// bound from "WebRead". Wraps LM-Kit.NET's built-in WebReadTool behind a public-web-only
+// WebEgressPolicy; the LM-Kit fetch is isolated behind the IWebPageReader seam so the
+// service (SSRF pre-flight + length cap + citation) is hermetically testable. When
+// disabled, the service reports IsEnabled=false and the fetch_web tool is never offered.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Web.WebReadOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Web.WebReadOptions.SectionName));
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.IWebPageReader, LmKitOmniApi.Infrastructure.AI.Web.LmKitWebPageReader>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.IWebReadService, LmKitOmniApi.Infrastructure.AI.Web.LmKitWebReadService>();
+
 builder.Services.AddScoped<AgentToolGateway>();
 
 // External database agent (read-only by default; db_query tool gated off unless
@@ -239,6 +260,31 @@ builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.ISchemaEmbedd
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.SchemaIndexingService>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.ISchemaRetriever>(sp => sp.GetRequiredService<LmKitOmniApi.Infrastructure.AI.Database.SchemaIndexingService>());
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.DbQueryService>();
+
+// ============================================================
+// 🎙️ Voice "Live" groundwork (OFF BY DEFAULT — see VoiceOptions)
+// ============================================================
+// TTS: SynthesizeSpeechCommandHandler is auto-registered by MediatR. The registered engine
+// is Piper (local/offline CLI), kept off by default — LM-Kit.NET (2026.8.2) ships NO
+// speech-synthesis, and Piper's IsAvailable is false until Voice:TtsEnabled is true AND the
+// binary + a voice model are configured, so the handler still returns "engine not configured"
+// (HTTP 501) until an operator provisions Piper.
+// Streaming STT: TranscribeAudioStreamCommandHandler (MediatR) streams partial transcripts
+// behind the shared speech inference lease.
+// Room agent: VoiceRoomAgent and its STT/LLM/TTS turn seams are a live-only skeleton and are
+// intentionally NOT registered (they require LiveKit media this build lacks). The hosted
+// service below is a STRICT NO-OP unless Voice:LiveAgentEnabled is true (default false).
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Voice.VoiceOptions>(
+    builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Voice.VoiceOptions.SectionName));
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Voice.ISpeechSynthesizer, LmKitOmniApi.Infrastructure.AI.Voice.PiperSpeechSynthesizer>();
+// Real voice-turn seams + room agent (used only when Voice:LiveAgentEnabled). The LiveKit
+// media session is transient (one Room per join) and holds the native runtime; it is
+// constructed only when the hosted service actually joins a room.
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Voice.IVoiceTurnStt, LmKitOmniApi.Infrastructure.AI.Voice.LmKitVoiceTurnStt>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Voice.IVoiceTurnLlm, LmKitOmniApi.Infrastructure.AI.Voice.AgentVoiceTurnLlm>();
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Voice.IVoiceRoomAgent, LmKitOmniApi.Infrastructure.AI.Voice.VoiceRoomAgent>();
+builder.Services.AddTransient<LmKitOmniApi.Infrastructure.AI.Voice.ILiveKitMediaSession, LmKitOmniApi.Infrastructure.AI.Voice.LiveKitMediaSession>();
+builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.AI.Voice.VoiceRoomAgentHostedService>();
 
 // Filter Pipeline (ordered execution)
 builder.Services.AddScoped<IAgentFilter, InputSanitizationFilter>();
@@ -361,6 +407,10 @@ builder.Services.AddHttpClient(LmKitOmniApi.Infrastructure.AI.Mcp.McpOAuthTokenP
     ConnectCallback = SsrfSafeConnect.CreateVettedConnectCallback()
 });
 builder.Services.AddSingleton(TimeProvider.System);
+// Per-user OAuth 2.0 authorization-code support for MCP servers: an encrypted per-user
+// token store (scoped, wraps HermesDbContext) and the PKCE/state store (wraps IDistributedCache).
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.IMcpUserTokenStore, LmKitOmniApi.Infrastructure.AI.Mcp.McpUserTokenStore>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.McpOAuthStateStore>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.IMcpOAuthTokenProvider, LmKitOmniApi.Infrastructure.AI.Mcp.McpOAuthTokenProvider>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Mcp.McpClientService>();
 

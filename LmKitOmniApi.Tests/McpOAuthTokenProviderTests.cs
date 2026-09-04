@@ -129,6 +129,7 @@ public sealed class McpOAuthTokenProviderTests
             new StubHttpClientFactory(handler),
             new ToolSandboxService(NullLogger<ToolSandboxService>.Instance),
             protector,
+            new UnusedUserTokenStore(),
             clock,
             NullLogger<McpOAuthTokenProvider>.Instance);
         return (provider, handler, clock, protector);
@@ -175,5 +176,16 @@ public sealed class McpOAuthTokenProviderTests
         private readonly HttpMessageHandler _handler;
         public StubHttpClientFactory(HttpMessageHandler handler) => _handler = handler;
         public HttpClient CreateClient(string name) => new(_handler, disposeHandler: false);
+    }
+
+    // The client-credentials grant never touches the per-user token store.
+    private sealed class UnusedUserTokenStore : IMcpUserTokenStore
+    {
+        public Task<StoredUserToken?> GetAsync(Guid tenantId, Guid userId, Guid serverId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task SaveAsync(Guid tenantId, Guid userId, Guid serverId, string accessToken, string? refreshToken, DateTimeOffset expiresAtUtc, string? scope, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<bool> DeleteAsync(Guid tenantId, Guid userId, Guid serverId, CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 }

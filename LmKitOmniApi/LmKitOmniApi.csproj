@@ -8,8 +8,10 @@
 
   <ItemGroup>
     <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
-    <PackageReference Include="Jint" Version="4.15.3" />
-    <PackageReference Include="LM-Kit.NET" Version="2026.8.2" />
+    <PackageReference Include="Jint" Version="4.16.1" />
+    <PackageReference Include="Livekit.Rtc.Dotnet" Version="0.1.4" />
+    <PackageReference Include="Livekit.Server.Sdk.Dotnet" Version="1.2.3" />
+    <PackageReference Include="LM-Kit.NET" Version="2026.9.0" />
     <PackageReference Include="MediatR" Version="14.2.0" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
     <PackageReference Include="ModelContextProtocol" Version="2.0.0" />
@@ -38,11 +40,11 @@
     <PackageReference Include="StackExchange.Redis" Version="2.7.27" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
-    <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
+    <PackageReference Include="HtmlAgilityPack" Version="1.13.0" />
   </ItemGroup>
 
   <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <PackageReference Include="LM-Kit.NET.Backend.Cuda13.Windows" Version="2026.8.2" />
+    <PackageReference Include="LM-Kit.NET.Backend.Cuda13.Windows" Version="2026.8.6" />
   </ItemGroup>
 
 </Project>

@@ -21,6 +21,7 @@ public class HermesDbContext : DbContext
     public DbSet<Project> Projects { get; set; } = null!;
     public DbSet<ScheduledTask> ScheduledTasks { get; set; } = null!;
     public DbSet<ExternalMcpServer> ExternalMcpServers { get; set; } = null!;
+    public DbSet<McpUserOAuthToken> McpUserOAuthTokens { get; set; } = null!;
     public DbSet<GraphEntity> GraphEntities { get; set; } = null!;
     public DbSet<GraphRelationship> GraphRelationships { get; set; } = null!;
     public DbSet<Notification> Notifications { get; set; } = null!;
@@ -32,6 +33,7 @@ public class HermesDbContext : DbContext
     public DbSet<AgentRun> AgentRuns { get; set; } = null!;
     public DbSet<AgentRunStep> AgentRunSteps { get; set; } = null!;
     public DbSet<DatabaseConnection> DatabaseConnections { get; set; } = null!;
+    public DbSet<UserPreference> UserPreferences { get; set; } = null!;
 
     public HermesDbContext(DbContextOptions<HermesDbContext> options) : base(options)
     {
@@ -172,6 +174,16 @@ public class HermesDbContext : DbContext
         modelBuilder.Entity<ExternalMcpServer>()
             .HasOne(e => e.Tenant).WithMany().HasForeignKey(e => e.TenantId).OnDelete(DeleteBehavior.Cascade);
 
+        // Per-user authorization-code tokens: one row per (tenant, user, server). Kept as a
+        // standalone table (no server FK) so the token store stays independently testable;
+        // orphaned tokens are purged explicitly when a server is deleted or leaves the
+        // authorization-code grant (see the MCP server delete/update handlers). The ServerId
+        // index backs those purge queries.
+        modelBuilder.Entity<McpUserOAuthToken>()
+            .HasIndex(t => new { t.TenantId, t.UserId, t.ServerId }).IsUnique();
+        modelBuilder.Entity<McpUserOAuthToken>()
+            .HasIndex(t => t.ServerId);
+
         modelBuilder.Entity<GraphEntity>()
             .HasOne(g => g.Tenant).WithMany().HasForeignKey(g => g.TenantId).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<GraphEntity>()
@@ -229,5 +241,10 @@ public class HermesDbContext : DbContext
             .HasOne(c => c.Tenant).WithMany().HasForeignKey(c => c.TenantId).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<DatabaseConnection>()
             .HasIndex(c => new { c.TenantId, c.Name }).IsUnique();
+
+        // Exactly one custom-instructions row per (tenant, user); the unique index
+        // makes the upsert's "load existing or insert" race-safe at the DB level.
+        modelBuilder.Entity<UserPreference>()
+            .HasIndex(p => new { p.TenantId, p.UserId }).IsUnique();
     }
 }

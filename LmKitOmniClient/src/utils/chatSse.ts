@@ -1,6 +1,7 @@
 export type ChatStreamEvent =
   | { type: 'content'; value: string }
   | { type: 'thinking'; value: string }
+  | { type: 'reasoning'; value: string }
   | { type: 'web-search'; value: string }
   | { type: 'approval'; value: string }
   | { type: 'saved'; value: string }
@@ -55,6 +56,10 @@ function parseDataLine(line: string): ChatStreamEvent | null {
     return { type: 'error', value: value.slice('[ERROR]:'.length).trim() };
   if (value.startsWith('[THINKING]:'))
     return { type: 'thinking', value: value.slice('[THINKING]:'.length).trim() };
+  // Model chain-of-thought (DeepSeek-R1 style). Kept distinct from [THINKING]
+  // (orchestrator pipeline status); the consumer accumulates it into a collapsible panel.
+  if (value.startsWith('[REASONING]:'))
+    return { type: 'reasoning', value: value.slice('[REASONING]:'.length) };
   if (value.startsWith('[WEB_SEARCH]:'))
     return { type: 'web-search', value: value.slice('[WEB_SEARCH]:'.length) };
   if (value.startsWith('[HITL_APPROVAL_REQUIRED:') && value.endsWith(']'))

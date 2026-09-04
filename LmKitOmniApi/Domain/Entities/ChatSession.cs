@@ -22,6 +22,15 @@ public class ChatSession
     /// </summary>
     public bool IsAgentRun { get; set; }
 
+    /// <summary>
+    /// True for a temporary ("Chat tạm thời") conversation — ChatGPT/Gemini style.
+    /// The turns stream normally but no <see cref="ChatMessage"/> rows are persisted,
+    /// and the session is excluded from the chat history list/search exactly like
+    /// <see cref="IsAgentRun"/>, so a temporary chat never appears as a saved
+    /// conversation. Defaults to false, so existing sessions stay ordinary.
+    /// </summary>
+    public bool IsEphemeral { get; set; }
+
     public Tenant? Tenant { get; set; }
     public User? User { get; set; }
     public CustomAgent? CustomAgent { get; set; }

@@ -47,9 +47,15 @@
               class="w-full"
             />
           </div>
-          <fieldset v-if="createForm.authMode === 'ClientCredentials'" class="grid gap-3 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3">
-            <legend class="px-1 text-xs font-semibold text-indigo-900">OAuth 2.0 Client Credentials</legend>
-            <p class="text-xs text-indigo-900">Hệ thống tự lấy access token từ Token URL và gắn vào header <code>Authorization</code>. Client secret được mã hóa và không bao giờ trả lại giao diện.</p>
+          <fieldset v-if="createForm.authMode !== 'Static'" class="grid gap-3 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3">
+            <legend class="px-1 text-xs font-semibold text-indigo-900">
+              {{ createForm.authMode === 'AuthorizationCode' ? 'OAuth 2.0 Authorization Code' : 'OAuth 2.0 Client Credentials' }}
+            </legend>
+            <p class="text-xs text-indigo-900">
+              {{ createForm.authMode === 'AuthorizationCode'
+                ? 'Mỗi người dùng tự kết nối tài khoản của mình qua Authorize URL (PKCE). Token theo từng người dùng được mã hóa và không bao giờ trả lại giao diện.'
+                : 'Hệ thống tự lấy access token từ Token URL và gắn vào header Authorization. Client secret được mã hóa và không bao giờ trả lại giao diện.' }}
+            </p>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div class="grid gap-1">
                 <label for="mcp-create-clientid" class="text-sm font-medium text-gray-700">Client ID</label>
@@ -59,6 +65,10 @@
                 <label for="mcp-create-clientsecret" class="text-sm font-medium text-gray-700">Client Secret</label>
                 <InputText id="mcp-create-clientsecret" v-model="createForm.oauthClientSecret" type="password" class="w-full" autocomplete="off" />
               </div>
+            </div>
+            <div v-if="createForm.authMode === 'AuthorizationCode'" class="grid gap-1">
+              <label for="mcp-create-authorizeurl" class="text-sm font-medium text-gray-700">Authorize URL</label>
+              <InputText id="mcp-create-authorizeurl" v-model="createForm.oauthAuthorizeUrl" type="url" placeholder="https://issuer.example.com/oauth/authorize" class="w-full" />
             </div>
             <div class="grid gap-1">
               <label for="mcp-create-tokenurl" class="text-sm font-medium text-gray-700">Token URL</label>
@@ -152,9 +162,30 @@
                 <span v-if="server.authMode === 'ClientCredentials'" class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border bg-indigo-50 text-indigo-800 border-indigo-200">
                   OAuth Client Credentials
                 </span>
+                <span v-if="server.authMode === 'AuthorizationCode'" class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border bg-indigo-50 text-indigo-800 border-indigo-200">
+                  OAuth Authorization Code
+                </span>
+                <span
+                  v-if="server.authMode === 'AuthorizationCode'"
+                  class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border"
+                  :class="oauthConnected[server.id] ? 'bg-emerald-50 text-emerald-900 border-emerald-200' : 'bg-gray-50 text-gray-600 border-gray-200'"
+                >
+                  {{ oauthConnected[server.id] ? 'Tài khoản đã kết nối' : 'Chưa kết nối tài khoản' }}
+                </span>
               </div>
             </div>
             <div class="flex items-center gap-2 flex-shrink-0">
+              <Button
+                v-if="server.authMode === 'AuthorizationCode'"
+                :label="oauthConnected[server.id] ? 'Kết nối lại' : 'Kết nối'"
+                icon="pi pi-link"
+                outlined
+                :loading="connectingId === server.id"
+                :disabled="togglingId !== null || deletingId !== null"
+                :aria-label="`Kết nối tài khoản của bạn với ${server.name}`"
+                class="!min-h-11 !px-3 !rounded-xl !text-sm !text-indigo-700 !border-indigo-300"
+                @click="connectUser(server)"
+              />
               <Button
                 label="Sửa"
                 icon="pi pi-pencil"
@@ -235,8 +266,10 @@
           />
         </div>
 
-        <fieldset v-if="editForm.authMode === 'ClientCredentials'" class="grid gap-3 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3">
-          <legend class="px-1 text-xs font-semibold text-indigo-900">OAuth 2.0 Client Credentials</legend>
+        <fieldset v-if="editForm.authMode !== 'Static'" class="grid gap-3 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3">
+          <legend class="px-1 text-xs font-semibold text-indigo-900">
+            {{ editForm.authMode === 'AuthorizationCode' ? 'OAuth 2.0 Authorization Code' : 'OAuth 2.0 Client Credentials' }}
+          </legend>
           <div class="grid gap-1">
             <label for="mcp-edit-clientid" class="text-sm font-medium text-gray-700">Client ID</label>
             <InputText id="mcp-edit-clientid" v-model="editForm.oauthClientId" class="w-full" autocomplete="off" />
@@ -245,6 +278,10 @@
             <label for="mcp-edit-clientsecret" class="text-sm font-medium text-gray-700">Client Secret</label>
             <InputText id="mcp-edit-clientsecret" v-model="editForm.oauthClientSecret" type="password" class="w-full" autocomplete="off" aria-describedby="mcp-edit-clientsecret-help" />
             <p id="mcp-edit-clientsecret-help" class="text-xs text-gray-500">Để trống = giữ nguyên secret hiện tại.</p>
+          </div>
+          <div v-if="editForm.authMode === 'AuthorizationCode'" class="grid gap-1">
+            <label for="mcp-edit-authorizeurl" class="text-sm font-medium text-gray-700">Authorize URL</label>
+            <InputText id="mcp-edit-authorizeurl" v-model="editForm.oauthAuthorizeUrl" type="url" placeholder="https://issuer.example.com/oauth/authorize" class="w-full" />
           </div>
           <div class="grid gap-1">
             <label for="mcp-edit-tokenurl" class="text-sm font-medium text-gray-700">Token URL</label>
@@ -275,12 +312,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 
-type AuthMode = 'Static' | 'ClientCredentials';
+type AuthMode = 'Static' | 'ClientCredentials' | 'AuthorizationCode';
 
 interface McpServer {
   id: string;
@@ -292,13 +329,15 @@ interface McpServer {
   authMode: AuthMode;
   oauthClientId?: string | null;
   oauthTokenUrl?: string | null;
+  oauthAuthorizeUrl?: string | null;
   oauthScopes?: string | null;
   hasOAuthSecret: boolean;
 }
 
 const authModeOptions: { label: string; value: AuthMode }[] = [
   { label: 'Chỉ dùng header tĩnh (Static)', value: 'Static' },
-  { label: 'OAuth 2.0 Client Credentials', value: 'ClientCredentials' }
+  { label: 'OAuth 2.0 Client Credentials', value: 'ClientCredentials' },
+  { label: 'OAuth 2.0 Authorization Code', value: 'AuthorizationCode' }
 ];
 interface McpCatalogEntry {
   name: string;
@@ -315,7 +354,7 @@ const creating = ref(false);
 const createError = ref('');
 const emptyCreateForm = () => ({
   name: '', url: '', headersJson: '', isActive: true, trustReadOnlyAnnotations: false,
-  authMode: 'Static' as AuthMode, oauthClientId: '', oauthClientSecret: '', oauthTokenUrl: '', oauthScopes: ''
+  authMode: 'Static' as AuthMode, oauthClientId: '', oauthClientSecret: '', oauthTokenUrl: '', oauthAuthorizeUrl: '', oauthScopes: ''
 });
 const createForm = ref(emptyCreateForm());
 
@@ -324,19 +363,24 @@ const savingEdit = ref(false);
 const editError = ref('');
 const editForm = ref({
   id: '', name: '', url: '', headersJson: '', isActive: true, trustReadOnlyAnnotations: false,
-  authMode: 'Static' as AuthMode, oauthClientId: '', oauthClientSecret: '', oauthTokenUrl: '', oauthScopes: ''
+  authMode: 'Static' as AuthMode, oauthClientId: '', oauthClientSecret: '', oauthTokenUrl: '', oauthAuthorizeUrl: '', oauthScopes: ''
 });
 
 const togglingId = ref<string | null>(null);
 const deletingId = ref<string | null>(null);
+const connectingId = ref<string | null>(null);
+// Per-user OAuth connection state, keyed by server id (authorization-code servers only).
+const oauthConnected = ref<Record<string, boolean>>({});
 
 const loadServers = async () => {
   loading.value = servers.value.length === 0;
   pageError.value = '';
   try {
     const response = await http.get(ApiFactory.MCP.BASE);
-    if (response.ok) servers.value = await response.json();
-    else pageError.value = await readApiError(response, 'Không thể tải cấu hình MCP');
+    if (response.ok) {
+      servers.value = await response.json();
+      void refreshOAuthStatuses();
+    } else pageError.value = await readApiError(response, 'Không thể tải cấu hình MCP');
   } catch (cause) {
     pageError.value = errorMessage(cause, 'Không thể tải cấu hình MCP.');
   } finally {
@@ -365,19 +409,67 @@ const applyCatalogEntry = (entry: McpCatalogEntry) => {
 };
 
 /**
- * OAuth fields for the request body. Sent only in ClientCredentials mode; scopes are
- * omitted when blank. On edit, a blank secret is intentionally sent as '' so the API
- * keeps the stored secret (matching the headers "leave blank = keep" convention).
+ * OAuth fields for the request body. Sent only for the OAuth modes; scopes are omitted when
+ * blank and the authorize URL is added only for AuthorizationCode. On edit, a blank secret is
+ * intentionally sent as '' so the API keeps the stored secret (matching the headers "leave
+ * blank = keep" convention).
  */
-const oauthPayload = (form: { authMode: AuthMode; oauthClientId: string; oauthClientSecret: string; oauthTokenUrl: string; oauthScopes: string }) =>
-  form.authMode === 'ClientCredentials'
-    ? {
-        oauthClientId: form.oauthClientId.trim(),
-        oauthClientSecret: form.oauthClientSecret,
-        oauthTokenUrl: form.oauthTokenUrl.trim(),
-        oauthScopes: form.oauthScopes.trim() || undefined
+const oauthPayload = (form: { authMode: AuthMode; oauthClientId: string; oauthClientSecret: string; oauthTokenUrl: string; oauthAuthorizeUrl: string; oauthScopes: string }) => {
+  if (form.authMode === 'ClientCredentials' || form.authMode === 'AuthorizationCode') {
+    return {
+      oauthClientId: form.oauthClientId.trim(),
+      oauthClientSecret: form.oauthClientSecret,
+      oauthTokenUrl: form.oauthTokenUrl.trim(),
+      oauthScopes: form.oauthScopes.trim() || undefined,
+      ...(form.authMode === 'AuthorizationCode' ? { oauthAuthorizeUrl: form.oauthAuthorizeUrl.trim() } : {})
+    };
+  }
+  return {};
+};
+
+/**
+ * Loads this user's connection state for every authorization-code server so the button can
+ * read "Kết nối" vs "Kết nối lại". Failures are swallowed — the button still works.
+ */
+const refreshOAuthStatuses = async () => {
+  const targets = servers.value.filter((s) => s.authMode === 'AuthorizationCode');
+  await Promise.all(
+    targets.map(async (server) => {
+      try {
+        const response = await http.get(ApiFactory.MCP_OAUTH.STATUS(server.id));
+        if (response.ok) {
+          const status = await response.json();
+          oauthConnected.value = { ...oauthConnected.value, [server.id]: !!status.connected };
+        }
+      } catch {
+        /* ignore — status is a convenience only */
       }
-    : {};
+    })
+  );
+};
+
+/**
+ * Starts the per-user authorization-code flow: asks the API for the provider authorize URL
+ * (which also persists the PKCE verifier + state server-side) and opens it in a popup. The
+ * popup posts back on completion; we then refresh the connection state.
+ */
+const connectUser = async (server: McpServer) => {
+  connectingId.value = server.id;
+  pageError.value = '';
+  try {
+    const response = await http.get(ApiFactory.MCP_OAUTH.AUTHORIZE(server.id));
+    if (!response.ok) {
+      pageError.value = await readApiError(response, 'Không thể bắt đầu kết nối OAuth');
+      return;
+    }
+    const { url } = await response.json();
+    window.open(url, 'mcp-oauth-connect', 'width=600,height=740,noopener=no');
+  } catch (cause) {
+    pageError.value = errorMessage(cause, 'Không thể bắt đầu kết nối OAuth.');
+  } finally {
+    connectingId.value = null;
+  }
+};
 
 const createServer = async () => {
   createError.value = '';
@@ -391,6 +483,12 @@ const createServer = async () => {
   if (createForm.value.authMode === 'ClientCredentials') {
     if (!createForm.value.oauthClientId.trim() || !createForm.value.oauthTokenUrl.trim() || !createForm.value.oauthClientSecret) {
       createError.value = 'OAuth Client Credentials cần Client ID, Client Secret và Token URL.';
+      return;
+    }
+  }
+  if (createForm.value.authMode === 'AuthorizationCode') {
+    if (!createForm.value.oauthClientId.trim() || !createForm.value.oauthAuthorizeUrl.trim() || !createForm.value.oauthTokenUrl.trim() || !createForm.value.oauthClientSecret) {
+      createError.value = 'OAuth Authorization Code cần Client ID, Client Secret, Authorize URL và Token URL.';
       return;
     }
   }
@@ -435,6 +533,7 @@ const openEdit = (server: McpServer) => {
     oauthClientId: server.oauthClientId ?? '',
     oauthClientSecret: '',
     oauthTokenUrl: server.oauthTokenUrl ?? '',
+    oauthAuthorizeUrl: server.oauthAuthorizeUrl ?? '',
     oauthScopes: server.oauthScopes ?? ''
   };
   editError.value = '';
@@ -462,6 +561,10 @@ const saveEdit = async () => {
   }
   if (editForm.value.authMode === 'ClientCredentials' && (!editForm.value.oauthClientId.trim() || !editForm.value.oauthTokenUrl.trim())) {
     editError.value = 'OAuth Client Credentials cần Client ID và Token URL.';
+    return;
+  }
+  if (editForm.value.authMode === 'AuthorizationCode' && (!editForm.value.oauthClientId.trim() || !editForm.value.oauthAuthorizeUrl.trim() || !editForm.value.oauthTokenUrl.trim())) {
+    editError.value = 'OAuth Authorization Code cần Client ID, Authorize URL và Token URL.';
     return;
   }
   savingEdit.value = true;
@@ -503,12 +606,13 @@ const toggleActive = async (server: McpServer) => {
       trustReadOnlyAnnotations: server.trustReadOnlyAnnotations,
       replaceHeaders: false,
       authMode: server.authMode,
-      ...(server.authMode === 'ClientCredentials'
+      ...(server.authMode === 'ClientCredentials' || server.authMode === 'AuthorizationCode'
         ? {
             oauthClientId: server.oauthClientId ?? '',
             oauthClientSecret: '',
             oauthTokenUrl: server.oauthTokenUrl ?? '',
-            oauthScopes: server.oauthScopes ?? undefined
+            oauthScopes: server.oauthScopes ?? undefined,
+            ...(server.authMode === 'AuthorizationCode' ? { oauthAuthorizeUrl: server.oauthAuthorizeUrl ?? '' } : {})
           }
         : {})
     });
@@ -536,8 +640,20 @@ const deleteServer = async (server: McpServer) => {
   }
 };
 
+// The connect popup posts back on completion; refresh the connection badges when it does.
+const onOAuthMessage = (event: MessageEvent) => {
+  if (event.source === window) return;
+  const data = event.data as { type?: string } | null;
+  if (data && data.type === 'mcp-oauth') void refreshOAuthStatuses();
+};
+
 onMounted(() => {
+  window.addEventListener('message', onOAuthMessage);
   void loadCatalog();
   void loadServers();
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('message', onOAuthMessage);
 });
 </script>

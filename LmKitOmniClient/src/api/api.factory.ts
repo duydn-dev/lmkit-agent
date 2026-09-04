@@ -58,6 +58,11 @@ export const ApiFactory = {
     BY_ID: (id: string) => `/api/projects/${id}`,
     SESSIONS: (id: string) => `/api/projects/${id}/sessions`
   },
+  USER: {
+    // User-level custom instructions (ChatGPT-style personalization). GET returns
+    // the caller's instructions (empty object if none); PUT upserts them.
+    CUSTOM_INSTRUCTIONS: '/api/user/custom-instructions'
+  },
   APIKEYS: {
     BASE: '/api/api-keys',
     BY_ID: (id: string) => `/api/api-keys/${id}`
@@ -66,6 +71,12 @@ export const ApiFactory = {
     BASE: '/api/mcp-servers',
     BY_ID: (id: string) => `/api/mcp-servers/${id}`,
     CATALOG: '/api/mcp-servers/catalog'
+  },
+  MCP_OAUTH: {
+    // Per-user OAuth 2.0 authorization-code connect flow.
+    AUTHORIZE: (serverId: string) => `/api/mcp-oauth/${serverId}/authorize`,
+    STATUS: (serverId: string) => `/api/mcp-oauth/${serverId}/status`,
+    TOKEN: (serverId: string) => `/api/mcp-oauth/${serverId}/token`
   },
   KNOWLEDGE: {
     INGEST: '/api/knowledgebase/ingest',

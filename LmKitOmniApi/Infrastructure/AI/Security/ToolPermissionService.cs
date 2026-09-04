@@ -38,12 +38,16 @@ public class ToolPermissionService : IToolPermissionService
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
             "AnalyzeText", "QueryKnowledgeBase", "IngestDocument",
             "ReadWordDocument", "ReadExcelDocument", "RunCode", "RunPython", "DbQuery", "DbWrite",
+            "BrowseWeb", // headless-browser page fetch — networked egress, approval-required below
+            "FetchWeb",  // native LM-Kit fetch-and-read — read-only egress, NOT approval-required (see below)
             "Delegate", "MCP" // C3 Fix: added for action→tool mapping
         },
         ["User"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "SearchWeb", "ReadPdfDocument", "AnalyzeImage", "TranscribeAudio",
             "AnalyzeText", "QueryKnowledgeBase", "RunCode", "RunPython", "DbQuery", "DbWrite",
+            "BrowseWeb", // headless-browser page fetch — networked egress, approval-required below
+            "FetchWeb",  // native LM-Kit fetch-and-read — read-only egress, NOT approval-required (see below)
             "Delegate" // C3 Fix: Users can delegate but not use MCP
         },
         ["Guest"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -58,7 +62,16 @@ public class ToolPermissionService : IToolPermissionService
         "IngestDocument", "DeleteDocument",
         // Database writes ALWAYS require human approval; on approval the write path
         // backs up the target table before executing. Reads ("DbQuery") run directly.
-        "DbWrite"
+        "DbWrite",
+        // Headless-browser navigation ALWAYS requires human approval: it is
+        // side-effecting egress (a live outbound request to an operator-approved URL),
+        // so a human vets the target before the browser is launched.
+        "BrowseWeb"
+        // NOTE: "FetchWeb" is deliberately NOT here. Unlike BrowseWeb it launches no
+        // container and executes no page scripts — it is a read-only, egress-gated
+        // HTTP GET + content extraction (LM-Kit WebReadTool behind a public-web-only
+        // WebEgressPolicy and a pre-flight SSRF check), on par with the un-gated
+        // SearchWeb. It stays enable-gated (off by default) and rate-limited instead.
     };
 
     // Rate limits: max invocations per minute per user
@@ -75,6 +88,12 @@ public class ToolPermissionService : IToolPermissionService
         // default, and unavailable to Guests entirely (see RoleToolPermissions).
         ["RunCode"] = 5,
         ["RunPython"] = 5,
+        // Browsing spins a container and makes live network egress — the most expensive
+        // and side-effecting tool — so it carries the same tight limit as code execution.
+        ["BrowseWeb"] = 5,
+        // Fetch-and-read is the read companion to web search (no container, just an
+        // egress-gated HTTP GET + content extraction), so it mirrors SearchWeb's limit.
+        ["FetchWeb"] = 10,
         ["DbQuery"] = 10,
         ["DbWrite"] = 3,
         ["ReadWordDocument"] = 15,

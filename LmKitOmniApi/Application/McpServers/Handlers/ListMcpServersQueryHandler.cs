@@ -30,6 +30,7 @@ public class ListMcpServersQueryHandler : IRequestHandler<ListMcpServersQuery, L
                 AuthMode = server.AuthMode,
                 OAuthClientId = server.OAuthClientId,
                 OAuthTokenUrl = server.OAuthTokenUrl,
+                OAuthAuthorizeUrl = server.OAuthAuthorizeUrl,
                 OAuthScopes = server.OAuthScopes,
                 HasOAuthSecret = server.OAuthClientSecretProtected != null,
                 CreatedAtUtc = server.CreatedAtUtc,

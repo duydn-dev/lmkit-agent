@@ -313,6 +313,9 @@ namespace LmKitOmniApi.Migrations
                     b.Property<bool>("IsAgentRun")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsEphemeral")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid?>("ProjectId")
                         .HasColumnType("uuid");
 
@@ -595,6 +598,10 @@ namespace LmKitOmniApi.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<string>("OAuthAuthorizeUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<string>("OAuthClientId")
                         .HasMaxLength(300)
                         .HasColumnType("character varying(300)");
@@ -708,6 +715,51 @@ namespace LmKitOmniApi.Migrations
                     b.HasIndex("TenantId");
 
                     b.ToTable("graph_relationships");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.McpUserOAuthToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AccessTokenProtected")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RefreshTokenProtected")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Scope")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("ServerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ServerId");
+
+                    b.HasIndex("TenantId", "UserId", "ServerId")
+                        .IsUnique();
+
+                    b.ToTable("mcp_user_oauth_tokens");
                 });
 
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.Notification", b =>
@@ -1143,6 +1195,37 @@ namespace LmKitOmniApi.Migrations
                     b.HasIndex("TenantId");
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.UserPreference", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AboutUser")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("ResponseStyle")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("user_preferences");
                 });
 
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.UserSession", b =>
