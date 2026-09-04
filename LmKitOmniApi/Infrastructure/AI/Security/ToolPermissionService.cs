@@ -40,6 +40,10 @@ public class ToolPermissionService : IToolPermissionService
             "ReadWordDocument", "ReadExcelDocument", "RunCode", "RunPython", "DbQuery", "DbWrite",
             "BrowseWeb", // headless-browser page fetch — networked egress, approval-required below
             "FetchWeb",  // native LM-Kit fetch-and-read — read-only egress, NOT approval-required (see below)
+            // Native document tools (PDF forms + PDF/Office redaction + PDF/A). Pure local
+            // document ops on the caller's own uploads — no egress, source untouched — so
+            // enable-gated + audited + rate-limited, NOT approval-required.
+            "ReadPdfForm", "FillPdfForm", "RedactPdf", "RedactOffice", "ValidatePdfA",
             "Delegate", "MCP" // C3 Fix: added for action→tool mapping
         },
         ["User"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -48,6 +52,7 @@ public class ToolPermissionService : IToolPermissionService
             "AnalyzeText", "QueryKnowledgeBase", "RunCode", "RunPython", "DbQuery", "DbWrite",
             "BrowseWeb", // headless-browser page fetch — networked egress, approval-required below
             "FetchWeb",  // native LM-Kit fetch-and-read — read-only egress, NOT approval-required (see below)
+            "ReadPdfForm", "FillPdfForm", "RedactPdf", "RedactOffice", "ValidatePdfA", // native document tools (see Admin)
             "Delegate" // C3 Fix: Users can delegate but not use MCP
         },
         ["Guest"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -98,6 +103,13 @@ public class ToolPermissionService : IToolPermissionService
         ["DbWrite"] = 3,
         ["ReadWordDocument"] = 15,
         ["ReadExcelDocument"] = 15,
+        // Native document tools: reads are cheap; fill/redact derive a new file, so a
+        // moderate cap. All are local (no egress/model), so limits are generous vs egress tools.
+        ["ReadPdfForm"] = 20,
+        ["ValidatePdfA"] = 20,
+        ["FillPdfForm"] = 10,
+        ["RedactPdf"] = 10,
+        ["RedactOffice"] = 10,
     };
 
     private const int DefaultRateLimit = 20; // per minute

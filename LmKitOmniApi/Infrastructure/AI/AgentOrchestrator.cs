@@ -63,6 +63,18 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly IWebReadService _webRead;
     private readonly LmKitOmniApi.Infrastructure.AI.Database.DbQueryService _dbQuery;
 
+    // Native document tools (PDF form read/fill + PDF/Office redaction + PDF/A validate).
+    // Held here (like _webRead) so CreateNativeActionToolsAsync can check IsEnabled to decide
+    // whether to offer the read_pdf_form / fill_pdf_form / redact_pdf / redact_office /
+    // validate_pdf_a tools; the actual work runs in the dispatcher via these same services.
+    private readonly LmKitOmniApi.Infrastructure.AI.Documents.IPdfFormService _pdfForm;
+    private readonly LmKitOmniApi.Infrastructure.AI.Documents.IDocumentRedactionService _documentRedaction;
+
+    // LoRA hot-swap: applies a custom agent's adapter to the shared chat model for the whole
+    // inference and removes it before the lease is released (no-op when the feature is off or
+    // no adapter is bound). Isolated behind ILoraModelPort inside the service.
+    private readonly LmKitOmniApi.Infrastructure.AI.Lora.ILoraAdapterService _loraService;
+
     // ── Memory ──
     private readonly IAgentMemoryService _memoryService;
     private readonly ITokenManagementService _tokenManagement;
@@ -115,6 +127,11 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["DBSCHEMA"] = "DbQuery",
         ["DBQUERY"] = "DbQuery",
         ["DBWRITE"] = "DbWrite",
+        ["READ_PDF_FORM"] = "ReadPdfForm",
+        ["FILL_PDF_FORM"] = "FillPdfForm",
+        ["REDACT_PDF"] = "RedactPdf",
+        ["REDACT_OFFICE"] = "RedactOffice",
+        ["VALIDATE_PDFA"] = "ValidatePdfA",
     };
 
     // H6 path-extraction regexes moved to AgentActionDispatcher alongside the
@@ -135,6 +152,9 @@ public class AgentOrchestrator : IAgentOrchestrator
         IPythonCodeExecutor pythonExecutor,
         IBrowserFetchExecutor browserExecutor,
         IWebReadService webRead,
+        LmKitOmniApi.Infrastructure.AI.Documents.IPdfFormService pdfForm,
+        LmKitOmniApi.Infrastructure.AI.Documents.IDocumentRedactionService documentRedaction,
+        LmKitOmniApi.Infrastructure.AI.Lora.ILoraAdapterService loraService,
         LmKitOmniApi.Infrastructure.AI.Database.DbQueryService dbQueryService,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
@@ -158,6 +178,9 @@ public class AgentOrchestrator : IAgentOrchestrator
         _pythonExecutor = pythonExecutor;
         _browserExecutor = browserExecutor;
         _webRead = webRead;
+        _pdfForm = pdfForm;
+        _documentRedaction = documentRedaction;
+        _loraService = loraService;
         _dbQuery = dbQueryService;
         _mcpClient = mcpClient;
         _telemetry = telemetry;
@@ -187,6 +210,8 @@ public class AgentOrchestrator : IAgentOrchestrator
             mcpClient,
             modelManager,
             promptTemplate,
+            pdfForm,
+            documentRedaction,
             logger);
     }
 
@@ -251,6 +276,15 @@ public class AgentOrchestrator : IAgentOrchestrator
         // ── Step 3-4: LM-Kit native tool discovery + ReAct planning ──
         yield return "[THINKING]: 📋 Khởi tạo LM-Kit ReAct agent với công cụ có cấu trúc...\\n";
         await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(cancellationToken);
+        // LoRA hot-swap: apply the custom agent's adapter to the shared chat model for the
+        // whole inference (ReAct tool pass + synthesis pass), then remove it before the lease
+        // is released. `using` disposes loraScope BEFORE inferenceLease (reverse declaration
+        // order) — the adapter is removed while we still hold exclusive model access (Chat
+        // semaphore = 1), and even if inference throws. BeginApplyForAgent returns null (a
+        // no-op) when the feature is off, no adapter is bound, or the registration is
+        // missing/inactive/file-gone, so this is safe unconditionally.
+        var loraModel = await _modelManager.GetChatModelAsync(ct: cancellationToken);
+        using var loraScope = _loraService.BeginApplyForAgent(loraModel, tenantId, options?.LoraAdapterId, cancellationToken);
         _telemetry.RecordReActIteration(activity, 1, "native-react", query);
         var nativeRun = await ExecuteNativeReActAsync(
             tenantId, userId, userRole, sessionId, query, memoryContext, options, cancellationToken, stepSink);
@@ -688,6 +722,54 @@ public class AgentOrchestrator : IAgentOrchestrator
                 (q, ct) => invoke("WEB_FETCH", q, ct)));
         }
 
+        // Native document tools (PDF forms + redaction + PDF/A validation). Pure LM-Kit
+        // document APIs — no model, no network, no container. Offered ONLY when an operator
+        // enabled the feature (DocumentTools:Enabled → _pdfForm/_documentRedaction.IsEnabled);
+        // off by default → never registered. Each tool takes a small JSON payload naming an
+        // OWNED file path (the dispatcher re-validates ownership); fill/redact write the
+        // output into the caller's isolated store and return it as a [FILE:] download.
+        if (_pdfForm.IsEnabled && ActionAllowed("READ_PDF_FORM"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "read_pdf_form",
+                "Đọc các trường biểu mẫu (AcroForm) của MỘT tệp PDF đã tải lên và trả về danh sách trường "
+                    + "(tên, nhãn, loại, giá trị, tuỳ chọn). Chỉ đọc. Payload JSON: {\\\"path\\\":\\\"<đường dẫn PDF của bạn>\\\"}.",
+                (q, ct) => invoke("READ_PDF_FORM", q, ct)));
+        }
+        if (_pdfForm.IsEnabled && ActionAllowed("FILL_PDF_FORM"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "fill_pdf_form",
+                "Điền giá trị vào các trường biểu mẫu của MỘT tệp PDF và trả về tệp PDF mới (đính kèm để tải). "
+                    + "Payload JSON: {\\\"path\\\":\\\"<PDF của bạn>\\\",\\\"values\\\":[{\\\"name\\\":\\\"…\\\",\\\"value\\\":\\\"…\\\"}],\\\"flatten\\\":false}. "
+                    + "Không sửa tệp gốc — tạo tệp mới.",
+                (q, ct) => invoke("FILL_PDF_FORM", q, ct)));
+        }
+        if (_documentRedaction.IsEnabled && ActionAllowed("REDACT_PDF"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "redact_pdf",
+                "Bôi đen (redact) MỘT tệp PDF theo các cụm từ tìm kiếm — XOÁ THẬT nội dung khớp (không chỉ vẽ hộp) "
+                    + "và trả về tệp PDF mới. Payload JSON: {\\\"path\\\":\\\"<PDF của bạn>\\\",\\\"terms\\\":[\\\"…\\\"],\\\"caseSensitive\\\":false,\\\"wholeWord\\\":false}.",
+                (q, ct) => invoke("REDACT_PDF", q, ct)));
+        }
+        if (_documentRedaction.IsEnabled && ActionAllowed("REDACT_OFFICE"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "redact_office",
+                "Bôi đen (redact) MỘT tài liệu Office (.docx/.xlsx/.pptx) theo các cụm từ tìm kiếm và trả về tệp mới. "
+                    + "Payload JSON: {\\\"path\\\":\\\"<tài liệu của bạn>\\\",\\\"terms\\\":[\\\"…\\\"],\\\"caseSensitive\\\":false,\\\"wholeWord\\\":false}.",
+                (q, ct) => invoke("REDACT_OFFICE", q, ct)));
+        }
+        if (_documentRedaction.IsEnabled && ActionAllowed("VALIDATE_PDFA"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "validate_pdf_a",
+                "Kiểm tra MỘT tệp PDF có tuân thủ chuẩn lưu trữ PDF/A hay không và trả về verdict + danh sách vi phạm. "
+                    + "Chỉ đọc. Payload JSON: {\\\"path\\\":\\\"<PDF của bạn>\\\",\\\"level\\\":\\\"PdfA2b\\\"} (level tuỳ chọn: PdfA1b|PdfA2b|PdfA3b).",
+                (q, ct) => invoke("VALIDATE_PDFA", q, ct)));
+        }
+
         // External database agent (read-only). Two model-free tools, offered only
         // when an operator enabled the feature (_dbQuery.IsEnabled) and the mapped
         // "DbQuery" permission is allowed. The agent first gets the relevant schema,
@@ -928,7 +1010,8 @@ public class AgentOrchestrator : IAgentOrchestrator
     // WEB_SEARCH) that mutates no application state. WEB_FETCH is retry-safe for the
     // same reason: a read-only fetch-and-read of one page (LM-Kit WebReadTool).
     private static bool IsRetrySafeAction(string action) => action is
-        "RAG" or "VISION" or "SPEECH" or "NLP" or "WEB_SEARCH" or "DELEGATE" or "SUMMARIZE" or "CODE" or "PYTHON" or "BROWSE" or "WEB_FETCH";
+        "RAG" or "VISION" or "SPEECH" or "NLP" or "WEB_SEARCH" or "DELEGATE" or "SUMMARIZE" or "CODE" or "PYTHON" or "BROWSE" or "WEB_FETCH"
+        or "READ_PDF_FORM" or "VALIDATE_PDFA";
 
     /// <summary>
     /// Build system prompt using template engine. A custom-agent persona, when

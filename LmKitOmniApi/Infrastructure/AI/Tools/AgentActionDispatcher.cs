@@ -59,6 +59,8 @@ public sealed class AgentActionDispatcher
     private readonly McpClientService _mcpClient;
     private readonly LmModelManager _modelManager;
     private readonly PromptTemplateEngine _promptTemplate;
+    private readonly LmKitOmniApi.Infrastructure.AI.Documents.IPdfFormService _pdfForm;
+    private readonly LmKitOmniApi.Infrastructure.AI.Documents.IDocumentRedactionService _documentRedaction;
     private readonly ILogger _logger;
 
     public AgentActionDispatcher(
@@ -76,6 +78,8 @@ public sealed class AgentActionDispatcher
         McpClientService mcpClient,
         LmModelManager modelManager,
         PromptTemplateEngine promptTemplate,
+        LmKitOmniApi.Infrastructure.AI.Documents.IPdfFormService pdfForm,
+        LmKitOmniApi.Infrastructure.AI.Documents.IDocumentRedactionService documentRedaction,
         ILogger logger)
     {
         _ragService = ragService;
@@ -92,6 +96,8 @@ public sealed class AgentActionDispatcher
         _mcpClient = mcpClient;
         _modelManager = modelManager;
         _promptTemplate = promptTemplate;
+        _pdfForm = pdfForm;
+        _documentRedaction = documentRedaction;
         _logger = logger;
     }
 
@@ -170,6 +176,18 @@ public sealed class AgentActionDispatcher
                 return await ExecuteDbQueryAsync(tenantId, userId, query, ct);
             case "DBWRITE":
                 return await ExecuteDbWriteAsync(tenantId, userId, query, ct);
+
+            // ── Native document tools (PDF forms + PDF/Office redaction + PDF/A) ──
+            case "READ_PDF_FORM":
+                return await ExecuteReadPdfFormAsync(tenantId, userId, query, ct);
+            case "FILL_PDF_FORM":
+                return await ExecuteFillPdfFormAsync(tenantId, userId, query, fileSink, ct);
+            case "REDACT_PDF":
+                return await ExecuteRedactPdfAsync(tenantId, userId, query, fileSink, ct);
+            case "REDACT_OFFICE":
+                return await ExecuteRedactOfficeAsync(tenantId, userId, query, fileSink, ct);
+            case "VALIDATE_PDFA":
+                return await ExecuteValidatePdfAAsync(tenantId, userId, query, ct);
 
             default:
                 return $"Unknown action: {action}";
@@ -396,6 +414,193 @@ public sealed class AgentActionDispatcher
         var result = await _webRead.ReadAsync(query, ct);
         await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "FetchWeb", null, ct);
         return result;
+    }
+
+    // ── Native document tools (PDF forms + PDF/Office redaction + PDF/A validation) ──
+    // Each takes a small JSON payload: {"path":"<owned file>", …}. The path is
+    // re-validated against the caller's isolated store before any bytes are read (defence
+    // in depth — the model never supplies an unchecked filesystem path). The services
+    // throw DocumentToolsDisabledException / DocumentValidationException, surfaced here as
+    // bracketed, agent-readable text (mirrors BROWSE/WEB_FETCH — never throws to the loop).
+    // Fill and redact write the derived file into the caller's upload root and add it to
+    // fileSink so it streams back as a [FILE:] download (like the PYTHON case).
+
+    private async Task<string> ExecuteReadPdfFormAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
+    {
+        var input = ResolveOwnedDocumentInput(tenantId, userId, query, out var error);
+        if (input is null) return error!;
+        try
+        {
+            var snapshot = _pdfForm.GetFields(input.Value.Bytes, ct);
+            await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "ReadPdfForm", null, ct);
+            return System.Text.Json.JsonSerializer.Serialize(snapshot);
+        }
+        catch (LmKitOmniApi.Infrastructure.AI.Documents.DocumentToolsDisabledException) { return "[Công cụ tài liệu đang tắt]"; }
+        catch (LmKitOmniApi.Infrastructure.AI.Documents.DocumentValidationException ex) { return $"[Tệp không hợp lệ: {ex.Message}]"; }
+    }
+
+    private async Task<string> ExecuteFillPdfFormAsync(
+        Guid tenantId, Guid? userId, string query,
+        IList<LmKitOmniApi.Infrastructure.AI.Security.ProducedFile>? fileSink, CancellationToken ct)
+    {
+        var input = ResolveOwnedDocumentInput(tenantId, userId, query, out var error);
+        if (input is null) return error!;
+        var (values, flatten) = ParseFillArgs(input.Value.Payload);
+        if (values.Count == 0) return "[Không có giá trị nào để điền — cần \"values\":[{\"name\":…,\"value\":…}]]";
+        try
+        {
+            var (data, report) = _pdfForm.Fill(input.Value.Bytes, values, flatten, ct);
+            await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "FillPdfForm", null, ct);
+            var fileId = PersistProducedFile(tenantId, userId, data, "filled.pdf", "application/pdf", fileSink);
+            return System.Text.Json.JsonSerializer.Serialize(new { fileId, report });
+        }
+        catch (LmKitOmniApi.Infrastructure.AI.Documents.DocumentToolsDisabledException) { return "[Công cụ tài liệu đang tắt]"; }
+        catch (LmKitOmniApi.Infrastructure.AI.Documents.DocumentValidationException ex) { return $"[Tệp không hợp lệ: {ex.Message}]"; }
+    }
+
+    private async Task<string> ExecuteRedactPdfAsync(
+        Guid tenantId, Guid? userId, string query,
+        IList<LmKitOmniApi.Infrastructure.AI.Security.ProducedFile>? fileSink, CancellationToken ct)
+    {
+        var input = ResolveOwnedDocumentInput(tenantId, userId, query, out var error);
+        if (input is null) return error!;
+        var (terms, caseSensitive, wholeWord) = ParseRedactArgs(input.Value.Payload);
+        if (terms.Count == 0) return "[Không có cụm từ nào để redact — cần \"terms\":[\"…\"]]";
+        try
+        {
+            var (data, report) = _documentRedaction.RedactPdf(input.Value.Bytes, terms, caseSensitive, wholeWord, ct);
+            await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "RedactPdf", null, ct);
+            var fileId = PersistProducedFile(tenantId, userId, data, "redacted.pdf", "application/pdf", fileSink);
+            return System.Text.Json.JsonSerializer.Serialize(new { fileId, report });
+        }
+        catch (LmKitOmniApi.Infrastructure.AI.Documents.DocumentToolsDisabledException) { return "[Công cụ tài liệu đang tắt]"; }
+        catch (LmKitOmniApi.Infrastructure.AI.Documents.DocumentValidationException ex) { return $"[Tệp không hợp lệ: {ex.Message}]"; }
+    }
+
+    private async Task<string> ExecuteRedactOfficeAsync(
+        Guid tenantId, Guid? userId, string query,
+        IList<LmKitOmniApi.Infrastructure.AI.Security.ProducedFile>? fileSink, CancellationToken ct)
+    {
+        var input = ResolveOwnedDocumentInput(tenantId, userId, query, out var error);
+        if (input is null) return error!;
+        var (terms, caseSensitive, wholeWord) = ParseRedactArgs(input.Value.Payload);
+        if (terms.Count == 0) return "[Không có cụm từ nào để redact — cần \"terms\":[\"…\"]]";
+        var ext = System.IO.Path.GetExtension(input.Value.Path);
+        if (string.IsNullOrEmpty(ext)) return "[Không xác định được định dạng Office từ đuôi tệp]";
+        try
+        {
+            var (data, report) = _documentRedaction.RedactOffice(input.Value.Bytes, ext, terms, caseSensitive, wholeWord, ct);
+            await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "RedactOffice", null, ct);
+            var contentType = ext.ToLowerInvariant() switch
+            {
+                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                _ => "application/octet-stream"
+            };
+            var fileId = PersistProducedFile(tenantId, userId, data, "redacted" + ext, contentType, fileSink);
+            return System.Text.Json.JsonSerializer.Serialize(new { fileId, report });
+        }
+        catch (LmKitOmniApi.Infrastructure.AI.Documents.DocumentToolsDisabledException) { return "[Công cụ tài liệu đang tắt]"; }
+        catch (LmKitOmniApi.Infrastructure.AI.Documents.DocumentValidationException ex) { return $"[Tệp không hợp lệ: {ex.Message}]"; }
+    }
+
+    private async Task<string> ExecuteValidatePdfAAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
+    {
+        var input = ResolveOwnedDocumentInput(tenantId, userId, query, out var error);
+        if (input is null) return error!;
+        LMKit.Document.Pdf.PdfAConformanceLevel? level = null;
+        if (input.Value.Payload.TryGetProperty("level", out var levelEl)
+            && levelEl.ValueKind == System.Text.Json.JsonValueKind.String
+            && Enum.TryParse<LMKit.Document.Pdf.PdfAConformanceLevel>(levelEl.GetString(), ignoreCase: true, out var parsed))
+        {
+            level = parsed;
+        }
+        try
+        {
+            var report = _documentRedaction.ValidatePdfA(input.Value.Bytes, level, ct);
+            await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "ValidatePdfA", null, ct);
+            return System.Text.Json.JsonSerializer.Serialize(report);
+        }
+        catch (LmKitOmniApi.Infrastructure.AI.Documents.DocumentToolsDisabledException) { return "[Công cụ tài liệu đang tắt]"; }
+        catch (LmKitOmniApi.Infrastructure.AI.Documents.DocumentValidationException ex) { return $"[Tệp không hợp lệ: {ex.Message}]"; }
+    }
+
+    /// <summary>Parses the tool payload, resolves and reads the owned document file. Returns
+    /// null with a bracketed <paramref name="error"/> when the payload/path/ownership fails.</summary>
+    private (byte[] Bytes, System.Text.Json.JsonElement Payload, string Path)? ResolveOwnedDocumentInput(
+        Guid tenantId, Guid? userId, string query, out string? error)
+    {
+        error = null;
+        if (userId is null) { error = "[Truy cập tệp bị từ chối: cần định danh người dùng]"; return null; }
+        System.Text.Json.JsonElement payload;
+        try { payload = System.Text.Json.JsonDocument.Parse(query).RootElement; }
+        catch { error = "[Payload không hợp lệ: cần JSON dạng {\"path\":\"…\"}]"; return null; }
+        if (payload.ValueKind != System.Text.Json.JsonValueKind.Object
+            || !payload.TryGetProperty("path", out var pathEl)
+            || pathEl.ValueKind != System.Text.Json.JsonValueKind.String
+            || string.IsNullOrWhiteSpace(pathEl.GetString()))
+        {
+            error = "[Thiếu trường \"path\" (đường dẫn tệp của bạn)]"; return null;
+        }
+        var path = pathEl.GetString()!;
+        var check = _resources.ValidateOwnedPath(tenantId, userId.Value, path);
+        if (!check.IsAllowed || !System.IO.File.Exists(check.SanitizedPath))
+        {
+            error = "[Không tìm thấy tệp hoặc tệp không thuộc về bạn]"; return null;
+        }
+        byte[] bytes;
+        try { bytes = System.IO.File.ReadAllBytes(check.SanitizedPath); }
+        catch { error = "[Không đọc được tệp]"; return null; }
+        return (bytes, payload, path);
+    }
+
+    /// <summary>Writes a derived document into the caller's isolated upload root under a
+    /// server-generated name and registers it on the file sink for a [FILE:] download.</summary>
+    private string PersistProducedFile(
+        Guid tenantId, Guid? userId, byte[] data, string friendlyName, string contentType,
+        IList<LmKitOmniApi.Infrastructure.AI.Security.ProducedFile>? fileSink)
+    {
+        var ext = System.IO.Path.GetExtension(friendlyName);
+        var storedName = $"{Guid.NewGuid():N}{ext}";
+        var dir = _resources.GetUploadDirectory(tenantId, userId ?? Guid.Empty);
+        System.IO.Directory.CreateDirectory(dir);
+        System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir, storedName), data);
+        fileSink?.Add(new LmKitOmniApi.Infrastructure.AI.Security.ProducedFile(storedName, friendlyName, contentType, data.LongLength));
+        return storedName;
+    }
+
+    private static (List<(string Name, string Value)> Values, bool Flatten) ParseFillArgs(System.Text.Json.JsonElement payload)
+    {
+        var values = new List<(string, string)>();
+        if (payload.TryGetProperty("values", out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var item in arr.EnumerateArray())
+            {
+                if (item.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                var name = item.TryGetProperty("name", out var n) && n.ValueKind == System.Text.Json.JsonValueKind.String ? n.GetString() : null;
+                string? val = null;
+                if (item.TryGetProperty("value", out var v))
+                    val = v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : v.ToString();
+                if (!string.IsNullOrEmpty(name)) values.Add((name!, val ?? string.Empty));
+            }
+        }
+        var flatten = payload.TryGetProperty("flatten", out var f) && f.ValueKind == System.Text.Json.JsonValueKind.True;
+        return (values, flatten);
+    }
+
+    private static (List<string> Terms, bool CaseSensitive, bool WholeWord) ParseRedactArgs(System.Text.Json.JsonElement payload)
+    {
+        var terms = new List<string>();
+        if (payload.TryGetProperty("terms", out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var item in arr.EnumerateArray())
+                if (item.ValueKind == System.Text.Json.JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+                    terms.Add(item.GetString()!);
+        }
+        var cs = payload.TryGetProperty("caseSensitive", out var c) && c.ValueKind == System.Text.Json.JsonValueKind.True;
+        var ww = payload.TryGetProperty("wholeWord", out var w) && w.ValueKind == System.Text.Json.JsonValueKind.True;
+        return (terms, cs, ww);
     }
 
     private async Task<string> ExecuteDbSchemaAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
