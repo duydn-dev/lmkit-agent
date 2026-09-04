@@ -26,4 +26,13 @@ public class StreamChatCommand : IStreamRequest<string>
 
     /// <summary>Per-request toggle forwarded to the orchestrator as AgentRequestOptions.AllowWebSearch.</summary>
     public bool EnableWebSearch { get; set; } = true;
+
+    /// <summary>
+    /// Temporary ("Chat tạm thời") send. When true — or when the target session is
+    /// already <see cref="Domain.Entities.ChatSession.IsEphemeral"/> — the turn is
+    /// streamed normally but neither the user nor the assistant message is persisted,
+    /// and the session is marked ephemeral so the chat list keeps hiding it. Defaults
+    /// to false, so an ordinary send is unchanged.
+    /// </summary>
+    public bool Ephemeral { get; set; }
 }

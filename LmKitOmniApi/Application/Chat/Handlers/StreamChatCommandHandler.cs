@@ -7,6 +7,7 @@ using LmKitOmniApi.Application.Chat.Commands;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Application.CustomAgents;
 using LmKitOmniApi.Application.Projects;
+using LmKitOmniApi.Application.UserPreferences;
 using LmKitOmniApi.Services;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Infrastructure.AI;
@@ -85,6 +86,14 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
 
         if (session == null) throw new UnauthorizedAccessException("Chat Session not found or access denied.");
 
+        // Temporary ("Chat tạm thời") chat — ChatGPT/Gemini style. The session was
+        // either created ephemeral or this send opts in; in the latter case mark the
+        // (tracked) session so the chat list keeps hiding it. When ephemeral, the turn
+        // streams normally but neither the user nor the assistant message is persisted
+        // (and the auto-title/summary are skipped so no conversation content is stored).
+        var isEphemeral = session.IsEphemeral || request.Ephemeral;
+        if (isEphemeral && !session.IsEphemeral) session.IsEphemeral = true;
+
         var storedRole = await _dbContext.Users
             .Where(user => user.Id == request.UserId && user.TenantId == request.TenantId && user.IsActive)
             .Select(user => user.Role)
@@ -151,10 +160,14 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
                 Content = request.Message,
                 CreatedAt = DateTime.UtcNow
             };
-            _dbContext.ChatMessages.Add(userMsg);
+            // A temporary chat streams normally but never persists its turns; keep the
+            // in-memory row for history-cache continuity, skip the DB insert.
+            if (!isEphemeral) _dbContext.ChatMessages.Add(userMsg);
         }
 
-        if (string.IsNullOrWhiteSpace(session.Title) || session.Title == CreateChatSessionCommand.DefaultChatTitle)
+        // Auto-title and summary are skipped for a temporary chat so the first 35
+        // characters of the message and any rolling summary never reach the DB.
+        if (!isEphemeral && (string.IsNullOrWhiteSpace(session.Title) || session.Title == CreateChatSessionCommand.DefaultChatTitle))
         {
             session.Title = effectiveMessage.Length > 35
                 ? effectiveMessage.Substring(0, 35) + "..."
@@ -162,11 +175,13 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         }
 
         // Store conversation summary for future reference
-        if (trimResult.ConversationSummary != null)
+        if (!isEphemeral && trimResult.ConversationSummary != null)
         {
             session.Summary = trimResult.ConversationSummary;
         }
 
+        // For a temporary chat this persists at most the IsEphemeral mark (set above);
+        // no message rows, title or summary are ever written.
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         // Timestamp of the user turn this response answers (new row, or the
@@ -229,14 +244,37 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
                 yield return text;
             }
 
-            var savedAssistant = await PersistAssistantMessageAsync(cancellationToken);
-            assistantPersisted = true;
+            if (isEphemeral)
+            {
+                // Temporary chat: refresh the 2h history cache so multi-turn context
+                // works within the conversation, but never persist the assistant row.
+                var ephemeralAssistant = new ChatMessage
+                {
+                    ChatSessionId = request.SessionId,
+                    Role = "assistant",
+                    Content = fullResponseBuilder.ToString(),
+                    CreatedAt = DateTime.UtcNow
+                };
+                assistantPersisted = true;
+                await WriteHistoryCacheAsync(ephemeralAssistant, cancellationToken);
+            }
+            else
+            {
+                var savedAssistant = await PersistAssistantMessageAsync(cancellationToken);
+                assistantPersisted = true;
 
-            await WriteHistoryCacheAsync(savedAssistant, cancellationToken);
+                await WriteHistoryCacheAsync(savedAssistant, cancellationToken);
+            }
         }
         finally
         {
-            if (!assistantPersisted && cancellationToken.IsCancellationRequested
+            // A temporary chat persists nothing, so there is no DB/cache reconciliation
+            // to do on cancellation or a mid-stream error — skip both branches.
+            if (isEphemeral)
+            {
+                // Intentionally empty: nothing was persisted for this ephemeral send.
+            }
+            else if (!assistantPersisted && cancellationToken.IsCancellationRequested
                 && !string.IsNullOrWhiteSpace(StripProtocolMarkers(fullResponseBuilder.ToString())))
             {
                 // Best-effort: persist whatever was generated before the stop, using
@@ -487,6 +525,27 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
                     PersonaPrompt = ProjectRules.ComposePersonaPrompt(projectInstructions, options.PersonaPrompt)
                 };
             }
+        }
+
+        // ── User-level custom instructions (ChatGPT-style) ──
+        // The caller's own AboutUser / ResponseStyle are PREPENDED to whatever persona
+        // the agent + project composition produced, so the user context is stated first
+        // and a bound custom-agent/project persona still applies after it. Tenant+user
+        // scoped, read-only; a missing row or all-empty fields leave `options`
+        // byte-identical (ComposePersonaPrompt returns the existing persona unchanged).
+        var preference = await _dbContext.UserPreferences
+            .AsNoTracking()
+            .Where(p => p.TenantId == request.TenantId && p.UserId == request.UserId)
+            .Select(p => new { p.AboutUser, p.ResponseStyle })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (preference is not null)
+        {
+            options = options with
+            {
+                PersonaPrompt = UserPreferenceRules.ComposePersonaPrompt(
+                    preference.AboutUser, preference.ResponseStyle, options.PersonaPrompt)
+            };
         }
 
         return options;

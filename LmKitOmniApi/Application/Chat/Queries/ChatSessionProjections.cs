@@ -19,6 +19,7 @@ public static class ChatSessionProjections
             CustomAgentId = s.CustomAgentId,
             AgentName = s.CustomAgent != null ? s.CustomAgent.Name : null,
             AgentIcon = s.CustomAgent != null ? s.CustomAgent.Icon : null,
-            ProjectId = s.ProjectId
+            ProjectId = s.ProjectId,
+            IsEphemeral = s.IsEphemeral
         };
 }
