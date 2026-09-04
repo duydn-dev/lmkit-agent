@@ -23,7 +23,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
@@ -59,7 +59,7 @@ jobs:
       run:
         working-directory: LmKitOmniClient
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 20
@@ -74,7 +74,7 @@ jobs:
   containers:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker compose config --quiet
         env:
           POSTGRES_PASSWORD: ci-only-password
@@ -96,7 +96,7 @@ jobs:
       E2E_ADMIN_PASSWORD: E2e-Admin-2026!
       E2E_BASE_URL: http://127.0.0.1:18080
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 20
