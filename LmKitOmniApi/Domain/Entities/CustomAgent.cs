@@ -48,6 +48,16 @@ public sealed class CustomAgent
     /// <summary>When true every user in the tenant can chat with this agent.</summary>
     public bool IsSharedWithTenant { get; set; }
 
+    /// <summary>
+    /// Optional reference to a <see cref="LoraAdapterRegistration"/> (LoRA hot-swap).
+    /// When set — and the LoRA feature is enabled and the registration is active with a
+    /// present file — the chat orchestrator applies that adapter to the shared chat model
+    /// for the duration of this agent's inference and removes it immediately afterwards.
+    /// A SOFT reference (no enforced FK): a deleted/missing/inactive registration simply
+    /// makes the request run without an adapter.
+    /// </summary>
+    public Guid? LoraAdapterId { get; set; }
+
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 

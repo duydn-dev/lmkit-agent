@@ -40,4 +40,13 @@ public sealed record AgentRequestOptions
     /// support); operator-gated via the "ChatReasoning" config section.
     /// </summary>
     public bool ShowReasoning { get; init; }
+
+    /// <summary>
+    /// LoRA hot-swap: when set (populated from the bound custom agent's
+    /// <c>LoraAdapterId</c>), the orchestrator applies that adapter to the shared chat
+    /// model for the duration of this request's inference and removes it afterwards.
+    /// Null = no adapter. Honored only when the LoRA feature is enabled and the
+    /// registration is active with a present file; otherwise it is a silent no-op.
+    /// </summary>
+    public Guid? LoraAdapterId { get; init; }
 }
