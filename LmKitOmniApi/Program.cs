@@ -231,6 +231,16 @@ builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Security.IPythonCodeEx
 // browse_web tool is never offered.
 builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Security.BrowserFetchOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Security.BrowserFetchOptions.SectionName));
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Security.IBrowserFetchExecutor, LmKitOmniApi.Infrastructure.AI.Security.BrowserFetchExecutor>();
+
+// Native LM-Kit fetch-and-read tool (disabled by default — see WebReadOptions). Options
+// bound from "WebRead". Wraps LM-Kit.NET's built-in WebReadTool behind a public-web-only
+// WebEgressPolicy; the LM-Kit fetch is isolated behind the IWebPageReader seam so the
+// service (SSRF pre-flight + length cap + citation) is hermetically testable. When
+// disabled, the service reports IsEnabled=false and the fetch_web tool is never offered.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Web.WebReadOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Web.WebReadOptions.SectionName));
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.IWebPageReader, LmKitOmniApi.Infrastructure.AI.Web.LmKitWebPageReader>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.IWebReadService, LmKitOmniApi.Infrastructure.AI.Web.LmKitWebReadService>();
+
 builder.Services.AddScoped<AgentToolGateway>();
 
 // External database agent (read-only by default; db_query tool gated off unless

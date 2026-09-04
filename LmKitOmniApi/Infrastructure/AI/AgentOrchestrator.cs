@@ -14,6 +14,7 @@ using MediatR;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using LmKitOmniApi.Infrastructure.AI.Tools;
+using LmKitOmniApi.Infrastructure.AI.Web;
 using LmKitOmniApi.Infrastructure.Security;
 using Microsoft.EntityFrameworkCore;
 using System.Text.RegularExpressions;
@@ -55,6 +56,11 @@ public class AgentOrchestrator : IAgentOrchestrator
     // because CreateNativeActionToolsAsync must check IsEnabled to decide whether to
     // offer the browse_web tool.
     private readonly IBrowserFetchExecutor _browserExecutor;
+
+    // Native LM-Kit web fetch-and-read tool (fetch_web / WEB_FETCH). Held here (like
+    // _pythonExecutor / _browserExecutor) because CreateNativeActionToolsAsync must
+    // check IsEnabled to decide whether to offer the fetch_web tool.
+    private readonly IWebReadService _webRead;
     private readonly LmKitOmniApi.Infrastructure.AI.Database.DbQueryService _dbQuery;
 
     // ── Memory ──
@@ -105,6 +111,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["CODE"] = "RunCode",
         ["PYTHON"] = "RunPython",
         ["BROWSE"] = "BrowseWeb",
+        ["WEB_FETCH"] = "FetchWeb",
         ["DBSCHEMA"] = "DbQuery",
         ["DBQUERY"] = "DbQuery",
         ["DBWRITE"] = "DbWrite",
@@ -127,6 +134,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         IExecutionSandboxEngine executionSandbox,
         IPythonCodeExecutor pythonExecutor,
         IBrowserFetchExecutor browserExecutor,
+        IWebReadService webRead,
         LmKitOmniApi.Infrastructure.AI.Database.DbQueryService dbQueryService,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
@@ -149,6 +157,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         _promptGuard = promptGuard;
         _pythonExecutor = pythonExecutor;
         _browserExecutor = browserExecutor;
+        _webRead = webRead;
         _dbQuery = dbQueryService;
         _mcpClient = mcpClient;
         _telemetry = telemetry;
@@ -171,6 +180,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             executionSandbox,
             pythonExecutor,
             browserExecutor,
+            webRead,
             dbQueryService,
             resources,
             multiAgent,
@@ -658,6 +668,26 @@ public class AgentOrchestrator : IAgentOrchestrator
                 (q, ct) => invoke("BROWSE", q, ct)));
         }
 
+        // Native LM-Kit fetch-and-read (WebReadTool): retrieves ONE public page and
+        // returns its main content as clean, capped text for citation — the read step
+        // after web search. Offered ONLY when an operator enabled it (_webRead.IsEnabled);
+        // when disabled it is simply never registered (no error surfaced) — same gating
+        // shape as run_python / browse_web. The whitelist filters registration here, and
+        // the invoke path still runs the full RBAC check on the mapped "FetchWeb"
+        // permission (ActionToToolMap). FETCHING IS NETWORKED EGRESS: the service
+        // SSRF-validates the URL (ToolSandboxService.ValidateUrlAsync) before any fetch,
+        // and the LM-Kit WebEgressPolicy re-validates every redirect hop.
+        if (_webRead.IsEnabled && ActionAllowed("WEB_FETCH"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "fetch_web",
+                "Tải và ĐỌC nội dung chính của MỘT trang web (URL http/https) dưới dạng văn bản sạch, kèm nguồn để trích dẫn — "
+                    + "bước sau khi tìm kiếm web (search chỉ nêu tên trang). Chỉ đọc, không đăng nhập/không tương tác. "
+                    + "Có thể thêm hướng dẫn sau dấu \"|\" (vd: \"https://…|tóm tắt các thay đổi\"); chỉ URL được tải. "
+                    + "Địa chỉ nội bộ/loopback/metadata bị chặn.",
+                (q, ct) => invoke("WEB_FETCH", q, ct)));
+        }
+
         // External database agent (read-only). Two model-free tools, offered only
         // when an operator enabled the feature (_dbQuery.IsEnabled) and the mapped
         // "DbQuery" permission is allowed. The agent first gets the relevant schema,
@@ -895,9 +925,10 @@ public class AgentOrchestrator : IAgentOrchestrator
     // perspective — the Jint sandbox (no network/filesystem/CLR) and the ephemeral
     // no-network Python container — so re-running a snippet cannot double-apply
     // anything. BROWSE is likewise retry-safe: it is a read-only page fetch (like
-    // WEB_SEARCH) that mutates no application state.
+    // WEB_SEARCH) that mutates no application state. WEB_FETCH is retry-safe for the
+    // same reason: a read-only fetch-and-read of one page (LM-Kit WebReadTool).
     private static bool IsRetrySafeAction(string action) => action is
-        "RAG" or "VISION" or "SPEECH" or "NLP" or "WEB_SEARCH" or "DELEGATE" or "SUMMARIZE" or "CODE" or "PYTHON" or "BROWSE";
+        "RAG" or "VISION" or "SPEECH" or "NLP" or "WEB_SEARCH" or "DELEGATE" or "SUMMARIZE" or "CODE" or "PYTHON" or "BROWSE" or "WEB_FETCH";
 
     /// <summary>
     /// Build system prompt using template engine. A custom-agent persona, when
