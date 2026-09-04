@@ -16,7 +16,7 @@
   "dependencies": {
     "@primeuix/themes": "^3.0.0",
     "chart.js": "^4.5.1",
-    "livekit-client": "^2.21.0",
+    "livekit-client": "^2.22.1",
     "pinia": "^3.0.4",
     "primeicons": "^7.0.0",
     "primevue": "^4.5.5",
