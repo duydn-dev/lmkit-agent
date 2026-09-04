@@ -232,6 +232,11 @@
             <span>Hủy</span>
           </button>
         </div>
+        <!-- Temporary chat indicator: subtle reminder that nothing is saved -->
+        <div v-if="isEphemeral" class="mb-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          <i class="pi pi-eye-slash text-xs" aria-hidden="true"></i>
+          <span>Chat tạm thời — đoạn chat này sẽ không được lưu vào lịch sử.</span>
+        </div>
         <div class="relative flex flex-col bg-white border border-gray-200 rounded-[28px] p-2 shadow-sm">
           <!-- Attached Files Preview -->
           <div v-if="attachedFiles.length > 0" class="flex flex-wrap gap-2 px-3 pt-2">
@@ -275,6 +280,15 @@
                 class="min-w-11 min-h-11 px-3 flex items-center justify-center rounded-full border transition-colors"
                 :class="webSearchEnabled ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100' : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-100'">
                 <i class="pi pi-globe text-lg" aria-hidden="true"></i>
+              </button>
+              <button
+                @click="toggleEphemeral"
+                :aria-pressed="isEphemeral"
+                aria-label="Chat tạm thời"
+                title="Chat tạm thời — không lưu vào lịch sử"
+                class="min-w-11 min-h-11 px-3 flex items-center justify-center rounded-full border transition-colors"
+                :class="isEphemeral ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100' : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-100'">
+                <i class="pi pi-eye-slash text-lg" aria-hidden="true"></i>
               </button>
               <button @click="triggerFileInput" class="w-11 h-11 flex items-center justify-center text-gray-600 hover:text-gray-900 transition-colors rounded-full hover:bg-gray-100" aria-label="Đính kèm file">
                 <i class="pi pi-paperclip text-lg"></i>
@@ -557,6 +571,8 @@ const getCleanHostname = (urlStr: string) => {
 
 onMounted(() => {
   if (route.query.id) {
+    // Opening a saved conversation is never temporary.
+    isEphemeral.value = false;
     currentSessionId.value = route.query.id as string;
     loadMessages();
   }
@@ -565,10 +581,14 @@ onMounted(() => {
 watch(() => route.query.id, (newId) => {
   if (newId && typeof newId === 'string') {
     cancelEditing();
+    // A saved session opened from history leaves temporary mode.
+    isEphemeral.value = false;
     currentSessionId.value = newId;
     loadMessages();
   } else if (route.query.new) {
     cancelEditing();
+    // "New chat" from the sidebar starts an ordinary (saved) conversation.
+    isEphemeral.value = false;
     currentSessionId.value = null;
     messages.value = [];
   }
@@ -653,6 +673,24 @@ const toggleWebSearch = () => {
   }
 };
 
+// --- Temporary chat ("Chat tạm thời", ChatGPT/Gemini style) -------------------
+// A deliberate per-conversation choice, never persisted across reloads. Toggling it
+// starts a fresh chat so the mode only ever governs a brand-new conversation: the
+// session it creates is flagged ephemeral server-side (no messages persisted, hidden
+// from history). Opening a saved session clears the mode (see the route watcher).
+
+const isEphemeral = ref(false);
+
+const toggleEphemeral = () => {
+  isEphemeral.value = !isEphemeral.value;
+  // Start a clean conversation so the new mode applies to a fresh session and never
+  // retroactively changes the currently open one.
+  cancelEditing();
+  currentSessionId.value = null;
+  messages.value = [];
+  chatError.value = '';
+};
+
 // --- Edit last user message ---------------------------------------------------
 
 const isEditing = ref(false);
@@ -687,7 +725,12 @@ const cancelEditing = () => {
  */
 const ensureSession = async () => {
   if (currentSessionId.value) return;
-  const sessionRes = await http.post(ApiFactory.CHAT.CREATE_SESSION);
+  // A temporary chat creates its session flagged ephemeral (messages never persisted,
+  // hidden from history); a normal chat keeps the exact legacy body-less request.
+  const sessionRes = await http.post(
+    ApiFactory.CHAT.CREATE_SESSION,
+    isEphemeral.value ? { ephemeral: true } : undefined
+  );
   if (!sessionRes.ok) throw new Error('Không thể tạo phiên trò chuyện.');
   const newSession = await sessionRes.json();
   currentSessionId.value = newSession.id;
@@ -827,6 +870,7 @@ const sendMessage = async () => {
         Message: content,
         ModelId: null,
         enableWebSearch: webSearchEnabled.value,
+        ephemeral: isEphemeral.value,
         ...(editing ? { replaceLastExchange: true } : {})
       };
     },
@@ -872,6 +916,7 @@ const regenerate = async () => {
       ModelId: null,
       regenerate: true,
       enableWebSearch: webSearchEnabled.value,
+      ephemeral: isEphemeral.value,
     },
     assistantMsg,
     {

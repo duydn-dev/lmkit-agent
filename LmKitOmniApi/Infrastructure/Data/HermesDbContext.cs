@@ -33,6 +33,7 @@ public class HermesDbContext : DbContext
     public DbSet<AgentRun> AgentRuns { get; set; } = null!;
     public DbSet<AgentRunStep> AgentRunSteps { get; set; } = null!;
     public DbSet<DatabaseConnection> DatabaseConnections { get; set; } = null!;
+    public DbSet<UserPreference> UserPreferences { get; set; } = null!;
 
     public HermesDbContext(DbContextOptions<HermesDbContext> options) : base(options)
     {
@@ -240,5 +241,10 @@ public class HermesDbContext : DbContext
             .HasOne(c => c.Tenant).WithMany().HasForeignKey(c => c.TenantId).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<DatabaseConnection>()
             .HasIndex(c => new { c.TenantId, c.Name }).IsUnique();
+
+        // Exactly one custom-instructions row per (tenant, user); the unique index
+        // makes the upsert's "load existing or insert" race-safe at the DB level.
+        modelBuilder.Entity<UserPreference>()
+            .HasIndex(p => new { p.TenantId, p.UserId }).IsUnique();
     }
 }

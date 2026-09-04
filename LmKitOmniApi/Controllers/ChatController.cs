@@ -324,6 +324,7 @@ public class ChatController : ApiControllerBase
 
         Guid? customAgentId = null;
         Guid? projectId = null;
+        var ephemeral = false;
         // Content-Length is absent on chunked requests (TestServer, some HTTP
         // clients), so gate on the content type and tolerate an empty body
         // instead of trusting the header.
@@ -344,10 +345,11 @@ public class ChatController : ApiControllerBase
                 }
                 customAgentId = body?.CustomAgentId;
                 projectId = body?.ProjectId;
+                ephemeral = body?.Ephemeral ?? false;
             }
         }
 
-        var command = new CreateChatSessionCommand { UserId = currentUserId, CustomAgentId = customAgentId, ProjectId = projectId };
+        var command = new CreateChatSessionCommand { UserId = currentUserId, CustomAgentId = customAgentId, ProjectId = projectId, Ephemeral = ephemeral };
         var result = await _mediator.Send(command, cancellationToken);
         if (result.ErrorMessage is not null)
             return BadRequest(new { message = result.ErrorMessage });

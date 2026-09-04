@@ -29,5 +29,12 @@ namespace LmKitOmniApi.Application.Chat.Queries
 
         /// <summary>Project the session belongs to (additive nullable field).</summary>
         public Guid? ProjectId { get; set; }
+
+        /// <summary>
+        /// True for a temporary ("Chat tạm thời") session. Additive field: the chat
+        /// list/search never returns ephemeral sessions, so this is false on every
+        /// listed row and only carries meaning on the create-session response.
+        /// </summary>
+        public bool IsEphemeral { get; set; }
     }
 }

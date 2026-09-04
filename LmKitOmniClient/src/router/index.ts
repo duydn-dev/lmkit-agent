@@ -58,6 +58,12 @@ const router = createRouter({
           meta: { requiresAuth: true }
         },
         {
+          path: '/settings/custom-instructions',
+          name: 'CustomInstructions',
+          component: () => import('../views/settings/CustomInstructionsView.vue'),
+          meta: { requiresAuth: true }
+        },
+        {
           path: '/tools/text',
           name: 'TextTools',
           component: () => import('../views/tools/TextToolsView.vue'),

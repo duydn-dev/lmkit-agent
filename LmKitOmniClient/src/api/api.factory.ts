@@ -58,6 +58,11 @@ export const ApiFactory = {
     BY_ID: (id: string) => `/api/projects/${id}`,
     SESSIONS: (id: string) => `/api/projects/${id}/sessions`
   },
+  USER: {
+    // User-level custom instructions (ChatGPT-style personalization). GET returns
+    // the caller's instructions (empty object if none); PUT upserts them.
+    CUSTOM_INSTRUCTIONS: '/api/user/custom-instructions'
+  },
   APIKEYS: {
     BASE: '/api/api-keys',
     BY_ID: (id: string) => `/api/api-keys/${id}`

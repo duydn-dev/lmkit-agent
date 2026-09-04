@@ -68,7 +68,10 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                 Title = string.IsNullOrWhiteSpace(request.Title) ? CreateChatSessionCommand.DefaultChatTitle : request.Title,
                 CreatedAt = DateTime.UtcNow,
                 CustomAgentId = agent?.Id,
-                ProjectId = request.ProjectId
+                ProjectId = request.ProjectId,
+                // Temporary chat: the session row exists but is hidden from the list
+                // and its messages are never persisted (enforced in StreamChatCommandHandler).
+                IsEphemeral = request.Ephemeral
             };
 
             _dbContext.ChatSessions.Add(session);
@@ -84,7 +87,8 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                     CustomAgentId = agent?.Id,
                     AgentName = agent?.Name,
                     AgentIcon = agent?.Icon,
-                    ProjectId = session.ProjectId
+                    ProjectId = session.ProjectId,
+                    IsEphemeral = session.IsEphemeral
                 }
             };
         }

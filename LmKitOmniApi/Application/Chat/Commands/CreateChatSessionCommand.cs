@@ -29,6 +29,13 @@ namespace LmKitOmniApi.Application.Chat.Commands
         /// answers with a validation error (→ 400).
         /// </summary>
         public Guid? ProjectId { get; set; }
+
+        /// <summary>
+        /// Create the session as a temporary ("Chat tạm thời") conversation
+        /// (ChatGPT/Gemini style): its messages are never persisted and it is
+        /// excluded from the chat history list/search. Defaults to false.
+        /// </summary>
+        public bool Ephemeral { get; set; }
     }
 
     /// <summary>
@@ -43,6 +50,9 @@ namespace LmKitOmniApi.Application.Chat.Commands
     {
         public Guid? CustomAgentId { get; set; }
         public Guid? ProjectId { get; set; }
+
+        /// <summary>Start the session as a temporary ("Chat tạm thời") conversation.</summary>
+        public bool Ephemeral { get; set; }
     }
 
     /// <summary>
