@@ -241,6 +241,36 @@ builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Web.WebReadOptions>(bu
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.IWebPageReader, LmKitOmniApi.Infrastructure.AI.Web.LmKitWebPageReader>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.IWebReadService, LmKitOmniApi.Infrastructure.AI.Web.LmKitWebReadService>();
 
+// Native document tools (disabled by default — see DocumentToolsOptions). Options bound
+// from "DocumentTools". Pure LM-Kit.NET document APIs (PdfForm / PdfRedactor /
+// OfficeRedactor / PdfAValidator) — no model, no network, no container — so the only
+// safety surface is input validation (size caps, magic-byte sniffing, term-count cap)
+// applied before LM-Kit is touched, plus strictly owner-scoped output. When disabled the
+// services report IsEnabled=false and every /api/documents endpoint returns 501.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Documents.DocumentToolsOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Documents.DocumentToolsOptions.SectionName));
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Documents.IPdfFormService, LmKitOmniApi.Infrastructure.AI.Documents.PdfFormService>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Documents.IDocumentRedactionService, LmKitOmniApi.Infrastructure.AI.Documents.DocumentRedactionService>();
+
+// LoRA hot-swap (disabled by default — see LoraOptions). Options bound from "Lora". The
+// LM-Kit ApplyLoraAdapter/RemoveLoraAdapter calls are isolated behind ILoraModelPort so the
+// service + everything above it is unit-tested with a fake port and no native model. When
+// disabled, RegisterAsync refuses (501) and BeginApplyForAgent is a no-op.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Lora.LoraOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Lora.LoraOptions.SectionName));
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Lora.ILoraModelPort, LmKitOmniApi.Infrastructure.AI.Lora.LmKitLoraModelPort>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Lora.ILoraAdapterService, LmKitOmniApi.Infrastructure.AI.Lora.LoraAdapterService>();
+
+// Interactive COMPUTER-USE agent (disabled by default — see ComputerUseOptions). Options
+// bound from "ComputerUse". Reuses the shared IProcessRunner seam; every collaborator is a
+// seam so the loop is unit-testable without a container/model. OFF BY DEFAULT: when disabled
+// the executor/agent report IsEnabled=false and the controller returns 501. Navigation is
+// restricted to an EXPLICIT allowlist (empty = deny-all) plus the SSRF gate; every
+// side-effecting action is HITL-gated.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.ComputerUse.ComputerUseOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.ComputerUse.ComputerUseOptions.SectionName));
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.ComputerUse.IComputerUseExecutor, LmKitOmniApi.Infrastructure.AI.ComputerUse.ComputerUseExecutor>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.ComputerUse.IComputerUseModel, LmKitOmniApi.Infrastructure.AI.ComputerUse.ComputerUseModel>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.ComputerUse.IComputerUseApprovalGate, LmKitOmniApi.Infrastructure.AI.ComputerUse.ComputerUseApprovalGate>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.ComputerUse.IComputerUseAgent, LmKitOmniApi.Infrastructure.AI.ComputerUse.ComputerUseAgent>();
+
 builder.Services.AddScoped<AgentToolGateway>();
 
 // External database agent (read-only by default; db_query tool gated off unless

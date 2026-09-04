@@ -34,6 +34,7 @@ public class HermesDbContext : DbContext
     public DbSet<AgentRunStep> AgentRunSteps { get; set; } = null!;
     public DbSet<DatabaseConnection> DatabaseConnections { get; set; } = null!;
     public DbSet<UserPreference> UserPreferences { get; set; } = null!;
+    public DbSet<LoraAdapterRegistration> LoraAdapterRegistrations { get; set; } = null!;
 
     public HermesDbContext(DbContextOptions<HermesDbContext> options) : base(options)
     {
@@ -246,5 +247,15 @@ public class HermesDbContext : DbContext
         // makes the upsert's "load existing or insert" race-safe at the DB level.
         modelBuilder.Entity<UserPreference>()
             .HasIndex(p => new { p.TenantId, p.UserId }).IsUnique();
+
+        // LoRA hot-swap: Admin-uploaded adapter registrations, tenant-scoped. The name
+        // is unique within a tenant so the register endpoint can reject duplicates and
+        // the (TenantId, Name) lookup is race-safe at the DB level. CustomAgent.LoraAdapterId
+        // is a SOFT reference (nullable Guid column, no FK) — a deleted registration just
+        // makes the agent run without an adapter, so no cascade/set-null behavior is wired.
+        modelBuilder.Entity<LoraAdapterRegistration>()
+            .HasIndex(a => new { a.TenantId, a.Name }).IsUnique();
+        modelBuilder.Entity<LoraAdapterRegistration>()
+            .HasIndex(a => new { a.TenantId, a.IsActive });
     }
 }

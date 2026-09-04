@@ -494,7 +494,10 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
                     && (allowedTools is null || allowedTools.Contains("SearchWeb", StringComparer.OrdinalIgnoreCase)),
                 PersonaPrompt = customAgent.PersonaPrompt,
                 AllowedTools = allowedTools,
-                KnowledgeDocumentIds = CustomAgentRules.ParseDocumentIdsCsv(customAgent.KnowledgeDocumentIdsCsv)
+                KnowledgeDocumentIds = CustomAgentRules.ParseDocumentIdsCsv(customAgent.KnowledgeDocumentIdsCsv),
+                // LoRA hot-swap: a bound adapter flows into the orchestrator, which applies
+                // it around this turn's inference and removes it after (no-op when unset/off).
+                LoraAdapterId = customAgent.LoraAdapterId
             };
         }
 
