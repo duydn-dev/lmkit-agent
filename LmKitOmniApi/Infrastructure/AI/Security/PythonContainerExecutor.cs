@@ -35,6 +35,10 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
     // ProcessRunner's kill is the backstop enforcing the limit.
     private static readonly TimeSpan TimeoutGrace = TimeSpan.FromSeconds(5);
 
+    // Short, fixed budget for the fallback `docker kill` / `docker rm -f` teardown so a
+    // wedged daemon can't stall cleanup indefinitely. Independent of the script budget.
+    private static readonly TimeSpan ContainerKillTimeout = TimeSpan.FromSeconds(10);
+
     // The container writes its source here; excluded from produced-file collection.
     private const string ScriptFileName = "main.py";
 
@@ -73,7 +77,17 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
         // Per-run scratch dir under the system temp root. It is mounted rw into the
         // container as /work so the script can do file I/O during the run, and is
         // deleted (recursively, best-effort) in the finally below — it is ephemeral.
-        var scratchDir = Path.Combine(Path.GetTempPath(), "lmkit-pyexec", Guid.NewGuid().ToString("N"));
+        var runId = Guid.NewGuid().ToString("N");
+        var scratchDir = Path.Combine(Path.GetTempPath(), "lmkit-pyexec", runId);
+
+        // The docker CLI writes the STARTED container id here (via --cidfile). Kept as a
+        // SIBLING of the scratch dir — never inside it — so it is neither mounted into
+        // /work nor harvested as a produced file. On a wall-clock timeout or a caller
+        // cancellation the IProcessRunner only kills the `docker run` CLI process tree,
+        // which on daemon Docker does NOT stop the daemon-managed container; we read this
+        // id and issue an explicit `docker kill` (see KillContainerAsync) so a
+        // signal-ignoring script cannot outlive the reported timeout. Deleted in finally.
+        var cidFile = Path.Combine(Path.GetTempPath(), "lmkit-pyexec", runId + ".cid");
 
         try
         {
@@ -84,7 +98,7 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
             var scriptPath = Path.Combine(scratchDir, ScriptFileName);
             await File.WriteAllTextAsync(scriptPath, code, ct);
 
-            var arguments = BuildDockerArguments(scratchDir);
+            var arguments = BuildDockerArguments(scratchDir, cidFile);
             var timeout = TimeSpan.FromSeconds(_options.TimeoutSeconds) + TimeoutGrace;
 
             _logger.LogInformation(
@@ -98,6 +112,9 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
                 _logger.LogWarning(
                     "⏱️ [Code Interpreter] Thực thi vượt quá {Timeout}s và đã bị dừng.",
                     _options.TimeoutSeconds);
+                // The CLI kill does NOT necessarily stop the daemon-managed container —
+                // force it down using the id the CLI wrote to the cidfile.
+                await KillContainerAsync(cidFile);
                 return PythonExecutionResult.TextOnly(
                     $"[Code Interpreter] Thực thi vượt quá {_options.TimeoutSeconds}s và đã bị dừng.");
             }
@@ -124,7 +141,9 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Genuine caller cancellation propagates unchanged.
+            // Genuine caller cancellation. Tear down the daemon-managed container the CLI
+            // kill can't reach (best-effort, on CancellationToken.None) BEFORE propagating.
+            await KillContainerAsync(cidFile);
             throw;
         }
         catch (Exception ex)
@@ -132,11 +151,15 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
             // Runtime missing, failed to spawn, scratch I/O error, anything else:
             // log for operators, but never leak raw details to the agent.
             _logger.LogWarning(ex, "❌ [Code Interpreter] Không khởi chạy được môi trường Python.");
+            // If a container had already started before the failure, force it down
+            // (a no-op when the id was never written to the cidfile).
+            await KillContainerAsync(cidFile);
             return PythonExecutionResult.TextOnly(LaunchFailedMessage);
         }
         finally
         {
             TryDeleteDirectory(scratchDir);
+            TryDeleteFile(cidFile);
         }
     }
 
@@ -257,8 +280,13 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
     /// The scratch is mounted rw so the script can write files under /work during the
     /// run; files produced there are harvested (see CollectProducedFilesAsync) into the
     /// caller's upload root for return to the user, then the scratch is deleted.
+    ///  - <c>--cidfile</c>: the CLI writes the started container id to this host file so
+    ///    a wall-clock timeout / cancellation can source the id and issue a fallback
+    ///    <c>docker kill</c> against the daemon-managed container (see KillContainerAsync).
+    ///    The path must NOT pre-exist (docker refuses otherwise), so it is never created
+    ///    here; it is a sibling of the scratch dir, so it is not mounted into /work.
     /// </summary>
-    private List<string> BuildDockerArguments(string scratchDir)
+    private List<string> BuildDockerArguments(string scratchDir, string cidFile)
     {
         var memory = $"{_options.MemoryMb}m";
         var cpus = _options.Cpus.ToString(CultureInfo.InvariantCulture);
@@ -267,6 +295,7 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
         {
             "run",
             "--rm",
+            "--cidfile", cidFile,             // CLI writes the started container id here
             "--network", "none",
             "--interactive=false",
             "--memory", memory,
@@ -317,6 +346,73 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
             : text[..max] + $"\n[Kết quả đã bị cắt bớt vì vượt quá {max} ký tự]";
     }
 
+    /// <summary>
+    /// Fallback teardown of the daemon-managed container after an abnormal end (wall-clock
+    /// timeout, caller cancellation, or a launch-time fault). The <see cref="IProcessRunner"/>
+    /// only kills the <c>docker run</c> CLI process tree; on daemon Docker that does NOT stop
+    /// the container the daemon started, so a signal-ignoring script could otherwise outlive
+    /// the reported timeout. We read the container id the CLI wrote to <paramref name="cidFile"/>
+    /// (via <c>--cidfile</c>) and issue an explicit <c>docker kill &lt;id&gt;</c> through the SAME
+    /// mockable runner, falling back to <c>docker rm -f &lt;id&gt;</c> if the kill did not take.
+    /// Runs with <see cref="CancellationToken.None"/> and its own short budget so it still
+    /// fires on the caller-cancellation path. Best-effort throughout: when no id was written
+    /// (the container never started) it is a no-op, and any failure here is swallowed so it
+    /// can never replace the timeout / cancellation outcome (resource caps still bound the
+    /// blast radius regardless).
+    /// </summary>
+    private async Task KillContainerAsync(string cidFile)
+    {
+        var containerId = TryReadContainerId(cidFile);
+        if (string.IsNullOrWhiteSpace(containerId))
+            return; // container never started (id not written) — nothing to stop.
+
+        try
+        {
+            _logger.LogWarning("🛑 [Code Interpreter] Buộc dừng container {Id}...", containerId);
+            var kill = await _runner.RunAsync(
+                _options.RuntimePath,
+                new List<string> { "kill", containerId },
+                stdin: null, ContainerKillTimeout, CancellationToken.None);
+
+            // If the kill did not take (timed out, or a non-zero exit because the container
+            // is wedged / already gone), force-remove it as a stronger fallback. Harmless
+            // when --rm already reaped a cleanly-stopped container.
+            if (kill.TimedOut || kill.ExitCode != 0)
+            {
+                await _runner.RunAsync(
+                    _options.RuntimePath,
+                    new List<string> { "rm", "-f", containerId },
+                    stdin: null, ContainerKillTimeout, CancellationToken.None);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Teardown is best-effort and must never throw over the original outcome.
+            _logger.LogWarning(ex, "🛑 [Code Interpreter] Không thể buộc dừng container {Id}.", containerId);
+        }
+    }
+
+    /// <summary>
+    /// Reads the container id the docker CLI wrote to the cidfile. Returns null when the
+    /// file is absent or empty (the container never actually started), which the caller
+    /// treats as "nothing to kill".
+    /// </summary>
+    private string? TryReadContainerId(string cidFile)
+    {
+        try
+        {
+            if (!File.Exists(cidFile))
+                return null;
+            var id = File.ReadAllText(cidFile).Trim();
+            return string.IsNullOrWhiteSpace(id) ? null : id;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "🛑 [Code Interpreter] Không đọc được cidfile {File}.", cidFile);
+            return null;
+        }
+    }
+
     private void TryDeleteDirectory(string directory)
     {
         try
@@ -328,6 +424,20 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
         {
             // Cleanup is best-effort; a leftover temp dir must never fail the run.
             _logger.LogDebug(ex, "🧹 [Code Interpreter] Không thể dọn thư mục tạm {Dir}.", directory);
+        }
+    }
+
+    private void TryDeleteFile(string file)
+    {
+        try
+        {
+            if (File.Exists(file))
+                File.Delete(file);
+        }
+        catch (Exception ex)
+        {
+            // Cleanup is best-effort; a leftover cidfile must never fail the run.
+            _logger.LogDebug(ex, "🧹 [Code Interpreter] Không thể xóa cidfile {File}.", file);
         }
     }
 }
