@@ -36,7 +36,9 @@ public static class MongoCommandClassifier
 
     // Operators that execute server-side code or write from inside an otherwise-"read"
     // command ($out/$merge persist an aggregation). Refused regardless of the op.
-    private static readonly string[] DangerousOperators =
+    // Matched as DECODED keys (see FindDangerousOperator) so a unicode-escaped form such
+    // as "$where" is caught — the raw JSON text never contains the literal '$'.
+    private static readonly HashSet<string> DangerousOperators = new(StringComparer.OrdinalIgnoreCase)
     {
         "$where", "$function", "$accumulator", "$out", "$merge", "$eval"
     };
@@ -61,9 +63,14 @@ public static class MongoCommandClassifier
             return new MongoClassification(MongoCommandKind.Refused, "Lệnh Mongo phải là một đối tượng JSON.");
 
         // Code-exec / write-from-read operators anywhere in the command → refuse outright.
-        foreach (var op in DangerousOperators)
-            if (commandJson.Contains(op, StringComparison.OrdinalIgnoreCase))
-                return new MongoClassification(MongoCommandKind.Refused, $"Toán tử '{op}' không được phép.");
+        // Inspect the PARSED/DECODED command, never the raw text: System.Text.Json
+        // unescapes "$where" to the key "$where" (exactly as the driver's
+        // BsonDocument.Parse will at execution time), so walking decoded keys closes the
+        // unicode-escape bypass a raw-substring scan left open. Walk recurses through
+        // nested documents AND array elements (aggregation pipeline stages).
+        var banned = FindDangerousOperator(root);
+        if (banned is not null)
+            return new MongoClassification(MongoCommandKind.Refused, $"Toán tử '{banned}' không được phép.");
 
         var collection = GetString(root, "collection");
         if (string.IsNullOrWhiteSpace(collection) || collection.Length > 200)
@@ -81,6 +88,39 @@ public static class MongoCommandClassifier
 
         // drop, dropDatabase, createIndex, renameCollection, mapReduce, runCommand, …
         return new MongoClassification(MongoCommandKind.Refused, $"Thao tác '{operation}' không được hỗ trợ.", collection, operation);
+    }
+
+    /// <summary>
+    /// Depth-first search for a banned operator by its DECODED key name, recursing
+    /// through every nested object AND array element. Because it inspects parsed JSON, a
+    /// key written as the unicode escape "$where" is compared as "$where" — the form
+    /// the driver executes — so the escape cannot smuggle a dangerous operator past a
+    /// raw-text check. Only KEYS are matched (Mongo operators are always keys); a string
+    /// VALUE that merely contains "$where" is harmless data and is deliberately ignored to
+    /// avoid false refusals. Returns the offending decoded key, or null if none is found.
+    /// </summary>
+    private static string? FindDangerousOperator(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (DangerousOperators.Contains(property.Name))
+                        return property.Name;
+                    var nested = FindDangerousOperator(property.Value);
+                    if (nested is not null) return nested;
+                }
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    var nested = FindDangerousOperator(item);
+                    if (nested is not null) return nested;
+                }
+                break;
+        }
+        return null;
     }
 
     private static string? GetString(JsonElement obj, string property) =>

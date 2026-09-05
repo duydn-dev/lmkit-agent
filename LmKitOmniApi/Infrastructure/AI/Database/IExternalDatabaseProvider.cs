@@ -56,9 +56,23 @@ public interface IExternalDatabaseProvider
     /// Snapshots <paramref name="table"/> (a validated plain identifier) into a
     /// timestamped backup copy BEFORE an approved write, returning the backup's
     /// name. Throws if the backup cannot be made — the caller must then refuse the
-    /// write (never write without a backup).
+    /// write (never write without a backup). NOTE: this copies ONLY the single target
+    /// table; see <see cref="DetectWriteSideEffectsAsync"/> for why the caller must
+    /// first rule out cascades/triggers that would touch OTHER, un-backed tables.
     /// </summary>
     Task<string> BackupTableAsync(string connectionString, string table, int timeoutSeconds, CancellationToken ct);
+
+    /// <summary>
+    /// Detects whether a write to <paramref name="table"/> could modify tables OTHER
+    /// than the one <see cref="BackupTableAsync"/> snapshots — i.e. the target is the
+    /// parent of a foreign key declared ON DELETE/UPDATE CASCADE / SET NULL / SET
+    /// DEFAULT, or it carries triggers. When any such side effect exists the
+    /// single-table backup is NOT a complete recovery point, so the caller REFUSES the
+    /// write rather than offer a false sense of recoverability. Returns a list of
+    /// human-readable risk descriptions; an empty list means the single-table backup
+    /// fully covers the write.
+    /// </summary>
+    Task<IReadOnlyList<string>> DetectWriteSideEffectsAsync(string connectionString, string table, int timeoutSeconds, CancellationToken ct);
 
     /// <summary>Executes an approved write statement (NOT read-only) and returns affected rows.</summary>
     Task<int> ExecuteWriteAsync(string connectionString, string sql, int timeoutSeconds, CancellationToken ct);

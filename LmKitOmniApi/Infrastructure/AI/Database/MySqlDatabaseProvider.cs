@@ -136,6 +136,52 @@ public sealed class MySqlDatabaseProvider : IExternalDatabaseProvider
         return await command.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<IReadOnlyList<string>> DetectWriteSideEffectsAsync(string connectionString, string table, int timeoutSeconds, CancellationToken ct)
+    {
+        var (schema, name) = PostgresDatabaseProvider.SplitIdentifier(table);
+        var risks = new List<string>();
+
+        await using var connection = new MySqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+
+        // Triggers on the target table (in this database, or the qualified schema).
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandTimeout = timeoutSeconds;
+            command.CommandText = """
+                SELECT trigger_name
+                FROM information_schema.triggers
+                WHERE event_object_schema = COALESCE(@s, DATABASE()) AND event_object_table = @t
+                """;
+            command.Parameters.AddWithValue("@t", name);
+            command.Parameters.AddWithValue("@s", (object?)schema ?? DBNull.Value);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                risks.Add($"trigger '{reader.GetString(0)}' trên bảng '{name}'");
+        }
+
+        // Child tables whose FK references the target with a cascading action.
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandTimeout = timeoutSeconds;
+            command.CommandText = """
+                SELECT rc.constraint_schema, rc.table_name, rc.update_rule, rc.delete_rule
+                FROM information_schema.referential_constraints rc
+                WHERE rc.referenced_table_name = @t
+                  AND rc.constraint_schema = COALESCE(@s, DATABASE())
+                  AND (rc.update_rule IN ('CASCADE','SET NULL','SET DEFAULT')
+                       OR rc.delete_rule IN ('CASCADE','SET NULL','SET DEFAULT'))
+                """;
+            command.Parameters.AddWithValue("@t", name);
+            command.Parameters.AddWithValue("@s", (object?)schema ?? DBNull.Value);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                risks.Add($"khóa ngoại từ '{reader.GetString(0)}.{reader.GetString(1)}' → '{name}' (ON UPDATE {reader.GetString(2)}, ON DELETE {reader.GetString(3)})");
+        }
+
+        return risks;
+    }
+
     private static async Task SetSessionAccessModeAsync(MySqlConnection connection, bool readOnly, int timeoutSeconds, CancellationToken ct)
     {
         await using var command = connection.CreateCommand();

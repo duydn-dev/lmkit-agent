@@ -56,6 +56,34 @@ public sealed class MongoCommandClassifierTests
     }
 
     [Theory]
+    // GAP 1 regression: a dangerous operator written as a \u0024-escaped key must NOT
+    // slip past the gate. The raw JSON text contains no literal '$', so the old
+    // substring scan missed it; the driver's BsonDocument.Parse decodes it to $where /
+    // $out / … at execution time. Inspecting DECODED keys closes the bypass.
+    [InlineData("{\"collection\":\"orders\",\"op\":\"find\",\"filter\":{\"\\u0024where\":\"this.x==1\"}}")]
+    [InlineData("{\"collection\":\"orders\",\"op\":\"aggregate\",\"pipeline\":[{\"\\u0024out\":\"stolen\"}]}")]
+    [InlineData("{\"collection\":\"orders\",\"op\":\"aggregate\",\"pipeline\":[{\"\\u0024merge\":{\"into\":\"x\"}}]}")]
+    [InlineData("{\"collection\":\"orders\",\"op\":\"aggregate\",\"pipeline\":[{\"$match\":{\"\\u0024function\":{\"body\":\"x\",\"args\":[]}}}]}")]
+    // Deeply nested inside a legitimate-looking read pipeline.
+    [InlineData("{\"collection\":\"orders\",\"op\":\"aggregate\",\"pipeline\":[{\"$project\":{\"v\":{\"\\u0024accumulator\":{}}}}]}")]
+    public void UnicodeEscaped_DangerousOperators_AreRefused(string command)
+    {
+        Assert.Equal(MongoCommandKind.Refused, MongoCommandClassifier.Classify(command).Kind);
+    }
+
+    [Theory]
+    // A normal read pipeline of safe stages/operators must stay on the read path.
+    [InlineData("{\"collection\":\"orders\",\"op\":\"aggregate\",\"pipeline\":[{\"$match\":{\"status\":\"paid\"}},{\"$project\":{\"total\":1}},{\"$group\":{\"_id\":\"$customer\",\"n\":{\"$sum\":1}}},{\"$sort\":{\"n\":-1}},{\"$limit\":10}]}")]
+    // A plain find with an operator-bearing filter (but no dangerous operator) is a read.
+    [InlineData("{\"collection\":\"orders\",\"op\":\"find\",\"filter\":{\"total\":{\"$gt\":100}}}")]
+    // Extended-JSON type wrappers ($oid/$date) are data, not code — must not be refused.
+    [InlineData("{\"collection\":\"orders\",\"op\":\"find\",\"filter\":{\"_id\":{\"$oid\":\"507f1f77bcf86cd799439011\"}}}")]
+    public void NormalReadPipelines_StayReadable(string command)
+    {
+        Assert.Equal(MongoCommandKind.Read, MongoCommandClassifier.Classify(command).Kind);
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("   ")]
     [InlineData("not json")]

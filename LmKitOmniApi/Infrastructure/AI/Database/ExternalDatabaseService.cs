@@ -75,8 +75,17 @@ public sealed class ExternalDatabaseService
     /// <summary>
     /// Executes an APPROVED write with the mandatory safety sequence, centrally:
     /// classify (must be a write, else refuse) → resolve the single target table
-    /// (else refuse) → egress vet → BACK UP the table (if backup throws, the write
-    /// never runs) → execute. Returns a human summary incl. the backup name.
+    /// (else refuse) → egress vet → detect cascade/trigger side effects that would
+    /// reach OTHER tables the single-table backup does NOT cover (if any, refuse) →
+    /// BACK UP the table (if backup throws, the write never runs) → execute. Returns a
+    /// human summary incl. the backup name.
+    ///
+    /// SCOPE LIMITATION (made explicit rather than hidden): <see
+    /// cref="IExternalDatabaseProvider.BackupTableAsync"/> snapshots ONLY the directly
+    /// targeted table. A write can still change other tables via ON DELETE/UPDATE
+    /// CASCADE (or SET NULL/SET DEFAULT) foreign keys or triggers, which that backup
+    /// would not restore. So when such side effects are detected the write is REFUSED —
+    /// a false sense of recoverability is worse than declining the operation.
     /// </summary>
     public async Task<string> ExecuteApprovedWriteAsync(DbProvider provider, string connectionString, string sql, CancellationToken ct)
     {
@@ -92,10 +101,19 @@ public sealed class ExternalDatabaseService
         var egress = await VetAsync(impl, connectionString, ct);
         if (egress is not null) throw new DatabaseOperationRefusedException(egress);
 
+        // The single-table backup only covers '{table}'. If the write can cascade to
+        // other tables (FK CASCADE/SET NULL/SET DEFAULT) or fire triggers, that backup is
+        // NOT a complete recovery point — refuse rather than promise false recoverability.
+        var sideEffects = await impl.DetectWriteSideEffectsAsync(connectionString, table, _options.QueryTimeoutSeconds, ct);
+        if (sideEffects.Count > 0)
+            throw new DatabaseOperationRefusedException(
+                $"Từ chối ghi vào '{table}': sao lưu chỉ bao phủ đúng bảng này, nhưng thao tác có thể thay đổi bảng KHÁC qua cascade/trigger nên bản sao lưu KHÔNG khôi phục đầy đủ được. " +
+                $"Cần loại bỏ/tắt các phụ thuộc này hoặc sao lưu thủ công trước khi ghi. Chi tiết: {string.Join("; ", sideEffects)}.");
+
         // Back up BEFORE writing. A backup failure aborts the write (never write unbacked).
         var backup = await impl.BackupTableAsync(connectionString, table, _options.QueryTimeoutSeconds, ct);
         var affected = await impl.ExecuteWriteAsync(connectionString, sql, _options.QueryTimeoutSeconds, ct);
-        return $"Đã sao lưu bảng '{table}' → '{backup}', rồi thực thi. Số dòng ảnh hưởng: {affected}.";
+        return $"Đã sao lưu bảng '{table}' → '{backup}' (chỉ riêng bảng này), rồi thực thi. Số dòng ảnh hưởng: {affected}.";
     }
 
     private async Task<string?> VetAsync(IExternalDatabaseProvider impl, string connectionString, CancellationToken ct)
