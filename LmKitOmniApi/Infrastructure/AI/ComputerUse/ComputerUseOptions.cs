@@ -94,6 +94,16 @@ public sealed class ComputerUseOptions
     public int MaxElements { get; set; } = 100;
 
     /// <summary>
+    /// Grounding self-correction budget: how many times, WITHIN a single step, the loop
+    /// re-asks the model with a corrective hint when it returns a malformed action or an
+    /// action targeting a <c>ref</c> that is not in the current observation (a hallucinated
+    /// or stale element). This improves grounding robustness for any plugged-in model —
+    /// the model gets to fix its own mistake before the step's fail-closed handling
+    /// (refuse/handoff for an un-groundable action) takes over. 0 disables retries.
+    /// </summary>
+    public int GroundingRetries { get; set; } = 2;
+
+    /// <summary>
     /// When true (the default), every side-effecting action (navigate / click / type /
     /// key) is gated on human approval via <see cref="IComputerUseApprovalGate"/> before
     /// it executes. Read-only actions (screenshot / scroll / wait / done / ask) always

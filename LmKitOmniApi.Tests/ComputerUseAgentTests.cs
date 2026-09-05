@@ -149,6 +149,54 @@ public class ComputerUseAgentTests
         Assert.Contains(output, s => s.Contains("finished the task"));
     }
 
+    // ── 1b. grounding robustness: self-correct a hallucinated ref, then execute ──
+
+    [Fact]
+    public async Task Grounding_HallucinatedRef_SelfCorrects_ThenExecutes()
+    {
+        // The observation exposes ONLY ref 3. The model first addresses ref 99 (absent →
+        // un-groundable); the grounding layer re-asks with the valid-ref list, the model
+        // corrects to ref 3 within the GroundingRetries budget, and THAT click executes.
+        var executor = new FakeExecutor(WithElements(new InteractiveElement(3, "button", "Search", null)));
+        var model = new FakeModel(new[]
+        {
+            "{\"action\":\"screenshot\"}",         // observe first → the element list (ref 3) becomes known
+            "{\"action\":\"click\",\"ref\":99}",   // hallucinated — re-asked, never executed, never gated
+            "{\"action\":\"click\",\"ref\":3}",    // corrected — groundable
+            "{\"action\":\"done\",\"summary\":\"ok\"}",
+        });
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_(o => o.GroundingRetries = 2));
+
+        var output = await CollectAsync(agent.RunAsync(Request(), default));
+
+        // The screenshot observed the page; the corrected click then ran; the hallucinated one never did.
+        Assert.Equal(new[] { ComputerUseActionType.Screenshot, ComputerUseActionType.Click }, executor.Actions);
+        Assert.Equal(4, model.CallCount); // screenshot (1); click99 + corrected click3 (2); done (1)
+        Assert.Contains(output, s => s.Contains("tự chỉnh lại"));
+    }
+
+    // ── 1c. grounding robustness: exhaust retries → fail-closed handoff, nothing runs ──
+
+    [Fact]
+    public async Task Grounding_HallucinatedRef_ExhaustsRetries_HandsOff_NeverExecutes()
+    {
+        // The model keeps addressing a ref that isn't in the observation. After
+        // GroundingRetries + 1 attempts the step's fail-closed handoff takes over: the action
+        // is never executed and never sent to the approval gate.
+        var executor = new FakeExecutor(WithElements(new InteractiveElement(3, "button", "Search", null)));
+        var model = new FakeModel(Array.Empty<string>(), fallback: "{\"action\":\"click\",\"ref\":99}");
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_(o => o.GroundingRetries = 2));
+
+        var output = await CollectAsync(agent.RunAsync(Request(), default));
+
+        Assert.Empty(executor.Actions);   // never executed
+        Assert.Equal(0, gate.CallCount);  // never sent to approval
+        Assert.Equal(3, model.CallCount); // 1 initial + 2 corrective re-asks, then hand off
+        Assert.Contains(output, s => s.Contains("chuyển giao cho con người"));
+    }
+
     // ── 2. step cap ──
 
     [Fact]
@@ -286,7 +334,9 @@ public class ComputerUseAgentTests
         var executor = new FakeExecutor();
         // A `type` given by x/y with NO ref cannot be grounded to an inspectable element, so
         // the agent cannot rule out that (100,200) is a password/CAPTCHA field.
-        var model = new FakeModel(new[] { "{\"action\":\"type\",\"x\":100,\"y\":200,\"text\":\"hunter2\"}" });
+        // Repeated via fallback so it persists through the grounding self-correction retries —
+        // a PERSISTENTLY un-groundable action must still fail closed (never execute, never gate).
+        var model = new FakeModel(Array.Empty<string>(), fallback: "{\"action\":\"type\",\"x\":100,\"y\":200,\"text\":\"hunter2\"}");
         var gate = new FakeApprovalGate(decision: true);
         var agent = CreateAgent(executor, model, gate, Options_());
 
@@ -306,7 +356,8 @@ public class ComputerUseAgentTests
         // The start page exposes only ref 1; the model then clicks ref 99 (stale / never
         // present / dropped by MaxElements) — ungroundable, so fail closed.
         var executor = new FakeExecutor(WithElements(new InteractiveElement(1, "button", "OK", null)));
-        var model = new FakeModel(new[] { "{\"action\":\"click\",\"ref\":99}" });
+        // Repeated via fallback so it persists through the grounding retries and still fails closed.
+        var model = new FakeModel(Array.Empty<string>(), fallback: "{\"action\":\"click\",\"ref\":99}");
         var gate = new FakeApprovalGate(decision: true);
         var agent = CreateAgent(executor, model, gate, Options_());
 
@@ -325,7 +376,8 @@ public class ComputerUseAgentTests
     public async Task Loop_BareKeyPress_Ungroundable_IsRefused_NotExecuted()
     {
         var executor = new FakeExecutor(WithElements(new InteractiveElement(1, "textbox", "Search", null)));
-        var model = new FakeModel(new[] { "{\"action\":\"key\",\"keys\":\"h\"}" });
+        // Repeated via fallback so it persists through the grounding retries and still fails closed.
+        var model = new FakeModel(Array.Empty<string>(), fallback: "{\"action\":\"key\",\"keys\":\"h\"}");
         var gate = new FakeApprovalGate(decision: true);
         var agent = CreateAgent(executor, model, gate, Options_());
 

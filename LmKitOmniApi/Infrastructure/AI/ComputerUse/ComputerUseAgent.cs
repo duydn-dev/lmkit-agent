@@ -157,16 +157,21 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                 }
 
                 var screenshotPath = ResolveScreenshotPath(observation.ScreenshotFileId, request);
-                var prompt = new ComputerUsePrompt(request.TaskGoal, SystemPrompt, observation, history, screenshotPath);
 
-                var (raw, decided) = await TryDecideAsync(prompt, sct);
+                // Self-correcting decision: on a malformed or un-groundable action the loop
+                // re-asks the model with a corrective hint (bounded by GroundingRetries) so it can
+                // fix its own grounding BEFORE the fail-closed gates below take over. The model
+                // call sits in this non-iterator helper (an iterator can't await inside try/catch).
+                var (decided, action, parseError, groundingRetries) =
+                    await DecideGroundedAsync(request, observation, history, screenshotPath, sct);
                 if (!decided)
                 {
                     yield return "[THINKING]: ⚠️ Không lấy được hành động từ mô hình — dừng lại.\\n";
                     yield break;
                 }
-
-                if (!ComputerUseActionParser.TryParse(raw, out var action, out var parseError) || action is null)
+                if (groundingRetries > 0 && action is not null)
+                    yield return $"[THINKING]: ↻ Mô hình tự chỉnh lại hành động sau {groundingRetries} lần nhắc định vị.\\n";
+                if (action is null)
                 {
                     yield return $"[THINKING]: ⚠️ Không phân tích được hành động ({parseError}) — thử lại.\\n";
                     history.Add($"invalid action rejected: {parseError}");
@@ -297,6 +302,79 @@ public sealed class ComputerUseAgent : IComputerUseAgent
             _logger.LogWarning(ex, "❌ [ComputerUse] Lỗi khi lấy hành động từ mô hình.");
             return (null, false);
         }
+    }
+
+    /// <summary>
+    /// Grounding-robustness layer. Asks the model for the next action and, when the reply is
+    /// malformed OR targets a <c>ref</c> that is not in the CURRENT observation (a hallucinated
+    /// or stale element), re-asks with a corrective hint up to
+    /// <see cref="ComputerUseOptions.GroundingRetries"/> times, giving the model a chance to fix
+    /// its own grounding. Returns the first well-formed + grounded action; once the budget is
+    /// spent it returns the last attempt AS-IS (Action=null when still unparseable) so the
+    /// caller's existing fail-closed gates (credential/CAPTCHA refusal, un-groundable handoff,
+    /// navigation allowlist) remain the final authority — this layer only reduces how often a
+    /// capable model gets needlessly handed off. A regular async method (not an iterator) so the
+    /// model call can sit inside try/catch. <c>Retries</c> is how many corrective re-asks happened.
+    /// </summary>
+    private async Task<(bool Decided, ComputerUseAction? Action, string? ParseError, int Retries)> DecideGroundedAsync(
+        ComputerUseRequest request, ComputerUseObservation observation,
+        IReadOnlyList<string> history, string? screenshotPath, CancellationToken ct)
+    {
+        string? correction = null;
+        ComputerUseAction? lastAction = null;
+        string? lastParseError = null;
+        var maxAttempts = Math.Max(0, _options.GroundingRetries) + 1;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            // On a retry, append the correction as a TRANSIENT extra history line so the model sees
+            // exactly what was wrong; the caller's persistent `history` is never mutated here.
+            IReadOnlyList<string> effectiveHistory = correction is null
+                ? history
+                : new List<string>(history) { "Nhắc sửa: " + correction };
+            var prompt = new ComputerUsePrompt(request.TaskGoal, SystemPrompt, observation, effectiveHistory, screenshotPath);
+
+            var (raw, decided) = await TryDecideAsync(prompt, ct);
+            if (!decided) return (false, null, null, attempt);
+
+            if (!ComputerUseActionParser.TryParse(raw, out var action, out var parseError) || action is null)
+            {
+                lastAction = null;
+                lastParseError = parseError;
+                correction = $"Hành động vừa rồi không hợp lệ ({parseError}). Chỉ trả về ĐÚNG MỘT JSON theo schema, không kèm văn bản.";
+                continue;
+            }
+
+            lastAction = action;
+            lastParseError = null;
+
+            // Needs an element target but the ref isn't in this observation → let it self-correct
+            // with the list of valid refs before the step's fail-closed handoff takes over.
+            if (RequiresGrounding(action) && !IsGrounded(action, observation))
+            {
+                correction = BuildGroundingHint(observation);
+                continue;
+            }
+
+            return (true, action, null, attempt); // well-formed and (if needed) grounded
+        }
+
+        // Budget spent: hand back the last attempt so the loop's fail-closed gates handle it.
+        return (true, lastAction, lastParseError, maxAttempts - 1);
+    }
+
+    /// <summary>Corrective hint listing the valid element refs in the current observation, so the
+    /// model re-picks a REAL target (or asks a human) instead of a hallucinated/stale/coordinate ref.</summary>
+    private string BuildGroundingHint(ComputerUseObservation observation)
+    {
+        var refs = observation.Elements
+            .Take(Math.Max(1, _options.MaxElements))
+            .Select(e => string.IsNullOrWhiteSpace(e.Name) ? $"{e.Ref}:{e.Role}" : $"{e.Ref}:{e.Role} \"{e.Name}\"");
+        var list = string.Join(", ", refs);
+        return string.IsNullOrEmpty(list)
+            ? "Trang hiện không có phần tử tương tác nào để chọn 'ref'. Nếu cần thao tác hãy trả {\"action\":\"ask\",\"question\":\"...\"} để nhờ con người; hoặc dùng 'scroll'/'navigate' hợp lệ."
+            : $"'ref' bạn chọn không có trong trang hiện tại. Chỉ dùng 'ref' từ danh sách phần tử: [{list}]. "
+              + "Nếu không có phần tử phù hợp, trả {\"action\":\"ask\",\"question\":\"...\"} thay vì đoán toạ độ.";
     }
 
     private async Task<(ComputerUseObservation? Observation, bool Cancelled)> TryStepAsync(
