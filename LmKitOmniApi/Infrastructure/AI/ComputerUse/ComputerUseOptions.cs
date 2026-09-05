@@ -104,6 +104,17 @@ public sealed class ComputerUseOptions
     public int GroundingRetries { get; set; } = 2;
 
     /// <summary>
+    /// When true (default), the model's next-action generation is constrained by a JSON grammar
+    /// (<see cref="ComputerUseActionGrammar"/> → LM-Kit grammar-constrained decoding): the model
+    /// can only emit a well-formed action, and — when the observation has elements — a <c>ref</c>
+    /// that actually exists, so a malformed or hallucinated-ref action can't be sampled at all.
+    /// A hardening on top of <see cref="GroundingRetries"/>, not a hard dependency: if LM-Kit
+    /// rejects the schema at runtime the model falls back to unconstrained generation and the
+    /// retry + fail-closed grounding gate still apply. Turn off only to debug the raw model.
+    /// </summary>
+    public bool ConstrainedDecoding { get; set; } = true;
+
+    /// <summary>
     /// When true (the default), every side-effecting action (navigate / click / type /
     /// key) is gated on human approval via <see cref="IComputerUseApprovalGate"/> before
     /// it executes. Read-only actions (screenshot / scroll / wait / done / ask) always

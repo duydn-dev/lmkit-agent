@@ -1,8 +1,11 @@
+using System.Linq;
 using System.Text;
 using LMKit.TextGeneration;
 using LMKit.TextGeneration.Chat;
+using LMKit.TextGeneration.Sampling;
 using LmKitOmniApi.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace LmKitOmniApi.Infrastructure.AI.ComputerUse;
 
@@ -20,11 +23,13 @@ public sealed class ComputerUseModel : IComputerUseModel
     private const int MaxCompletionTokens = 512;
 
     private readonly LmModelManager _modelManager;
+    private readonly ComputerUseOptions _options;
     private readonly ILogger<ComputerUseModel> _logger;
 
-    public ComputerUseModel(LmModelManager modelManager, ILogger<ComputerUseModel> logger)
+    public ComputerUseModel(LmModelManager modelManager, IOptions<ComputerUseOptions> options, ILogger<ComputerUseModel> logger)
     {
         _modelManager = modelManager;
+        _options = options.Value;
         _logger = logger;
     }
 
@@ -38,6 +43,23 @@ public sealed class ComputerUseModel : IComputerUseModel
             SystemPrompt = prompt.SystemPrompt,
             MaximumCompletionTokens = MaxCompletionTokens,
         };
+
+        // Grounding hardening: constrain generation to the action schema (and, when the page has
+        // elements, to the REAL ref set) so a malformed / hallucinated-ref action cannot even be
+        // sampled. Fail-safe — if LM-Kit rejects the schema, fall back to free generation (the
+        // loop's self-correction retry + fail-closed grounding gate still protect).
+        if (_options.ConstrainedDecoding)
+        {
+            try
+            {
+                var refs = prompt.Observation.Elements.Select(element => element.Ref).ToList();
+                chat.Grammar = Grammar.CreateJsonGrammarFromJsonSchema(ComputerUseActionGrammar.BuildActionSchema(refs));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "⚠️ [ComputerUse] Không dựng được grammar ràng buộc — sinh tự do (retry + grounding gate vẫn bảo vệ).");
+            }
+        }
 
         var userText = BuildUserMessage(prompt);
 
