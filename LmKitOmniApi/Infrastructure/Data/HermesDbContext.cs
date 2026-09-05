@@ -135,8 +135,18 @@ public class HermesDbContext : DbContext
             .HasOne(c => c.User).WithMany().HasForeignKey(c => c.UserId).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<CanvasArtifact>()
             .HasOne(c => c.ChatSession).WithMany().HasForeignKey(c => c.ChatSessionId).OnDelete(DeleteBehavior.SetNull);
+        // A canvas lineage is identified by RootId (a GUID minted at create time and
+        // shared by every version); Version must be unique within that lineage. The
+        // UNIQUE index on (TenantId, RootId, Version) is the DB-level guard that makes
+        // the "read latest → insert Version+1" step in UpdateCanvasArtifactCommandHandler
+        // race-safe: two concurrent saves cannot both land Version N+1 — the loser hits
+        // the constraint and the handler retries onto N+2. TenantId leads for locality
+        // and tenant scoping; UserId is deliberately not a key column because a RootId
+        // already belongs to exactly one user, so (TenantId, RootId) pinpoints the family
+        // — this shape also serves the latest-per-root anti-join in the list query.
         modelBuilder.Entity<CanvasArtifact>()
-            .HasIndex(c => new { c.TenantId, c.UserId, c.RootId, c.Version });
+            .HasIndex(c => new { c.TenantId, c.RootId, c.Version })
+            .IsUnique();
 
         modelBuilder.Entity<ScheduledTask>()
             .HasOne(t => t.Tenant).WithMany().HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);

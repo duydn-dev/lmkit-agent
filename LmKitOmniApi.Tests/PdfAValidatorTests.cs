@@ -70,4 +70,24 @@ public sealed class PdfAValidatorTests
         Assert.Contains(report.Verdict, Enum.GetNames<PdfAValidationVerdict>());
         Assert.NotNull(report.Findings);
     }
+
+    [SkippableFact]
+    public void Validate_PlainPdf_AgainstPdfA_IsNotCompliant()
+    {
+        Skip.IfNot(NativeDocumentEngine.IsAvailable, "Native LM-Kit document engine is unavailable in this host.");
+
+        // A plain MarkdownToPdf output has none of the PDF/A machinery (no PDF/A XMP
+        // identification, no OutputIntent), so validating it against a concrete PDF/A
+        // level MUST NOT come back Compliant. This proves the verdict reflects real
+        // conformance detection, not just a well-formed report shape.
+        var plainPdf = NativeDocumentEngine.PdfFromMarkdown(
+            "# Not an archival document\n\nA plain PDF that was never produced as PDF/A.");
+        var service = Create();
+
+        var report = service.ValidatePdfA(plainPdf, PdfAConformanceLevel.PdfA2b);
+
+        Assert.NotEqual(PdfAValidationVerdict.Compliant.ToString(), report.Verdict);
+        // And it is a real, defined verdict (NonCompliant / Undetermined), never blank.
+        Assert.Contains(report.Verdict, Enum.GetNames<PdfAValidationVerdict>());
+    }
 }
