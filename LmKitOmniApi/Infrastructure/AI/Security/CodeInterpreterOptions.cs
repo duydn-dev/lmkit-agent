@@ -15,6 +15,19 @@ public sealed class CodeInterpreterOptions
     /// <summary>Master switch. False (default) = the Python interpreter is off.</summary>
     public bool Enabled { get; set; }
 
+    /// <summary>
+    /// Toggle for the in-process JavaScript (Jint) code interpreter, surfaced on the JS
+    /// execution seam as <see cref="IExecutionSandboxEngine.IsEnabled"/>. TRUE by default,
+    /// which PRESERVES existing behavior: unlike <see cref="Enabled"/> (the container-backed
+    /// Python interpreter, off by default because arbitrary Python has full system access),
+    /// Jint is a hard-capped in-process sandbox — no CLR, no network, no filesystem — so this
+    /// switch is about honesty / operator controllability, not a security hole. When false,
+    /// the run_javascript tool is not offered and any invocation returns a safe "not enabled"
+    /// message (mirroring the Python path when off). Bound from
+    /// "CodeInterpreter:Python:JavaScriptEnabled" (this options object's section).
+    /// </summary>
+    public bool JavaScriptEnabled { get; set; } = true;
+
     /// <summary>Container image with a Python runtime, e.g. "python:3.12-alpine".</summary>
     public string Image { get; set; } = string.Empty;
 

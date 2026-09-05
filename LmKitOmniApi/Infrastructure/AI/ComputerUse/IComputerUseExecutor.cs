@@ -3,8 +3,11 @@ namespace LmKitOmniApi.Infrastructure.AI.ComputerUse;
 /// <summary>
 /// One numbered interactive element from an accessibility-grounded observation. The
 /// model addresses actions at <see cref="Ref"/> (preferred over raw coordinates).
+/// <see cref="Type"/> is the optional HTML/ARIA input type the container may expose
+/// (e.g. <c>"password"</c>, <c>"email"</c>); when present the safety guard treats a
+/// <c>type=="password"</c> field as a credential field regardless of its label.
 /// </summary>
-public sealed record InteractiveElement(int Ref, string Role, string Name, string? Value);
+public sealed record InteractiveElement(int Ref, string Role, string Name, string? Value, string? Type = null);
 
 /// <summary>
 /// The result of one executed step: what the page looks like now. Mirrors an

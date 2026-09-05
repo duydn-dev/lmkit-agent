@@ -194,4 +194,36 @@ public sealed class DocumentRedactionServiceTests
             if (File.Exists(tempPath)) File.Delete(tempPath);
         }
     }
+
+    // ── 4. Real Office (.docx) redaction — re-extract and prove the secret is gone ──
+
+    [SkippableFact]
+    public void RedactOffice_RemovesSecretFromDocx_AndSurvivorRemains()
+    {
+        Skip.IfNot(NativeDocumentEngine.IsAvailable, "Native LM-Kit document engine is unavailable in this host.");
+
+        const string secret = "ZZOFFICESECRET4242";
+        const string survivor = "KEEPTHISOFFICEPHRASE";
+        var docx = DocumentFixtures.MinimalDocx(
+            $"The secret token is {secret} and it must be removed before sharing.",
+            $"{survivor} is an ordinary sentence that should survive redaction.");
+
+        // Precondition: the secret really is in the source document before we redact.
+        Assert.Contains(secret, DocumentFixtures.ExtractDocxText(docx));
+
+        var service = Create(Options());
+        var (data, report) = service.RedactOffice(docx, ".docx", new[] { secret }, caseSensitive: false, wholeWord: false);
+
+        Assert.True(report.ContentRemoved, "redaction should report content removed");
+        Assert.True(report.ReplacedOccurrences > 0, "the secret should have been matched and replaced");
+        Assert.NotEmpty(data);
+
+        // The real proof (the service otherwise only trusts the report flag): re-open the
+        // produced .docx and confirm the secret is ACTUALLY gone from the readable text
+        // AND from every part of the package — while the unrelated phrase survives, which
+        // also proves the output is still a valid, readable OpenXML document.
+        Assert.DoesNotContain(secret, DocumentFixtures.ExtractDocxText(data));
+        Assert.False(DocumentFixtures.AnyPartContains(data, secret), "the secret must not linger in any package part");
+        Assert.Contains(survivor, DocumentFixtures.ExtractDocxText(data));
+    }
 }

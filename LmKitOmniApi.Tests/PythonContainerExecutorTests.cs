@@ -29,16 +29,37 @@ public class PythonContainerExecutorTests
     /// BEFORE the run (and, checked after ExecuteAsync, deleted them afterwards).
     /// The optional <paramref name="produceFiles"/> hook runs against the scratch dir
     /// during the call, simulating a container that wrote output files to /work.
+    ///
+    /// It also models daemon Docker for the timeout-teardown fix: on the primary
+    /// <c>docker run</c> call it can write a container id to the host <c>--cidfile</c>
+    /// (<paramref name="containerId"/>), simulating what the CLI does when the container
+    /// starts. Follow-up calls whose first arg is NOT "run" (i.e. <c>docker kill</c> /
+    /// <c>docker rm -f</c>) are recorded and answered with <paramref name="teardownExitCode"/>
+    /// WITHOUT disturbing the recorded primary-run bookkeeping. When <paramref name="cancelOnRun"/>
+    /// is supplied it is cancelled and an <see cref="OperationCanceledException"/> is thrown
+    /// from the run call (after the cidfile is written), simulating caller cancellation.
+    /// Every invocation is appended to <see cref="Calls"/>.
     /// </summary>
     private sealed class FakeProcessRunner : IProcessRunner
     {
         private readonly ProcessRunResult _result;
         private readonly Action<string>? _produceFiles;
+        private readonly string? _containerId;
+        private readonly int _teardownExitCode;
+        private readonly CancellationTokenSource? _cancelOnRun;
 
-        public FakeProcessRunner(ProcessRunResult result, Action<string>? produceFiles = null)
+        public FakeProcessRunner(
+            ProcessRunResult result,
+            Action<string>? produceFiles = null,
+            string? containerId = null,
+            int teardownExitCode = 0,
+            CancellationTokenSource? cancelOnRun = null)
         {
             _result = result;
             _produceFiles = produceFiles;
+            _containerId = containerId;
+            _teardownExitCode = teardownExitCode;
+            _cancelOnRun = cancelOnRun;
         }
 
         public int CallCount { get; private set; }
@@ -50,6 +71,9 @@ public class PythonContainerExecutorTests
         public bool ScratchDirExistedAtCall { get; private set; }
         public bool ScriptExistedAtCall { get; private set; }
 
+        /// <summary>Every call, in order: the file name and its verbatim argument list.</summary>
+        public List<(string FileName, IReadOnlyList<string> Arguments)> Calls { get; } = new();
+
         public Task<ProcessRunResult> RunAsync(
             string fileName,
             IReadOnlyList<string> arguments,
@@ -58,6 +82,13 @@ public class PythonContainerExecutorTests
             CancellationToken ct)
         {
             CallCount++;
+            Calls.Add((fileName, arguments));
+
+            // Follow-up teardown calls (docker kill / docker rm -f) — answer with the
+            // scripted teardown exit code and leave the primary-run bookkeeping intact.
+            if (arguments.Count == 0 || arguments[0] != "run")
+                return Task.FromResult(new ProcessRunResult(_teardownExitCode, string.Empty, string.Empty, TimedOut: false));
+
             FileName = fileName;
             Arguments = arguments;
             Stdin = stdin;
@@ -71,8 +102,34 @@ public class PythonContainerExecutorTests
                 _produceFiles?.Invoke(ScratchDirAtCall);
             }
 
+            // Simulate the docker CLI writing the started container id to --cidfile so the
+            // executor's timeout/cancellation fallback can source the id and kill it.
+            if (_containerId is not null)
+            {
+                var cidFile = ExtractCidFile(arguments);
+                if (cidFile is not null)
+                    File.WriteAllText(cidFile, _containerId);
+            }
+
+            // Simulate caller cancellation mid-run (AFTER the container "started"), so the
+            // executor takes its cancellation path and still tears the container down.
+            if (_cancelOnRun is not null)
+            {
+                _cancelOnRun.Cancel();
+                throw new OperationCanceledException(_cancelOnRun.Token);
+            }
+
             return Task.FromResult(_result);
         }
+    }
+
+    /// <summary>The host path passed as "--cidfile &lt;path&gt;", or null when absent.</summary>
+    private static string? ExtractCidFile(IReadOnlyList<string> args)
+    {
+        for (var i = 0; i < args.Count - 1; i++)
+            if (args[i] == "--cidfile")
+                return args[i + 1];
+        return null;
     }
 
     private static ProcessRunResult Success(string stdOut, string stdErr = "") =>
@@ -283,6 +340,120 @@ public class PythonContainerExecutorTests
         var result = await executor.ExecuteAsync("while True: pass", TenantId, UserId);
 
         Assert.Equal("[Code Interpreter] Thực thi vượt quá 15s và đã bị dừng.", result.Output);
+    }
+
+    // ─────────────────────────────────────────────
+    // 4b. Container teardown — the CLI kill does NOT stop a daemon-managed
+    //     container, so a --cidfile-sourced `docker kill` is the real backstop.
+    // ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task Enabled_HappyPath_PassesCidFileArgument_OutsideTheWorkMount()
+    {
+        var runner = new FakeProcessRunner(Success("ok"));
+        var executor = CreateExecutor(EnabledOptions(), runner);
+
+        await executor.ExecuteAsync("print('ok')", TenantId, UserId);
+
+        // The run must carry "--cidfile <path>" so a timeout/cancel can source the id.
+        var cidFile = ExtractCidFile(runner.Arguments!);
+        Assert.False(string.IsNullOrWhiteSpace(cidFile), "The docker run must pass a --cidfile path.");
+
+        // The cidfile must live OUTSIDE the /work mount source (a sibling), so it is
+        // neither mounted into the container nor harvested as a produced file.
+        var scratch = ExtractScratchDir(runner.Arguments!);
+        Assert.NotNull(scratch);
+        Assert.False(
+            cidFile!.StartsWith(scratch! + Path.DirectorySeparatorChar, StringComparison.Ordinal),
+            $"The cidfile '{cidFile}' must not live inside the /work mount source '{scratch}'.");
+    }
+
+    [Fact]
+    public async Task TimedOut_IssuesDockerKill_WithContainerIdFromCidFile()
+    {
+        const string containerId = "abc123def4567890";
+        // The fake writes this id to the run's --cidfile, exactly as the docker CLI would.
+        var runner = new FakeProcessRunner(
+            new ProcessRunResult(-1, string.Empty, string.Empty, TimedOut: true),
+            containerId: containerId);
+        var executor = CreateExecutor(EnabledOptions(o => o.TimeoutSeconds = 15), runner);
+
+        var result = await executor.ExecuteAsync("while True: pass", TenantId, UserId);
+
+        Assert.Equal("[Code Interpreter] Thực thi vượt quá 15s và đã bị dừng.", result.Output);
+
+        // A follow-up `docker kill <id>` must have been issued via the SAME runner, with the
+        // id sourced from the --cidfile (the executor has no other way to learn the id).
+        var kill = Assert.Single(runner.Calls, c => c.Arguments.Count > 0 && c.Arguments[0] == "kill");
+        Assert.Equal("docker", kill.FileName);
+        Assert.Equal(new[] { "kill", containerId }, kill.Arguments.ToArray());
+
+        // No force-remove needed when the kill succeeded (teardownExitCode defaults to 0).
+        Assert.DoesNotContain(runner.Calls, c => c.Arguments.Count > 0 && c.Arguments[0] == "rm");
+    }
+
+    [Fact]
+    public async Task TimedOut_WithoutContainerId_IssuesNoKill()
+    {
+        // The CLI never wrote a container id (container failed to start) → nothing to kill.
+        var runner = new FakeProcessRunner(new ProcessRunResult(-1, string.Empty, string.Empty, TimedOut: true));
+        var executor = CreateExecutor(EnabledOptions(), runner);
+
+        await executor.ExecuteAsync("while True: pass", TenantId, UserId);
+
+        Assert.Equal(1, runner.CallCount);   // only the docker run — no blind kill
+        Assert.DoesNotContain(runner.Calls, c => c.Arguments.Count > 0 && c.Arguments[0] == "kill");
+    }
+
+    [Fact]
+    public async Task TimedOut_KillDoesNotTake_FallsBackToForceRemove()
+    {
+        const string containerId = "cid_stuck_9";
+        // teardownExitCode = 1 → the `docker kill` "fails", so `docker rm -f` must follow.
+        var runner = new FakeProcessRunner(
+            new ProcessRunResult(-1, string.Empty, string.Empty, TimedOut: true),
+            containerId: containerId,
+            teardownExitCode: 1);
+        var executor = CreateExecutor(EnabledOptions(), runner);
+
+        await executor.ExecuteAsync("while True: pass", TenantId, UserId);
+
+        Assert.Contains(runner.Calls, c => c.Arguments.SequenceEqual(new[] { "kill", containerId }));
+        Assert.Contains(runner.Calls, c => c.Arguments.SequenceEqual(new[] { "rm", "-f", containerId }));
+    }
+
+    [Fact]
+    public async Task Canceled_IssuesDockerKill_ThenPropagates()
+    {
+        using var cts = new CancellationTokenSource();
+        const string containerId = "cid_cancel_1";
+        // The run writes the cidfile, cancels the token, then throws OperationCanceled.
+        var runner = new FakeProcessRunner(
+            Success("unused"),
+            containerId: containerId,
+            cancelOnRun: cts);
+        var executor = CreateExecutor(EnabledOptions(), runner);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.ExecuteAsync("print('x')", TenantId, UserId, cts.Token));
+
+        // The cancellation path must ALSO tear the daemon-managed container down.
+        var kill = Assert.Single(runner.Calls, c => c.Arguments.Count > 0 && c.Arguments[0] == "kill");
+        Assert.Equal(new[] { "kill", containerId }, kill.Arguments.ToArray());
+    }
+
+    [Fact]
+    public async Task SuccessfulRun_IssuesNoDockerKill()
+    {
+        // Even when a container id WAS written, a normal (non-timeout) run must not kill.
+        var runner = new FakeProcessRunner(Success("ok"), containerId: "container_xyz");
+        var executor = CreateExecutor(EnabledOptions(), runner);
+
+        await executor.ExecuteAsync("print('ok')", TenantId, UserId);
+
+        Assert.Equal(1, runner.CallCount);   // only the docker run
+        Assert.DoesNotContain(runner.Calls, c => c.Arguments.Count > 0 && c.Arguments[0] == "kill");
+        Assert.DoesNotContain(runner.Calls, c => c.Arguments.Count > 0 && c.Arguments[0] == "rm");
     }
 
     // ─────────────────────────────────────────────

@@ -174,6 +174,49 @@ public sealed class OracleDatabaseProvider : IExternalDatabaseProvider
         return affected;
     }
 
+    public async Task<IReadOnlyList<string>> DetectWriteSideEffectsAsync(string connectionString, string table, int timeoutSeconds, CancellationToken ct)
+    {
+        // Oracle stores unquoted identifiers upper-cased; compare on UPPER(:t). Oracle
+        // supports only ON DELETE CASCADE / SET NULL (no ON UPDATE actions).
+        var bareTable = table.Contains('.') ? table[(table.LastIndexOf('.') + 1)..] : table;
+        var risks = new List<string>();
+
+        await using var connection = new OracleConnection(connectionString);
+        await connection.OpenAsync(ct);
+
+        await using (var command = (OracleCommand)connection.CreateCommand())
+        {
+            command.BindByName = true;
+            command.CommandTimeout = timeoutSeconds;
+            command.CommandText = "SELECT trigger_name FROM user_triggers WHERE table_name = UPPER(:t)";
+            command.Parameters.Add(new OracleParameter("t", bareTable));
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                risks.Add($"trigger '{reader.GetString(0)}' trên bảng '{bareTable}'");
+        }
+
+        await using (var command = (OracleCommand)connection.CreateCommand())
+        {
+            command.BindByName = true;
+            command.CommandTimeout = timeoutSeconds;
+            command.CommandText = """
+                SELECT uc.table_name, uc.delete_rule
+                FROM user_constraints uc
+                WHERE uc.constraint_type = 'R'
+                  AND uc.delete_rule IN ('CASCADE', 'SET NULL')
+                  AND uc.r_constraint_name IN (
+                      SELECT constraint_name FROM user_constraints
+                      WHERE table_name = UPPER(:t) AND constraint_type IN ('P', 'U'))
+                """;
+            command.Parameters.Add(new OracleParameter("t", bareTable));
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                risks.Add($"khóa ngoại từ '{reader.GetString(0)}' → '{bareTable}' (ON DELETE {reader.GetString(1)})");
+        }
+
+        return risks;
+    }
+
     private static async Task ExecuteAsync(OracleConnection connection, string sql, int timeoutSeconds, CancellationToken ct)
     {
         await using var command = connection.CreateCommand();

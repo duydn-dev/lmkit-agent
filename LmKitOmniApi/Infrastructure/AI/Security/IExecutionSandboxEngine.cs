@@ -5,11 +5,22 @@ using Jint.Constraints;
 using Jint.Native;
 using Jint.Runtime;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace LmKitOmniApi.Infrastructure.AI.Security;
 
 public interface IExecutionSandboxEngine
 {
+    /// <summary>
+    /// Whether the in-process JavaScript (Jint) interpreter is enabled
+    /// (<see cref="CodeInterpreterOptions.JavaScriptEnabled"/>, default true). Mirrors
+    /// <see cref="IPythonCodeExecutor.IsEnabled"/> for the Python path: the orchestrator
+    /// uses it to decide whether to offer the run_javascript tool, and when false a call to
+    /// <see cref="ExecuteCodeSafelyAsync"/> returns a safe "not enabled" message instead of
+    /// executing.
+    /// </summary>
+    bool IsEnabled { get; }
+
     Task<string> ExecuteCodeSafelyAsync(string codeSnippet, string language, CancellationToken ct = default);
 }
 
@@ -45,6 +56,11 @@ public class ExecutionSandboxEngine : IExecutionSandboxEngine
 
     private const string NoReturnValueMessage = "(không có giá trị trả về)";
 
+    // Returned when the JS interpreter is toggled off — mirrors the Python executor's
+    // "not configured" path so a disabled invocation is a safe, agent-readable string.
+    private const string NotEnabledMessage =
+        "[Sandbox Error] Trình thông dịch JavaScript chưa được bật.";
+
     /// <summary>
     /// Installs a capturing `console` whose calls funnel into the host's bounded
     /// buffer through a single (string level, string message) delegate. The
@@ -76,15 +92,25 @@ public class ExecutionSandboxEngine : IExecutionSandboxEngine
         })();
         """;
 
+    private readonly CodeInterpreterOptions _options;
     private readonly ILogger<ExecutionSandboxEngine> _logger;
 
-    public ExecutionSandboxEngine(ILogger<ExecutionSandboxEngine> logger)
+    public ExecutionSandboxEngine(IOptions<CodeInterpreterOptions> options, ILogger<ExecutionSandboxEngine> logger)
     {
+        _options = options.Value;
         _logger = logger;
     }
 
+    /// <inheritdoc />
+    public bool IsEnabled => _options.JavaScriptEnabled;
+
     public async Task<string> ExecuteCodeSafelyAsync(string codeSnippet, string language, CancellationToken ct = default)
     {
+        // Feature toggle: when the JS interpreter is off, never execute — return a safe
+        // "not enabled" message (the tool is also not offered; see the orchestrator gate).
+        if (!IsEnabled)
+            return NotEnabledMessage;
+
         if (!string.Equals(language, "javascript", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(language, "js", StringComparison.OrdinalIgnoreCase))
         {

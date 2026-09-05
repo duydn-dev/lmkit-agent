@@ -1,5 +1,6 @@
 using LmKitOmniApi.Infrastructure.AI.Security;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace LmKitOmniApi.Tests;
 
@@ -15,8 +16,9 @@ public class ExecutionSandboxEngineTests
     /// <summary>Generous upper bound for tests that rely on the engine's own 2s kill-switch.</summary>
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(30);
 
-    private static ExecutionSandboxEngine CreateEngine() =>
-        new(NullLogger<ExecutionSandboxEngine>.Instance);
+    private static ExecutionSandboxEngine CreateEngine(bool javaScriptEnabled = true) =>
+        new(Options.Create(new CodeInterpreterOptions { JavaScriptEnabled = javaScriptEnabled }),
+            NullLogger<ExecutionSandboxEngine>.Instance);
 
     // ─────────────────────────────────────────────
     // 1. Results: last expression, objects, no value
@@ -201,5 +203,38 @@ public class ExecutionSandboxEngineTests
             "System.IO.File.ReadAllText('C:/windows/win.ini')", "javascript");
 
         Assert.StartsWith("[Sandbox Error]", result);
+    }
+
+    // ─────────────────────────────────────────────
+    // 6. Feature toggle (CodeInterpreterOptions.JavaScriptEnabled)
+    // ─────────────────────────────────────────────
+
+    [Fact]
+    public void JavaScriptEnabled_DefaultsToTrue_PreservingBehavior()
+    {
+        // The option defaults to true so existing behavior (Jint always available) is kept.
+        Assert.True(new CodeInterpreterOptions().JavaScriptEnabled);
+    }
+
+    [Fact]
+    public void IsEnabled_IsTrueByDefault()
+    {
+        Assert.True(CreateEngine().IsEnabled);
+    }
+
+    [Fact]
+    public void IsEnabled_IsFalse_WhenJavaScriptDisabled()
+    {
+        Assert.False(CreateEngine(javaScriptEnabled: false).IsEnabled);
+    }
+
+    [Fact]
+    public async Task Disabled_ReturnsNotEnabledMessage_WithoutExecuting()
+    {
+        // Mirrors the Python path when off: a safe bracketed message, never execution.
+        var result = await CreateEngine(javaScriptEnabled: false)
+            .ExecuteCodeSafelyAsync("1 + 1", "javascript");
+
+        Assert.Equal("[Sandbox Error] Trình thông dịch JavaScript chưa được bật.", result);
     }
 }

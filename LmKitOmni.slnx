@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="LmKitOmniApi.IntegrationTests/LmKitOmniApi.IntegrationTests.csproj" />
   <Project Path="LmKitOmniApi.Tests/LmKitOmniApi.Tests.csproj" />
   <Project Path="LmKitOmniApi/LmKitOmniApi.csproj" />
 </Solution>

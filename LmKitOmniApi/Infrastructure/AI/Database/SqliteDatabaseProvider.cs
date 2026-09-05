@@ -120,6 +120,68 @@ public sealed class SqliteDatabaseProvider : IExternalDatabaseProvider
         return await command.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<IReadOnlyList<string>> DetectWriteSideEffectsAsync(string connectionString, string table, int timeoutSeconds, CancellationToken ct)
+    {
+        // SQLite has no real schemas beyond attach names; match on the bare table name.
+        var bareTable = table.Contains('.') ? table[(table.LastIndexOf('.') + 1)..] : table;
+        var risks = new List<string>();
+
+        await using var connection = new SqliteConnection(ForceReadOnly(connectionString));
+        await connection.OpenAsync(ct);
+
+        // Triggers on the target fire on every write to it, regardless of FK enforcement.
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = $t";
+            command.Parameters.AddWithValue("$t", bareTable);
+            command.CommandTimeout = timeoutSeconds;
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                risks.Add($"trigger '{reader.GetString(0)}' trên bảng '{bareTable}'");
+        }
+
+        // Any OTHER table whose FK references this table with a cascading action: a write
+        // here can modify that table, which the single-table backup does NOT cover.
+        var otherTables = new List<string>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'";
+            command.CommandTimeout = timeoutSeconds;
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct)) otherTables.Add(reader.GetString(0));
+        }
+
+        foreach (var other in otherTables)
+        {
+            var quoted = other.Replace("'", "''");
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"PRAGMA foreign_key_list('{quoted}')";
+            command.CommandTimeout = timeoutSeconds;
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                // id, seq, table(referenced), from, to, on_update, on_delete, match
+                var referenced = reader.GetString(2);
+                var onUpdate = reader.IsDBNull(5) ? "" : reader.GetString(5);
+                var onDelete = reader.IsDBNull(6) ? "" : reader.GetString(6);
+                if (string.Equals(referenced, bareTable, StringComparison.OrdinalIgnoreCase)
+                    && (IsCascading(onUpdate) || IsCascading(onDelete)))
+                    risks.Add($"khóa ngoại từ '{other}' → '{bareTable}' (ON UPDATE {Describe(onUpdate)}, ON DELETE {Describe(onDelete)})");
+            }
+        }
+
+        return risks;
+    }
+
+    // A referential action that can change rows in the child table on a parent write.
+    private static bool IsCascading(string? action) =>
+        !string.IsNullOrEmpty(action)
+        && (action.Contains("CASCADE", StringComparison.OrdinalIgnoreCase)
+            || action.Contains("SET NULL", StringComparison.OrdinalIgnoreCase)
+            || action.Contains("SET DEFAULT", StringComparison.OrdinalIgnoreCase));
+
+    private static string Describe(string? action) => string.IsNullOrWhiteSpace(action) ? "NO ACTION" : action;
+
     private static string ForceReadOnly(string connectionString)
     {
         var builder = new SqliteConnectionStringBuilder(connectionString) { Mode = SqliteOpenMode.ReadOnly };

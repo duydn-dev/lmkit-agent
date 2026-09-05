@@ -81,7 +81,10 @@ public class ComputerUseAgentTests
             StepTimeoutSeconds = 30,
             SessionWallClockSeconds = 300,
             RequireApprovalPerAction = true,
-            AllowedHosts = new List<string> { "example.com" },
+            // Literal public IP "1.1.1.1" is allowlisted so the post-step landing re-validation
+            // (GAP 2) passes WITHOUT any DNS query — Dns short-circuits an IP literal, keeping
+            // these tests hermetic (same trick as ComputerUseExecutorTests).
+            AllowedHosts = new List<string> { "example.com", "1.1.1.1" },
         };
         tweak?.Invoke(o);
         return o;
@@ -93,6 +96,7 @@ public class ComputerUseAgentTests
     private static ComputerUseAgent CreateAgent(
         FakeExecutor executor, FakeModel model, FakeApprovalGate gate, ComputerUseOptions options) =>
         new(executor, model, gate, Options.Create(options), Resources(),
+            new ToolSandboxService(NullLogger<ToolSandboxService>.Instance),
             NullLogger<ComputerUseAgent>.Instance, audit: null);
 
     private static ComputerUseRequest Request(string task = "do the task", string startUrl = "") =>
@@ -105,17 +109,22 @@ public class ComputerUseAgentTests
         return list;
     }
 
+    // A hermetic landing URL: literal IP "1.1.1.1" (allowlisted in Options_) so the GAP 2
+    // landing re-validation resolves without a network query.
     private static ComputerUseObservation WithElements(params InteractiveElement[] els) =>
-        new() { Url = "https://example.com/", Title = "Login", Elements = els };
+        new() { Url = "https://1.1.1.1/", Title = "Login", Elements = els };
 
     // ── 1. observe → decide → approval → act → terminate on done ──
 
     [Fact]
     public async Task Loop_Observes_Decides_Approves_Acts_ThenTerminatesOnDone()
     {
-        var executor = new FakeExecutor();
+        // The observation must expose the element the model addresses (ref 1) so the click is
+        // groundable; a read-only screenshot observes it first.
+        var executor = new FakeExecutor(WithElements(new InteractiveElement(1, "button", "Continue", null)));
         var model = new FakeModel(new[]
         {
+            "{\"action\":\"screenshot\"}",
             "{\"action\":\"click\",\"ref\":1}",
             "{\"action\":\"done\",\"summary\":\"finished the task\"}",
         });
@@ -126,18 +135,66 @@ public class ComputerUseAgentTests
 
         // Approval was requested once (for the click) and the click executed after it.
         Assert.Equal(1, gate.CallCount);
-        Assert.Equal(new[] { ComputerUseActionType.Click }, executor.Actions);
-        Assert.Equal(2, model.CallCount);
+        Assert.Equal(new[] { ComputerUseActionType.Screenshot, ComputerUseActionType.Click }, executor.Actions);
+        Assert.Equal(3, model.CallCount);
 
-        // The HITL marker was emitted, and it came BEFORE the click's STEP marker.
+        // The HITL marker was emitted, and a STEP marker for the executed click FOLLOWS it.
         var hitlIndex = output.FindIndex(s => s.StartsWith("[HITL_APPROVAL_REQUIRED:", StringComparison.Ordinal));
-        var stepIndex = output.FindIndex(s => s.StartsWith("[STEP:", StringComparison.Ordinal));
         Assert.True(hitlIndex >= 0, "expected a HITL_APPROVAL_REQUIRED marker");
-        Assert.True(stepIndex > hitlIndex, "the executed step must follow the approval");
+        var stepAfterApproval = output.FindIndex(hitlIndex + 1, s => s.StartsWith("[STEP:", StringComparison.Ordinal));
+        Assert.True(stepAfterApproval > hitlIndex, "the executed step must follow the approval");
 
         // The run correlates a session and ends with the done summary.
         Assert.StartsWith("[COMPUTER_USE:", output[0]);
         Assert.Contains(output, s => s.Contains("finished the task"));
+    }
+
+    // ── 1b. grounding robustness: self-correct a hallucinated ref, then execute ──
+
+    [Fact]
+    public async Task Grounding_HallucinatedRef_SelfCorrects_ThenExecutes()
+    {
+        // The observation exposes ONLY ref 3. The model first addresses ref 99 (absent →
+        // un-groundable); the grounding layer re-asks with the valid-ref list, the model
+        // corrects to ref 3 within the GroundingRetries budget, and THAT click executes.
+        var executor = new FakeExecutor(WithElements(new InteractiveElement(3, "button", "Search", null)));
+        var model = new FakeModel(new[]
+        {
+            "{\"action\":\"screenshot\"}",         // observe first → the element list (ref 3) becomes known
+            "{\"action\":\"click\",\"ref\":99}",   // hallucinated — re-asked, never executed, never gated
+            "{\"action\":\"click\",\"ref\":3}",    // corrected — groundable
+            "{\"action\":\"done\",\"summary\":\"ok\"}",
+        });
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_(o => o.GroundingRetries = 2));
+
+        var output = await CollectAsync(agent.RunAsync(Request(), default));
+
+        // The screenshot observed the page; the corrected click then ran; the hallucinated one never did.
+        Assert.Equal(new[] { ComputerUseActionType.Screenshot, ComputerUseActionType.Click }, executor.Actions);
+        Assert.Equal(4, model.CallCount); // screenshot (1); click99 + corrected click3 (2); done (1)
+        Assert.Contains(output, s => s.Contains("tự chỉnh lại"));
+    }
+
+    // ── 1c. grounding robustness: exhaust retries → fail-closed handoff, nothing runs ──
+
+    [Fact]
+    public async Task Grounding_HallucinatedRef_ExhaustsRetries_HandsOff_NeverExecutes()
+    {
+        // The model keeps addressing a ref that isn't in the observation. After
+        // GroundingRetries + 1 attempts the step's fail-closed handoff takes over: the action
+        // is never executed and never sent to the approval gate.
+        var executor = new FakeExecutor(WithElements(new InteractiveElement(3, "button", "Search", null)));
+        var model = new FakeModel(Array.Empty<string>(), fallback: "{\"action\":\"click\",\"ref\":99}");
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_(o => o.GroundingRetries = 2));
+
+        var output = await CollectAsync(agent.RunAsync(Request(), default));
+
+        Assert.Empty(executor.Actions);   // never executed
+        Assert.Equal(0, gate.CallCount);  // never sent to approval
+        Assert.Equal(3, model.CallCount); // 1 initial + 2 corrective re-asks, then hand off
+        Assert.Contains(output, s => s.Contains("chuyển giao cho con người"));
     }
 
     // ── 2. step cap ──
@@ -185,15 +242,20 @@ public class ComputerUseAgentTests
     [Fact]
     public async Task Loop_SideEffectingAction_NotApproved_IsNotExecuted()
     {
-        var executor = new FakeExecutor();
-        var model = new FakeModel(new[] { "{\"action\":\"click\",\"ref\":1}" });
+        var executor = new FakeExecutor(WithElements(new InteractiveElement(1, "button", "Continue", null)));
+        var model = new FakeModel(new[]
+        {
+            "{\"action\":\"screenshot\"}",           // observe first so the click (ref 1) is groundable
+            "{\"action\":\"click\",\"ref\":1}",
+        });
         var gate = new FakeApprovalGate(decision: false); // human rejects
         var agent = CreateAgent(executor, model, gate, Options_());
 
         var output = await CollectAsync(agent.RunAsync(Request(), default));
 
         Assert.Equal(1, gate.CallCount);
-        Assert.Empty(executor.Actions); // the click never executed
+        Assert.Equal(new[] { ComputerUseActionType.Screenshot }, executor.Actions); // the click never executed
+        Assert.DoesNotContain(ComputerUseActionType.Click, executor.Actions);
         Assert.Contains(output, s => s.StartsWith("[HITL_APPROVAL_REQUIRED:", StringComparison.Ordinal));
         Assert.Contains(output, s => s.Contains("không được phê duyệt"));
     }
@@ -262,5 +324,164 @@ public class ComputerUseAgentTests
         Assert.Empty(executor.Actions);
         Assert.Equal(0, model.CallCount);
         Assert.Contains(output, s => s.Contains("chưa được bật"));
+    }
+
+    // ── 8. (GAP 1) coordinate-only type of a secret → refused, NOT executed, NOT gated ──
+
+    [Fact]
+    public async Task Loop_CoordinateType_Ungroundable_IsRefused_NotExecuted_NotSentToApproval()
+    {
+        var executor = new FakeExecutor();
+        // A `type` given by x/y with NO ref cannot be grounded to an inspectable element, so
+        // the agent cannot rule out that (100,200) is a password/CAPTCHA field.
+        // Repeated via fallback so it persists through the grounding self-correction retries —
+        // a PERSISTENTLY un-groundable action must still fail closed (never execute, never gate).
+        var model = new FakeModel(Array.Empty<string>(), fallback: "{\"action\":\"type\",\"x\":100,\"y\":200,\"text\":\"hunter2\"}");
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_());
+
+        var output = await CollectAsync(agent.RunAsync(Request(), default));
+
+        Assert.Empty(executor.Actions);                                   // the type never executed
+        Assert.Equal(0, gate.CallCount);                                  // never routed to approval
+        Assert.DoesNotContain(output, s => s.StartsWith("[HITL_APPROVAL_REQUIRED:", StringComparison.Ordinal));
+        Assert.Contains(output, s => s.Contains("🛑"));                   // handed off to a human
+    }
+
+    // ── 9. (GAP 1) click whose ref is absent from the current observation → refused ──
+
+    [Fact]
+    public async Task Loop_ClickRefAbsentFromCurrentObservation_IsRefused_NotExecuted()
+    {
+        // The start page exposes only ref 1; the model then clicks ref 99 (stale / never
+        // present / dropped by MaxElements) — ungroundable, so fail closed.
+        var executor = new FakeExecutor(WithElements(new InteractiveElement(1, "button", "OK", null)));
+        // Repeated via fallback so it persists through the grounding retries and still fails closed.
+        var model = new FakeModel(Array.Empty<string>(), fallback: "{\"action\":\"click\",\"ref\":99}");
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_());
+
+        var output = await CollectAsync(agent.RunAsync(Request(startUrl: "https://1.1.1.1/"), default));
+
+        Assert.Equal(new[] { ComputerUseActionType.Navigate }, executor.Actions); // only the start nav ran
+        Assert.DoesNotContain(ComputerUseActionType.Click, executor.Actions);
+        Assert.Equal(0, gate.CallCount);
+        Assert.Contains(output, s => s.Contains("🛑"));
+    }
+
+    // ── 10. (GAP 1) a bare key press cannot be grounded → refused (closes the
+    //        character-by-character credential-entry bypass around the `type` guard) ──
+
+    [Fact]
+    public async Task Loop_BareKeyPress_Ungroundable_IsRefused_NotExecuted()
+    {
+        var executor = new FakeExecutor(WithElements(new InteractiveElement(1, "textbox", "Search", null)));
+        // Repeated via fallback so it persists through the grounding retries and still fails closed.
+        var model = new FakeModel(Array.Empty<string>(), fallback: "{\"action\":\"key\",\"keys\":\"h\"}");
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_());
+
+        var output = await CollectAsync(agent.RunAsync(Request(startUrl: "https://1.1.1.1/"), default));
+
+        Assert.Equal(new[] { ComputerUseActionType.Navigate }, executor.Actions);
+        Assert.DoesNotContain(ComputerUseActionType.Key, executor.Actions);
+        Assert.Equal(0, gate.CallCount);
+        Assert.Contains(output, s => s.Contains("🛑"));
+    }
+
+    // ── 11. (GAP 1) a VN-labeled ("Mật khẩu") password field via ref → refused, never typed ──
+
+    [Fact]
+    public async Task Loop_VietnamesePasswordField_IsHandedOff_NeverTyped()
+    {
+        var executor = new FakeExecutor(WithElements(
+            new InteractiveElement(1, "textbox", "Tên đăng nhập", null),
+            new InteractiveElement(2, "textbox", "Mật khẩu", null)));
+        var model = new FakeModel(new[]
+        {
+            "{\"action\":\"screenshot\"}",
+            "{\"action\":\"type\",\"ref\":2,\"text\":\"bimat123\"}",
+        });
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_());
+
+        var output = await CollectAsync(agent.RunAsync(Request(), default));
+
+        Assert.Equal(new[] { ComputerUseActionType.Screenshot }, executor.Actions);
+        Assert.DoesNotContain(ComputerUseActionType.Type, executor.Actions);
+        Assert.Equal(0, gate.CallCount);
+        Assert.Contains(output, s => s.Contains("🛑"));
+    }
+
+    // ── 12. (GAP 2) a step whose observation.Url leaves the allowlist → session stops ──
+
+    [Fact]
+    public async Task Loop_StopsWhenLandingUrlLeavesAllowlist()
+    {
+        // The step's observation reports a landing on 8.8.8.8, which is NOT on the allowlist.
+        var offsite = new ComputerUseObservation
+        {
+            Url = "https://8.8.8.8/",
+            Title = "Elsewhere",
+            Elements = new[] { new InteractiveElement(1, "button", "Go", null) },
+        };
+        var executor = new FakeExecutor(offsite);
+        var model = new FakeModel(new[]
+        {
+            "{\"action\":\"scroll\",\"direction\":\"down\",\"amount\":3}", // read-only; executes, then lands off-allowlist
+            "{\"action\":\"click\",\"ref\":1}",                           // must NEVER run
+        });
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_(o => o.AllowedHosts = new List<string> { "1.1.1.1" }));
+
+        var output = await CollectAsync(agent.RunAsync(Request(), default));
+
+        Assert.Equal(new[] { ComputerUseActionType.Scroll }, executor.Actions); // stopped after the first step
+        Assert.DoesNotContain(ComputerUseActionType.Click, executor.Actions);
+        Assert.Contains(output, s => s.Contains("🔒"));
+    }
+
+    // ── 13. (GAP 2) SSRF gate stops the session even when the landing host is allowlisted ──
+
+    [Fact]
+    public async Task Loop_StopsWhenLandingUrlIsSsrfBlocked_EvenIfHostAllowlisted()
+    {
+        var metadata = new ComputerUseObservation
+        {
+            Url = "http://169.254.169.254/latest/meta-data",
+            Title = "metadata",
+        };
+        var executor = new FakeExecutor(metadata);
+        var model = new FakeModel(new[]
+        {
+            "{\"action\":\"scroll\",\"direction\":\"down\",\"amount\":1}",
+            "{\"action\":\"done\",\"summary\":\"never reached\"}",
+        });
+        var gate = new FakeApprovalGate(decision: true);
+        // Deliberately allowlist the metadata IP to prove the SSRF gate is the backstop.
+        var agent = CreateAgent(executor, model, gate, Options_(o => o.AllowedHosts = new List<string> { "169.254.169.254" }));
+
+        var output = await CollectAsync(agent.RunAsync(Request(), default));
+
+        Assert.Equal(new[] { ComputerUseActionType.Scroll }, executor.Actions);
+        Assert.Contains(output, s => s.Contains("🔒"));
+    }
+
+    // ── 14. (GAP 2) the initial start-URL landing is re-validated too (redirect off-allowlist) ──
+
+    [Fact]
+    public async Task Loop_StopsWhenStartUrlRedirectsOffAllowlist_BeforeAskingModel()
+    {
+        var offsite = new ComputerUseObservation { Url = "https://8.8.8.8/", Title = "redirected" };
+        var executor = new FakeExecutor(offsite);
+        var model = new FakeModel(new[] { "{\"action\":\"done\",\"summary\":\"never reached\"}" });
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_(o => o.AllowedHosts = new List<string> { "1.1.1.1" }));
+
+        var output = await CollectAsync(agent.RunAsync(Request(startUrl: "https://1.1.1.1/"), default));
+
+        Assert.Equal(new[] { ComputerUseActionType.Navigate }, executor.Actions); // only the start nav ran
+        Assert.Equal(0, model.CallCount);                                          // loop never asked the model
+        Assert.Contains(output, s => s.Contains("🔒"));
     }
 }

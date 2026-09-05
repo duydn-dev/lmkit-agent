@@ -165,4 +165,44 @@ public sealed class SqlServerDatabaseProvider : IExternalDatabaseProvider
         command.CommandTimeout = timeoutSeconds;
         return await command.ExecuteNonQueryAsync(ct);
     }
+
+    public async Task<IReadOnlyList<string>> DetectWriteSideEffectsAsync(string connectionString, string table, int timeoutSeconds, CancellationToken ct)
+    {
+        var risks = new List<string>();
+
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+
+        // Triggers on the target (OBJECT_ID resolves a plain or schema-qualified name).
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandTimeout = timeoutSeconds;
+            command.CommandText = "SELECT name FROM sys.triggers WHERE parent_id = OBJECT_ID(@t)";
+            command.Parameters.AddWithValue("@t", table);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                risks.Add($"trigger '{reader.GetString(0)}' trên bảng '{table}'");
+        }
+
+        // Child tables whose FK references the target with a cascading action
+        // (update/delete_referential_action <> 0 → CASCADE / SET NULL / SET DEFAULT).
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandTimeout = timeoutSeconds;
+            command.CommandText = """
+                SELECT sch.name, tp.name, fk.update_referential_action_desc, fk.delete_referential_action_desc
+                FROM sys.foreign_keys fk
+                JOIN sys.tables tp ON fk.parent_object_id = tp.object_id
+                JOIN sys.schemas sch ON tp.schema_id = sch.schema_id
+                WHERE fk.referenced_object_id = OBJECT_ID(@t)
+                  AND (fk.update_referential_action <> 0 OR fk.delete_referential_action <> 0)
+                """;
+            command.Parameters.AddWithValue("@t", table);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                risks.Add($"khóa ngoại từ '{reader.GetString(0)}.{reader.GetString(1)}' → '{table}' (ON UPDATE {reader.GetString(2)}, ON DELETE {reader.GetString(3)})");
+        }
+
+        return risks;
+    }
 }

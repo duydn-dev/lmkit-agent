@@ -45,13 +45,18 @@ public sealed class PostgresDatabaseProvider : IExternalDatabaseProvider
             await readOnly.ExecuteNonQueryAsync(ct);
         }
 
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = sql;
-        command.CommandTimeout = timeoutSeconds;
-
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        var result = await ReadCappedAsync(reader, maxRows, ct);
+        // Read fully, then CLOSE the command+reader BEFORE rolling back: Npgsql forbids a
+        // transaction op while a reader is still open on the connector ("a command is
+        // already in progress"), so the reader must be disposed first.
+        DbQueryResult result;
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = sql;
+            command.CommandTimeout = timeoutSeconds;
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            result = await ReadCappedAsync(reader, maxRows, ct);
+        }
         await transaction.RollbackAsync(ct);
         return result;
     }
@@ -170,6 +175,68 @@ public sealed class PostgresDatabaseProvider : IExternalDatabaseProvider
         command.CommandText = sql;
         command.CommandTimeout = timeoutSeconds;
         return await command.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<string>> DetectWriteSideEffectsAsync(string connectionString, string table, int timeoutSeconds, CancellationToken ct)
+    {
+        var (schema, name) = SplitIdentifier(table);
+        var risks = new List<string>();
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+
+        // User triggers on the target table (tgisinternal filters FK/constraint plumbing).
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandTimeout = timeoutSeconds;
+            command.CommandText = """
+                SELECT tg.tgname
+                FROM pg_trigger tg
+                JOIN pg_class c ON tg.tgrelid = c.oid
+                JOIN pg_namespace n ON c.relnamespace = n.oid
+                WHERE NOT tg.tgisinternal
+                  AND c.relname = @t
+                  AND (@s IS NULL OR n.nspname = @s)
+                  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                """;
+            command.Parameters.AddWithValue("t", name);
+            command.Parameters.AddWithValue("s", (object?)schema ?? DBNull.Value);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                risks.Add($"trigger '{reader.GetString(0)}' trên bảng '{name}'");
+        }
+
+        // Child tables whose FK references the target with a cascading action.
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandTimeout = timeoutSeconds;
+            command.CommandText = """
+                SELECT tc.table_schema, tc.table_name, rc.update_rule, rc.delete_rule
+                FROM information_schema.referential_constraints rc
+                JOIN information_schema.table_constraints tc
+                  ON tc.constraint_name = rc.constraint_name AND tc.constraint_schema = rc.constraint_schema
+                JOIN information_schema.constraint_column_usage ccu
+                  ON ccu.constraint_name = rc.unique_constraint_name AND ccu.constraint_schema = rc.unique_constraint_schema
+                WHERE ccu.table_name = @t
+                  AND (@s IS NULL OR ccu.table_schema = @s)
+                  AND (rc.update_rule IN ('CASCADE','SET NULL','SET DEFAULT')
+                       OR rc.delete_rule IN ('CASCADE','SET NULL','SET DEFAULT'))
+                """;
+            command.Parameters.AddWithValue("t", name);
+            command.Parameters.AddWithValue("s", (object?)schema ?? DBNull.Value);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                risks.Add($"khóa ngoại từ '{reader.GetString(0)}.{reader.GetString(1)}' → '{name}' (ON UPDATE {reader.GetString(2)}, ON DELETE {reader.GetString(3)})");
+        }
+
+        return risks;
+    }
+
+    // Splits an optionally schema-qualified identifier into (schema?, name).
+    internal static (string? Schema, string Name) SplitIdentifier(string table)
+    {
+        var dot = table.LastIndexOf('.');
+        return dot < 0 ? (null, table) : (table[..dot], table[(dot + 1)..]);
     }
 
     internal static async Task<DbQueryResult> ReadCappedAsync(System.Data.Common.DbDataReader reader, int maxRows, CancellationToken ct)

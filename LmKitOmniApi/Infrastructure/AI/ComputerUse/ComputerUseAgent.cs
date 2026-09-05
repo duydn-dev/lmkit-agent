@@ -53,11 +53,16 @@ public sealed class ComputerUseAgent : IComputerUseAgent
     private readonly IComputerUseApprovalGate _approvalGate;
     private readonly ComputerUseOptions _options;
     private readonly UserResourceAccessService _resources;
+    private readonly ToolSandboxService _sandbox;
     private readonly AgentToolAuditService? _audit;
     private readonly ILogger<ComputerUseAgent> _logger;
 
     private const int MaxHistoryLines = 10;
     private const string AuditToolName = "COMPUTER_USE";
+
+    // Logged at most once per process: warns that egress is not network-enforced when the
+    // tool is enabled without an operator egress-restricted network (see GAP 2 remarks).
+    private static int _egressNotEnforcedWarned;
 
     public ComputerUseAgent(
         IComputerUseExecutor executor,
@@ -65,6 +70,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
         IComputerUseApprovalGate approvalGate,
         IOptions<ComputerUseOptions> options,
         UserResourceAccessService resources,
+        ToolSandboxService sandbox,
         ILogger<ComputerUseAgent> logger,
         AgentToolAuditService? audit = null)
     {
@@ -73,6 +79,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
         _approvalGate = approvalGate;
         _options = options.Value;
         _resources = resources;
+        _sandbox = sandbox;
         _logger = logger;
         _audit = audit;
     }
@@ -92,6 +99,8 @@ public sealed class ComputerUseAgent : IComputerUseAgent
             yield return "[THINKING]: ⚠️ Công cụ điều khiển trình duyệt chưa được bật.\\n";
             yield break;
         }
+
+        WarnIfEgressNotNetworkEnforced();
 
         // Per-session wall-clock cap: a linked source that also fires on the configured budget.
         using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -125,6 +134,17 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                     yield return $"[THINKING]: ⚠️ Không mở được trang bắt đầu: {observation.Error}\\n";
                     yield break; // cannot proceed without a page
                 }
+
+                // Re-validate where we actually LANDED (redirects are not vetted by the executor).
+                var startLanding = await RevalidateLandingUrlAsync(observation, sct);
+                if (startLanding is not null)
+                {
+                    _logger.LogWarning("🔒 [ComputerUse] Dừng phiên — trang đích sau điều hướng không hợp lệ: {Reason}", startLanding);
+                    await AuditAsync(request, navAction, "refused_offsite");
+                    yield return $"[THINKING]: 🔒 {startLanding} — dừng phiên để đảm bảo an toàn.\\n";
+                    yield return "Trang hiện tại đã rời khỏi phạm vi cho phép. Tôi dừng lại để đảm bảo an toàn.";
+                    yield break;
+                }
             }
 
             // ── Main perception→action loop ──
@@ -137,16 +157,21 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                 }
 
                 var screenshotPath = ResolveScreenshotPath(observation.ScreenshotFileId, request);
-                var prompt = new ComputerUsePrompt(request.TaskGoal, SystemPrompt, observation, history, screenshotPath);
 
-                var (raw, decided) = await TryDecideAsync(prompt, sct);
+                // Self-correcting decision: on a malformed or un-groundable action the loop
+                // re-asks the model with a corrective hint (bounded by GroundingRetries) so it can
+                // fix its own grounding BEFORE the fail-closed gates below take over. The model
+                // call sits in this non-iterator helper (an iterator can't await inside try/catch).
+                var (decided, action, parseError, groundingRetries) =
+                    await DecideGroundedAsync(request, observation, history, screenshotPath, sct);
                 if (!decided)
                 {
                     yield return "[THINKING]: ⚠️ Không lấy được hành động từ mô hình — dừng lại.\\n";
                     yield break;
                 }
-
-                if (!ComputerUseActionParser.TryParse(raw, out var action, out var parseError) || action is null)
+                if (groundingRetries > 0 && action is not null)
+                    yield return $"[THINKING]: ↻ Mô hình tự chỉnh lại hành động sau {groundingRetries} lần nhắc định vị.\\n";
+                if (action is null)
                 {
                     yield return $"[THINKING]: ⚠️ Không phân tích được hành động ({parseError}) — thử lại.\\n";
                     history.Add($"invalid action rejected: {parseError}");
@@ -162,6 +187,24 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                     await AuditAsync(request, action, "refused_handoff");
                     yield return $"[THINKING]: 🛑 {refusal}\\n";
                     yield return "Tôi không thể tự thực hiện bước này (nhập thông tin đăng nhập/thanh toán hoặc giải CAPTCHA). "
+                                 + "Vui lòng tự thao tác bước đó rồi yêu cầu tôi tiếp tục.";
+                    yield break;
+                }
+
+                // ── FAIL CLOSED: a side-effecting element action (type/click/key) we cannot GROUND
+                //    to a resolvable element in the CURRENT observation — coordinate-only, no ref,
+                //    or a ref dropped from the observation (stale, or truncated by MaxElements) — is
+                //    never executed and never sent to the approval gate. If the agent can't inspect
+                //    what it's typing into / clicking, it can't guarantee the target isn't a
+                //    credential/CAPTCHA field, so it hands off to a human. (navigate is allowlist +
+                //    SSRF gated; read-only scroll/wait/screenshot stay allowed.) ──
+                if (RequiresGrounding(action) && !IsGrounded(action, observation))
+                {
+                    _logger.LogWarning("🛑 [ComputerUse] Từ chối hành động không định vị được phần tử: {Action}", action.Describe());
+                    await AuditAsync(request, action, "refused_ungroundable");
+                    yield return "[THINKING]: 🛑 Không xác định được phần tử mục tiêu cho hành động này — chuyển giao cho con người.\\n";
+                    yield return "Tôi không thể tự thực hiện thao tác này vì không xác định được chính xác phần tử mục tiêu trong trang "
+                                 + "(có thể là ô nhập thông tin đăng nhập/thanh toán hoặc CAPTCHA). "
                                  + "Vui lòng tự thao tác bước đó rồi yêu cầu tôi tiếp tục.";
                     yield break;
                 }
@@ -224,6 +267,20 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                 foreach (var marker in RenderStep(ordinal, action, observation, request)) yield return marker;
                 if (observation.IsError)
                     yield return $"[THINKING]: ⚠️ {observation.Error}\\n";
+
+                // ── Post-navigation re-validation: a link click / JS nav / redirect can leave the
+                //    page on a host the initial allowlist + SSRF check never saw. Re-vet where we
+                //    ended up and STOP the session fail-closed if it is off-allowlist or resolves to
+                //    a private/loopback/metadata host — do NOT keep driving an off-allowlist page. ──
+                var landing = await RevalidateLandingUrlAsync(observation, sct);
+                if (landing is not null)
+                {
+                    _logger.LogWarning("🔒 [ComputerUse] Dừng phiên — trang rời allowlist/SSRF sau bước: {Reason}", landing);
+                    await AuditAsync(request, action, "refused_offsite");
+                    yield return $"[THINKING]: 🔒 {landing} — dừng phiên để đảm bảo an toàn.\\n";
+                    yield return "Trang hiện tại đã rời khỏi phạm vi cho phép. Tôi dừng lại để đảm bảo an toàn.";
+                    yield break;
+                }
             }
 
             yield return $"[THINKING]: ⏹️ Đã đạt giới hạn {_options.MaxSteps} bước — dừng lại.\\n";
@@ -245,6 +302,79 @@ public sealed class ComputerUseAgent : IComputerUseAgent
             _logger.LogWarning(ex, "❌ [ComputerUse] Lỗi khi lấy hành động từ mô hình.");
             return (null, false);
         }
+    }
+
+    /// <summary>
+    /// Grounding-robustness layer. Asks the model for the next action and, when the reply is
+    /// malformed OR targets a <c>ref</c> that is not in the CURRENT observation (a hallucinated
+    /// or stale element), re-asks with a corrective hint up to
+    /// <see cref="ComputerUseOptions.GroundingRetries"/> times, giving the model a chance to fix
+    /// its own grounding. Returns the first well-formed + grounded action; once the budget is
+    /// spent it returns the last attempt AS-IS (Action=null when still unparseable) so the
+    /// caller's existing fail-closed gates (credential/CAPTCHA refusal, un-groundable handoff,
+    /// navigation allowlist) remain the final authority — this layer only reduces how often a
+    /// capable model gets needlessly handed off. A regular async method (not an iterator) so the
+    /// model call can sit inside try/catch. <c>Retries</c> is how many corrective re-asks happened.
+    /// </summary>
+    private async Task<(bool Decided, ComputerUseAction? Action, string? ParseError, int Retries)> DecideGroundedAsync(
+        ComputerUseRequest request, ComputerUseObservation observation,
+        IReadOnlyList<string> history, string? screenshotPath, CancellationToken ct)
+    {
+        string? correction = null;
+        ComputerUseAction? lastAction = null;
+        string? lastParseError = null;
+        var maxAttempts = Math.Max(0, _options.GroundingRetries) + 1;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            // On a retry, append the correction as a TRANSIENT extra history line so the model sees
+            // exactly what was wrong; the caller's persistent `history` is never mutated here.
+            IReadOnlyList<string> effectiveHistory = correction is null
+                ? history
+                : new List<string>(history) { "Nhắc sửa: " + correction };
+            var prompt = new ComputerUsePrompt(request.TaskGoal, SystemPrompt, observation, effectiveHistory, screenshotPath);
+
+            var (raw, decided) = await TryDecideAsync(prompt, ct);
+            if (!decided) return (false, null, null, attempt);
+
+            if (!ComputerUseActionParser.TryParse(raw, out var action, out var parseError) || action is null)
+            {
+                lastAction = null;
+                lastParseError = parseError;
+                correction = $"Hành động vừa rồi không hợp lệ ({parseError}). Chỉ trả về ĐÚNG MỘT JSON theo schema, không kèm văn bản.";
+                continue;
+            }
+
+            lastAction = action;
+            lastParseError = null;
+
+            // Needs an element target but the ref isn't in this observation → let it self-correct
+            // with the list of valid refs before the step's fail-closed handoff takes over.
+            if (RequiresGrounding(action) && !IsGrounded(action, observation))
+            {
+                correction = BuildGroundingHint(observation);
+                continue;
+            }
+
+            return (true, action, null, attempt); // well-formed and (if needed) grounded
+        }
+
+        // Budget spent: hand back the last attempt so the loop's fail-closed gates handle it.
+        return (true, lastAction, lastParseError, maxAttempts - 1);
+    }
+
+    /// <summary>Corrective hint listing the valid element refs in the current observation, so the
+    /// model re-picks a REAL target (or asks a human) instead of a hallucinated/stale/coordinate ref.</summary>
+    private string BuildGroundingHint(ComputerUseObservation observation)
+    {
+        var refs = observation.Elements
+            .Take(Math.Max(1, _options.MaxElements))
+            .Select(e => string.IsNullOrWhiteSpace(e.Name) ? $"{e.Ref}:{e.Role}" : $"{e.Ref}:{e.Role} \"{e.Name}\"");
+        var list = string.Join(", ", refs);
+        return string.IsNullOrEmpty(list)
+            ? "Trang hiện không có phần tử tương tác nào để chọn 'ref'. Nếu cần thao tác hãy trả {\"action\":\"ask\",\"question\":\"...\"} để nhờ con người; hoặc dùng 'scroll'/'navigate' hợp lệ."
+            : $"'ref' bạn chọn không có trong trang hiện tại. Chỉ dùng 'ref' từ danh sách phần tử: [{list}]. "
+              + "Nếu không có phần tử phù hợp, trả {\"action\":\"ask\",\"question\":\"...\"} thay vì đoán toạ độ.";
     }
 
     private async Task<(ComputerUseObservation? Observation, bool Cancelled)> TryStepAsync(
@@ -288,6 +418,83 @@ public sealed class ComputerUseAgent : IComputerUseAgent
         if (_options.AllowedHosts.Count == 0) return false;
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
         return _options.AllowedHosts.Any(a => string.Equals(a, host, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Only element-targeted, side-effecting actions must be grounded to an inspectable
+    /// element: <c>type</c>, <c>click</c>, <c>key</c>. <c>navigate</c> is host-gated
+    /// (allowlist + SSRF) instead, and read-only ops (scroll / wait / screenshot) plus
+    /// terminals (done / ask) need no target.
+    /// </summary>
+    private static bool RequiresGrounding(ComputerUseAction action) => action.Type
+        is ComputerUseActionType.Type or ComputerUseActionType.Click or ComputerUseActionType.Key;
+
+    /// <summary>
+    /// An action is GROUNDED only when it carries a <see cref="ComputerUseAction.Ref"/> that
+    /// resolves to an element in the CURRENT observation. Coordinate-only actions, actions
+    /// with no ref (e.g. a bare <c>key</c> press — which would type into whatever is focused,
+    /// an element we cannot inspect), and refs absent from the current observation (stale, or
+    /// dropped by <see cref="ComputerUseOptions.MaxElements"/> truncation) are NOT grounded.
+    /// </summary>
+    private static bool IsGrounded(ComputerUseAction action, ComputerUseObservation observation)
+    {
+        if (action.Ref is not int refId) return false;
+        foreach (var element in observation.Elements)
+            if (element.Ref == refId) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Re-vets where the browser actually ENDED UP after a step (the observation's reported
+    /// url) against the navigation allowlist AND the SSRF gate. Returns a non-null reason to
+    /// STOP the session when the landing page is off-allowlist or resolves to a
+    /// private/loopback/metadata host; returns null to continue. Only http/https landings are
+    /// checked — <c>about:blank</c>, <c>data:</c>, etc. carry no egress host. Fails CLOSED:
+    /// an unexpected validation error also stops the session.
+    /// </summary>
+    private async Task<string?> RevalidateLandingUrlAsync(ComputerUseObservation observation, CancellationToken ct)
+    {
+        var url = observation.Url;
+        if (string.IsNullOrWhiteSpace(url)) return null;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return null;
+
+        if (!IsNavigationAllowed(url))
+            return $"Trang đích '{uri.Host}' nằm ngoài danh sách máy chủ được phép";
+
+        try
+        {
+            var ssrf = await _sandbox.ValidateUrlAsync(url, ct);
+            if (!ssrf.IsAllowed)
+                return $"Trang đích '{uri.Host}' bị cổng SSRF từ chối: {ssrf.DenialReason}";
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return null; // cancellation is handled by the loop's own checks; no spurious stop
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "🔒 [ComputerUse] Lỗi khi thẩm định URL đích — dừng an toàn.");
+            return $"Không thẩm định được trang đích '{uri.Host}'"; // fail closed
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// One-time WARNING (per process) that egress is not enforced at the network layer when
+    /// the tool is enabled without <see cref="ComputerUseOptions.NetworkName"/>. In that mode
+    /// the host allowlist + per-step landing re-validation are the ONLY host constraints; an
+    /// operator egress-restricted network is still the recommended backstop for
+    /// subresources/websockets the host cannot see. Warns only — never hard-fails.
+    /// </summary>
+    private void WarnIfEgressNotNetworkEnforced()
+    {
+        if (!string.IsNullOrWhiteSpace(_options.NetworkName)) return;
+        if (Interlocked.Exchange(ref _egressNotEnforcedWarned, 1) != 0) return;
+        _logger.LogWarning(
+            "⚠️ [ComputerUse] ComputerUse:NetworkName trống — egress KHÔNG được cưỡng chế ở tầng mạng. "
+            + "Chỉ dựa vào allowlist máy chủ + thẩm định URL đích sau mỗi bước; hãy cấu hình một mạng "
+            + "hạn chế egress (NetworkName) để phòng thủ đầy đủ trước redirect/subresource/websocket.");
     }
 
     private IEnumerable<string> RenderStep(

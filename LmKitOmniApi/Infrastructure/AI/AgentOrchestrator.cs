@@ -47,10 +47,14 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly ToolSandboxService _sandbox;
     private readonly IPromptGuardService _promptGuard;
 
-    // Container-backed Python interpreter. Held here (unlike IExecutionSandboxEngine,
-    // which is only forwarded to the dispatcher) because CreateNativeActionToolsAsync
+    // Container-backed Python interpreter. Held here because CreateNativeActionToolsAsync
     // must check IsEnabled to decide whether to offer the run_python tool.
     private readonly IPythonCodeExecutor _pythonExecutor;
+
+    // In-process JS (Jint) sandbox. Held here (in addition to being forwarded to the
+    // dispatcher) so CreateNativeActionToolsAsync can gate run_javascript on IsEnabled
+    // (CodeInterpreter JavaScriptEnabled) — mirrors run_python's IsEnabled gate.
+    private readonly IExecutionSandboxEngine _executionSandbox;
 
     // Container-backed headless-browser BROWSE tool. Held here (like _pythonExecutor)
     // because CreateNativeActionToolsAsync must check IsEnabled to decide whether to
@@ -176,6 +180,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         _sandbox = sandbox;
         _promptGuard = promptGuard;
         _pythonExecutor = pythonExecutor;
+        _executionSandbox = executionSandbox;
         _browserExecutor = browserExecutor;
         _webRead = webRead;
         _pdfForm = pdfForm;
@@ -653,11 +658,12 @@ public class AgentOrchestrator : IAgentOrchestrator
                 (q, ct) => invoke("SUMMARIZE", q, ct)));
         }
 
-        // Code interpreter (v1: sandboxed JavaScript via Jint). Same gating as
-        // every other action: the whitelist filters registration here, and the
-        // invoke path still runs the full RBAC check on the mapped "RunCode"
-        // permission (ActionToToolMap) before anything executes.
-        if (ActionAllowed("CODE"))
+        // Code interpreter (v1: sandboxed JavaScript via Jint). Offered only when the
+        // JS sandbox is enabled (CodeInterpreter JavaScriptEnabled — default on; mirrors
+        // run_python's IsEnabled gate) AND the whitelist allows it; the invoke path still
+        // runs the full RBAC check on the mapped "RunCode" permission before anything
+        // executes, and the engine itself re-checks IsEnabled as defense-in-depth.
+        if (ActionAllowed("CODE") && _executionSandbox.IsEnabled)
         {
             tools.Add(new DelegatedActionTool(
                 "run_javascript",

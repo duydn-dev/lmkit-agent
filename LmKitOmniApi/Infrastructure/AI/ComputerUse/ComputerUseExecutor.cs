@@ -289,9 +289,14 @@ public sealed class ComputerUseExecutor : IComputerUseExecutor
                 var role = el.TryGetProperty("role", out var ro) && ro.ValueKind == JsonValueKind.String ? ro.GetString() ?? "" : "";
                 var name = el.TryGetProperty("name", out var na) && na.ValueKind == JsonValueKind.String ? na.GetString() ?? "" : "";
                 var value = el.TryGetProperty("value", out var va) && va.ValueKind == JsonValueKind.String ? va.GetString() : null;
+                // Optional field type (e.g. "password"/"email"): lets the safety guard refuse a
+                // password field regardless of its (possibly localized/absent) label.
+                var type = el.TryGetProperty("type", out var ty) && ty.ValueKind == JsonValueKind.String ? ty.GetString() : null;
 
                 elements.Add(new InteractiveElement(
-                    refId, Truncate(role, 40), Truncate(name, 200), value is null ? null : Truncate(value, 200)));
+                    refId, Truncate(role, 40), Truncate(name, 200),
+                    value is null ? null : Truncate(value, 200),
+                    type is null ? null : Truncate(type, 40)));
             }
         }
 
