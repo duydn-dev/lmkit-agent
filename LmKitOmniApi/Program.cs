@@ -271,6 +271,24 @@ builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.ComputerUse.IComputerU
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.ComputerUse.IComputerUseApprovalGate, LmKitOmniApi.Infrastructure.AI.ComputerUse.ComputerUseApprovalGate>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.ComputerUse.IComputerUseAgent, LmKitOmniApi.Infrastructure.AI.ComputerUse.ComputerUseAgent>();
 
+// Grounding EVALUATION harness (disabled by default — see GroundingEvalOptions). Measures how
+// well a model grounds (Correct / ValidButWrong / Hallucinated / Malformed) over fixture cases
+// via the IComputerUseModel seam. When disabled the evaluator refuses and the endpoint 501s.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.ComputerUse.Eval.GroundingEvalOptions>(
+    builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.ComputerUse.Eval.GroundingEvalOptions.SectionName));
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.ComputerUse.Eval.IGroundingEvaluator, LmKitOmniApi.Infrastructure.AI.ComputerUse.Eval.GroundingEvaluator>();
+
+// Grounding fine-tuning pipeline (disabled by default — see GroundingTrainingOptions). The
+// recorder persists RAW, model-free samples (JSONL); ALL LM-Kit fine-tuning is isolated behind
+// IGroundingAdapterTrainerPort (LIVE-only). On success the service registers the produced adapter
+// via the existing ILoraAdapterService so it becomes hot-swappable (needs Lora:Enabled too).
+// OFF BY DEFAULT: the recorder is a no-op and the endpoints return 501.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.ComputerUse.Training.GroundingTrainingOptions>(
+    builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.ComputerUse.Training.GroundingTrainingOptions.SectionName));
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.ComputerUse.Training.IGroundingTraceRecorder, LmKitOmniApi.Infrastructure.AI.ComputerUse.Training.FileGroundingTraceRecorder>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.ComputerUse.Training.IGroundingAdapterTrainerPort, LmKitOmniApi.Infrastructure.AI.ComputerUse.Training.LmKitGroundingAdapterTrainerPort>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.ComputerUse.Training.IGroundingTrainingService, LmKitOmniApi.Infrastructure.AI.ComputerUse.Training.GroundingTrainingService>();
+
 builder.Services.AddScoped<AgentToolGateway>();
 
 // External database agent (read-only by default; db_query tool gated off unless
