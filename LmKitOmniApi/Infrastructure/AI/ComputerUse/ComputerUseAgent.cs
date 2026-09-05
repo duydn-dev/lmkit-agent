@@ -55,6 +55,10 @@ public sealed class ComputerUseAgent : IComputerUseAgent
     private readonly UserResourceAccessService _resources;
     private readonly ToolSandboxService _sandbox;
     private readonly AgentToolAuditService? _audit;
+    // Grounding training capture (off by default). Optional so existing call sites/tests that
+    // construct the agent positionally keep compiling; DI fills it by type. A vetted, approved,
+    // successful side-effecting step is recorded as one supervised grounding sample.
+    private readonly Training.IGroundingTraceRecorder? _groundingRecorder;
     private readonly ILogger<ComputerUseAgent> _logger;
 
     private const int MaxHistoryLines = 10;
@@ -72,7 +76,8 @@ public sealed class ComputerUseAgent : IComputerUseAgent
         UserResourceAccessService resources,
         ToolSandboxService sandbox,
         ILogger<ComputerUseAgent> logger,
-        AgentToolAuditService? audit = null)
+        AgentToolAuditService? audit = null,
+        Training.IGroundingTraceRecorder? groundingRecorder = null)
     {
         _executor = executor;
         _model = model;
@@ -82,6 +87,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
         _sandbox = sandbox;
         _logger = logger;
         _audit = audit;
+        _groundingRecorder = groundingRecorder;
     }
 
     /// <inheritdoc />
@@ -256,6 +262,10 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                     }
                 }
 
+                // GROUNDING TRAINING (off by default): remember the page the model SAW when it
+                // chose this already-approved, allowlisted action, before the step overwrites it.
+                var groundingPreObservation = observation;
+
                 // ── Execute ──
                 var (stepObs, stepCancelled) = await TryStepAsync(action, request, sessionDir, sct);
                 if (stepCancelled) yield break;
@@ -264,6 +274,13 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                 await AuditAsync(request, action, observation.IsError ? "failed" : "succeeded");
                 history.Add(Summarize(action, observation));
                 TrimHistory(history);
+
+                // GROUNDING TRAINING (off by default): a side-effecting action that was approved AND
+                // executed WITHOUT error is a vetted correct step — record it as one supervised
+                // grounding sample (input = the pre-action page, label = the action JSON). Best-effort;
+                // never breaks the loop; a no-op unless GroundingTraining:Enabled.
+                if (_groundingRecorder?.Enabled == true && action.IsSideEffecting && !observation.IsError)
+                    await CaptureGroundingSampleAsync(request, action, groundingPreObservation);
                 foreach (var marker in RenderStep(ordinal, action, observation, request)) yield return marker;
                 if (observation.IsError)
                     yield return $"[THINKING]: ⚠️ {observation.Error}\\n";
@@ -580,6 +597,69 @@ public sealed class ComputerUseAgent : IComputerUseAgent
             _logger.LogDebug(ex, "🧾 [ComputerUse] Ghi nhật ký kiểm toán thất bại (không nghiêm trọng).");
         }
     }
+
+    // ── Grounding training capture (off by default) ──
+    // A step reaches here only after the fail-closed gates (credential/CAPTCHA refusal,
+    // un-groundable handoff), the navigation allowlist + SSRF, and the approval gate — so an
+    // approved, executed-without-error side-effecting action is a real, safe, human-vetted
+    // grounding decision. Captured as: INPUT = the page the model saw (pre-action observation),
+    // LABEL = the canonical action JSON. Best-effort; never affects the loop.
+    private async Task CaptureGroundingSampleAsync(
+        ComputerUseRequest request, ComputerUseAction action, ComputerUseObservation preObservation)
+    {
+        try
+        {
+            var sample = new Training.GroundingSample
+            {
+                TenantId = request.TenantId,
+                TaskGoal = request.TaskGoal,
+                PageUrl = preObservation.Url,
+                ElementsText = RenderGroundingElements(preObservation),
+                ScreenshotFileId = preObservation.ScreenshotFileId,
+                SystemPrompt = SystemPrompt,
+                CorrectActionJson = ToGroundingActionJson(action),
+                Source = _options.RequireApprovalPerAction ? "approved" : "success",
+            };
+            await _groundingRecorder!.RecordAsync(sample, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "🧪 [ComputerUse] Không ghi được mẫu huấn luyện grounding (không nghiêm trọng).");
+        }
+    }
+
+    /// <summary>Renders the numbered element list EXACTLY as the model saw it (mirrors ComputerUseModel).</summary>
+    private static string RenderGroundingElements(ComputerUseObservation observation)
+    {
+        var sb = new StringBuilder();
+        sb.Append("INTERACTIVE ELEMENTS (address these by 'ref'):\n");
+        if (observation.Elements.Count == 0)
+        {
+            sb.Append("  (none detected)\n");
+        }
+        else
+        {
+            foreach (var el in observation.Elements)
+            {
+                sb.Append("  [").Append(el.Ref).Append("] ").Append(el.Role).Append(": ").Append(el.Name);
+                if (!string.IsNullOrEmpty(el.Value)) sb.Append(" = \"").Append(el.Value).Append('"');
+                sb.Append('\n');
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>The supervised LABEL: the vetted action as the canonical JSON the model should emit.</summary>
+    private static string ToGroundingActionJson(ComputerUseAction a) => a.Type switch
+    {
+        ComputerUseActionType.Navigate => JsonSerializer.Serialize(new { action = "navigate", url = a.Url }),
+        ComputerUseActionType.Click => a.Ref is int r
+            ? JsonSerializer.Serialize(new { action = "click", @ref = r })
+            : JsonSerializer.Serialize(new { action = "click", x = a.X, y = a.Y }),
+        ComputerUseActionType.Type => JsonSerializer.Serialize(new { action = "type", @ref = a.Ref, text = a.Text }),
+        ComputerUseActionType.Key => JsonSerializer.Serialize(new { action = "key", keys = a.Keys }),
+        _ => JsonSerializer.Serialize(new { action = a.Type.ToString().ToLowerInvariant() }),
+    };
 
     private static void TrimHistory(List<string> history)
     {
