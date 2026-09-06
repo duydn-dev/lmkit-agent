@@ -182,8 +182,9 @@ Khi cần sửa code FE/BE, thay vì chạy toàn bộ trong container:
 # 1. Chỉ dựng hạ tầng:
 docker compose up -d
 
-# 2. Backend (terminal 1) — set env rồi chạy:
+# 2. Backend (terminal 1) — .env KHÔNG được dotnet run tự đọc; set env trước:
 $env:PostgreSql="Server=localhost;Port=5432;Database=LmKitAgent;Username=postgres;Password=<POSTGRES_PASSWORD>;"
+# Hoặc dùng key chuẩn: $env:ConnectionStrings__PostgreSql=$env:PostgreSql
 $env:ConnectionStrings__Redis="localhost:6379,password=<REDIS_PASSWORD>"
 $env:VectorStore__BaseUrl="http://localhost:6334"
 $env:JwtSettings__SecretKey="<JWT_SECRET_KEY>"
