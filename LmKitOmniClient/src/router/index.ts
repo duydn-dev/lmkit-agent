@@ -122,6 +122,18 @@ const router = createRouter({
           name: 'AdminAudit',
           component: () => import('../views/admin/AuditLogView.vue'),
           meta: { requiresAuth: true, requiresAdmin: true }
+        },
+        {
+          path: '/admin/widget',
+          name: 'AdminWidget',
+          component: () => import('../views/admin/WidgetSettingsView.vue'),
+          meta: { requiresAuth: true, requiresAdmin: true }
+        },
+        {
+          path: '/agents/content-creation',
+          name: 'ContentCreation',
+          component: () => import('../views/agents/ContentCreationView.vue'),
+          meta: { requiresAuth: true }
         }
       ]
     },
@@ -145,9 +157,12 @@ const router = createRouter({
       path: '/widget/chat',
       name: 'WidgetChat',
       component: () => import('../views/widget/ChatWidgetView.vue'),
-      // Public widget credentials are not implemented yet. Do not expose an
-      // apparently anonymous route backed by authenticated chat APIs.
-      meta: { requiresAuth: true }
+      // PUBLIC: embeddable widget. Anonymous calls hit ONLY the public widget
+      // endpoints (/api/widget/auth + /api/widget/chat, key/token + origin
+      // allowlist + quota server-side). With ?key= absent the view still works
+      // for logged-in internal dashboards; skipAuthCheck avoids the /api/auth/me
+      // roundtrip (and its failed-refresh redirect) on customer pages.
+      meta: { requiresAuth: false, skipAuthCheck: true }
     }
   ]
 });

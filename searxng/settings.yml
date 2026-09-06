@@ -1,0 +1,25 @@
+use_default_settings: true
+
+server:
+  secret_key: "lmkit-searxng-secret-change-me"
+  # The API queries this instance programmatically; the bot limiter would
+  # throttle it. Keep the instance OFF the public internet (compose network
+  # or 127.0.0.1 binding only).
+  limiter: false
+  image_proxy: false
+
+search:
+  # JSON format is REQUIRED by the API's SearxSearchProvider — without it the
+  # JSON endpoint answers 403.
+  formats:
+    - html
+    - json
+
+engines:
+  # No external engines are disabled here: defaults (google, bing, duckduckgo,
+  # wikipedia, ...) are fine for an internal instance.
+
+redis:
+  # Redis is optional for SearXNG (only used for limiter/storage); our instance
+  # runs limiter-less, so no URL is needed.
+  url: false

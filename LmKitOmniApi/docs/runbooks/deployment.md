@@ -26,17 +26,25 @@ npx playwright install chromium
 npm run test:e2e
 Set-Location ..
 docker compose config --quiet
-docker compose build api client
+./scripts/build-push.sh --no-push api client   # Windows: scripts\build-push.bat --no-push api client
 ```
 
-Run the isolated real-stack browser gate (uses port `18080` and a separate Compose project/volumes):
+Run the isolated real-stack browser gate (uses port `18080` and a separate Compose
+project/volumes; single compose file, e2e behavior is env-var driven — see the
+mode-3 header comment in `docker-compose.yml`):
 
-```powershell
-docker compose --env-file .env.example -p lmkit-fullstack-e2e -f docker-compose.yml -f docker-compose.e2e.yml up -d --build --wait --wait-timeout 180
-Set-Location .\LmKitOmniClient
-npm run test:e2e:fullstack
-Set-Location ..
-docker compose --env-file .env.example -p lmkit-fullstack-e2e -f docker-compose.yml -f docker-compose.e2e.yml down -v --remove-orphans
+```bash
+BOOTSTRAP_ADMIN_ENABLED=true BOOTSTRAP_ADMIN_EMAIL=e2e-admin@example.test \
+BOOTSTRAP_ADMIN_PASSWORD='E2e-Admin-2026!' \
+API_HOST_PORT=15032 CLIENT_HOST_PORT=18080 POSTGRES_HOST_PORT=15432 \
+QDRANT_HTTP_HOST_PORT=16333 QDRANT_GRPC_HOST_PORT=16334 REDIS_HOST_PORT=16379 \
+docker compose --env-file .env.example -p lmkit-fullstack-e2e up -d --wait --wait-timeout 180
+cd LmKitOmniClient && npm run test:e2e:fullstack && cd ..
+BOOTSTRAP_ADMIN_ENABLED=true BOOTSTRAP_ADMIN_EMAIL=e2e-admin@example.test \
+BOOTSTRAP_ADMIN_PASSWORD='E2e-Admin-2026!' \
+API_HOST_PORT=15032 CLIENT_HOST_PORT=18080 POSTGRES_HOST_PORT=15432 \
+QDRANT_HTTP_HOST_PORT=16333 QDRANT_GRPC_HOST_PORT=16334 REDIS_HOST_PORT=16379 \
+docker compose --env-file .env.example -p lmkit-fullstack-e2e down -v --remove-orphans
 ```
 
 Review the generated migration before rollout:
@@ -46,6 +54,16 @@ dotnet ef migrations script --idempotent --project .\LmKitOmniApi\LmKitOmniApi.c
 ```
 
 ## Rollout
+
+0. Publish the images being rolled out and pin the deployment to the commit tag
+   (never an unpinned `latest` in production):
+
+   ```bash
+   # Build machine (tags: latest + <git-sha>):
+   ./scripts/build-push.sh            # Windows: scripts\build-push.bat
+   # Target host — in .env set API_IMAGE_TAG=<git-sha> (and CLIENT_IMAGE_TAG), then:
+   docker compose --env-file .env pull && docker compose --env-file .env up -d
+   ```
 
 1. Deploy one API instance with `Database:ApplyMigrations=true`.
 2. Wait for `/health/ready` to return HTTP 200. With production model gates enabled,
@@ -72,7 +90,7 @@ Rollback immediately if any of these occur:
 ## Application rollback
 
 1. Stop new traffic to the failed version.
-2. Deploy the prior image tag; never use an unpinned `latest` tag in production.
+2. Deploy the prior image tag (the `<git-sha>` tag published by build-push; never an unpinned `latest` in production).
 3. Keep the database at the newer schema when changes are additive, as in the document/session migrations.
 4. Restore the database only when data was corrupted and after preserving forensic logs.
 5. Confirm health, authentication and tenant isolation before reopening traffic.

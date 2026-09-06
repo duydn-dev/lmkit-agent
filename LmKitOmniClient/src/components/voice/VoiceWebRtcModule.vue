@@ -7,6 +7,18 @@
     </div>
     <div v-if="voiceError" role="alert" class="max-w-56 text-xs bg-red-50 text-red-700 border border-red-200 px-3 py-2 rounded-lg">{{ voiceError }}</div>
 
+    <!-- Mic mute toggle (visible only while connected) -->
+    <button
+      v-if="isConnected"
+      @click="toggleMute"
+      :aria-pressed="isMuted"
+      :aria-label="isMuted ? 'Bật micro' : 'Tắt tiếng micro'"
+      class="flex items-center justify-center w-10 h-10 rounded-full shadow-md transition-colors"
+      :class="isMuted ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-white hover:bg-gray-100 text-gray-700 border border-gray-200'"
+    >
+      <i class="text-base" :class="isMuted ? 'pi pi-microphone-slash' : 'pi pi-microphone'"></i>
+    </button>
+
     <!-- Main Mic Button -->
     <button 
       @click="toggleVoice" 
@@ -34,6 +46,7 @@ import { http } from '@/api/http';
 import { errorMessage, readApiError } from '@/api/errors';
 
 const isConnected = ref(false);
+const isMuted = ref(false);
 const voiceError = ref('');
 let room: Room | null = null;
 
@@ -73,7 +86,8 @@ const connectLiveKit = async () => {
     await room.localParticipant.setMicrophoneEnabled(true, {
         deviceId: 'default'
     });
-    
+
+    isMuted.value = false;
     isConnected.value = true;
   } catch (error) {
     voiceError.value = errorMessage(error, 'Không thể kết nối thoại. Vui lòng thử lại.');
@@ -87,7 +101,19 @@ const disconnectLiveKit = () => {
     room = null;
   }
   isConnected.value = false;
+  isMuted.value = false;
   document.querySelectorAll('audio[data-lmkit-voice]').forEach((element) => element.remove());
+};
+
+/** Toggle the local mic without tearing down the room. */
+const toggleMute = async () => {
+  if (!room || !isConnected.value) return;
+  try {
+    await room.localParticipant.setMicrophoneEnabled(isMuted.value);
+    isMuted.value = !isMuted.value;
+  } catch (error) {
+    voiceError.value = errorMessage(error, 'Không thể thay đổi trạng thái micro.');
+  }
 };
 
 const toggleVoice = () => {
@@ -101,4 +127,6 @@ const toggleVoice = () => {
 onUnmounted(() => {
   disconnectLiveKit();
 });
+
+defineExpose({ toggleVoice, toggleMute });
 </script>

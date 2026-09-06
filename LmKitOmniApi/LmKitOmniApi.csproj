@@ -44,7 +44,26 @@
   </ItemGroup>
 
   <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <PackageReference Include="LM-Kit.NET.Backend.Cuda13.Windows" Version="2026.8.6" />
+    <!-- Backend version MUST match the main LM-Kit.NET package; a mismatch aborts every
+     model load with InvalidProgramException (native/managed struct size mismatch). -->
+    <PackageReference Include="LM-Kit.NET.Backend.Cuda13.Windows" Version="2026.9.0" />
+  </ItemGroup>
+
+  <!-- Linux GPU backends for Ubuntu-server / Docker deployments. Gated on the
+       publish RID (not the build OS) so plain restores (CI, Windows dev) stay
+       lean while a linux-x64/linux-arm64 publish materializes the CUDA native
+       .so files. The CUDA runtime itself (libcudart/libcublas) is NOT bundled in
+       the Linux NuGet packages — it must come from the container base image
+       (see Dockerfile BASE_IMAGE=nvidia/cuda:...). Runtime priority:
+       CUDA 13 → CUDA 12 → Vulkan → CPU; on machines without an NVIDIA GPU the
+       SDK falls back automatically. Versions MUST match LM-Kit.NET above. -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'linux-x64'">
+    <PackageReference Include="LM-Kit.NET.Backend.Cuda13.Linux" Version="2026.9.0" />
+    <PackageReference Include="LM-Kit.NET.Backend.Cuda12.Linux" Version="2026.9.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'linux-arm64'">
+    <PackageReference Include="LM-Kit.NET.Backend.Cuda13.linux-arm64" Version="2026.9.0" />
+    <PackageReference Include="LM-Kit.NET.Backend.Cuda12.linux-arm64" Version="2026.9.0" />
   </ItemGroup>
 
 </Project>

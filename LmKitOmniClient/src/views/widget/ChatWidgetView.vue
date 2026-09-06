@@ -1,16 +1,16 @@
 <template>
   <div class="flex flex-col w-full h-full bg-white font-sans text-sm m-0 p-0 overflow-hidden">
     <!-- Header -->
-    <div class="flex items-center justify-between bg-blue-600 text-white px-4 py-3 shadow-md z-10 shrink-0">
+    <div class="flex items-center justify-between text-white px-4 py-3 shadow-md z-10 shrink-0" :style="{ backgroundColor: brandColor }">
       <div class="flex items-center gap-3">
         <div class="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
           <i class="pi pi-sparkles text-white"></i>
         </div>
         <div>
-          <div class="font-semibold text-base leading-tight">Trợ lý AI</div>
-          <div class="text-[11px] text-blue-100 flex items-center gap-1">
+          <div class="font-semibold text-base leading-tight">{{ headerTitle }}</div>
+          <div class="text-[11px] opacity-80 flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-green-400 inline-block"></span>
-            Luôn sẵn sàng
+            {{ headerSubtitle }}
           </div>
         </div>
       </div>
@@ -134,12 +134,24 @@ import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import { formatSafeMessage } from '@/utils/safeFormatting';
+import { sendWidgetChat, ensureWidgetToken } from '@/api/widgetClient';
 import {
   useChatStream,
   useHitlActions,
   getCleanUserContent,
   type ChatMessage,
 } from '@/composables/useChatStream';
+
+// PUBLIC mode: ?key=<widgetKey> on the URL switches the widget to the
+// credential flow (POST /api/widget/auth + /api/widget/chat). Without a key
+// the legacy authenticated-session behavior is kept for internal dashboards.
+const params = new URLSearchParams(window.location.search);
+const publicKey = params.get('key');
+const isPublicMode = !!publicKey;
+
+const headerTitle = ref('Trợ lý AI');
+const headerSubtitle = ref('Luôn sẵn sàng');
+const brandColor = ref('#2563eb'); // blue-600
 
 const inputMessage = ref('');
 const messages = ref<ChatMessage[]>([
@@ -153,6 +165,20 @@ const chatContainer = ref<HTMLElement | null>(null);
 const currentSessionId = ref<string | null>(null);
 // `stop` keeps whatever partial text has streamed in and ends the stream cleanly.
 const { consumeStream, stop, isStreaming } = useChatStream();
+
+const applyBranding = async () => {
+    if (!publicKey) return;
+    try {
+        const token = await ensureWidgetToken(publicKey);
+        if (token.widget?.widgetTitle) headerTitle.value = token.widget.widgetTitle;
+        if (token.widget?.brandColor) brandColor.value = token.widget.brandColor;
+        if (token.widget?.welcomeMessage) {
+            messages.value = [{ role: 'assistant', content: token.widget.welcomeMessage }];
+        }
+    } catch {
+        // Surfaces naturally on the first send; keep the default greeting here.
+    }
+};
 
 const closeWidget = () => {
     if (window.parent && document.referrer) {
@@ -184,6 +210,19 @@ const sendMessage = async () => {
   await scrollToBottom();
 
   try {
+    if (isPublicMode && publicKey) {
+      // Public widget flow: bounded direct-inference turn, no session, no HITL.
+      const history = messages.value
+        .slice(0, -2)
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .slice(-10)
+        .map((m) => ({ role: m.role, content: m.content }));
+      const { answer } = await sendWidgetChat(publicKey, content, history);
+      assistantMsg.content = answer || 'Xin lỗi, tôi không thể trả lời câu hỏi này.';
+      assistantMsg.isTyping = false;
+      await scrollToBottom();
+      return;
+    }
     if (!currentSessionId.value) {
           const sessionRes = await http.post(ApiFactory.CHAT.CREATE_SESSION);
           if (sessionRes.ok) {
@@ -213,6 +252,7 @@ const sendMessage = async () => {
 };
 
 onMounted(() => {
+    applyBranding();
     // Tự động điều chỉnh height textarea
     const tx = document.getElementsByTagName("textarea");
     for (let i = 0; i < tx.length; i++) {

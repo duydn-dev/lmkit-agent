@@ -86,3 +86,7 @@ lerna-debug.log*
 ## Qdrant & Postgres volumes (Docker Local Data)
 pgdata/
 qdrantdata/
+*AIModels/
+*freebuff/
+# TS compile output (tsc watch artifacts) — sources are the .ts/.vue files
+LmKitOmniClient/src/**/*.js

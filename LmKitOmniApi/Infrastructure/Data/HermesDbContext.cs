@@ -22,8 +22,6 @@ public class HermesDbContext : DbContext
     public DbSet<ScheduledTask> ScheduledTasks { get; set; } = null!;
     public DbSet<ExternalMcpServer> ExternalMcpServers { get; set; } = null!;
     public DbSet<McpUserOAuthToken> McpUserOAuthTokens { get; set; } = null!;
-    public DbSet<GraphEntity> GraphEntities { get; set; } = null!;
-    public DbSet<GraphRelationship> GraphRelationships { get; set; } = null!;
     public DbSet<Notification> Notifications { get; set; } = null!;
     public DbSet<TaskApproval> TaskApprovals { get; set; } = null!;
     public DbSet<TenantApiCryptoKey> TenantApiCryptoKeys { get; set; } = null!;
@@ -194,18 +192,6 @@ public class HermesDbContext : DbContext
             .HasIndex(t => new { t.TenantId, t.UserId, t.ServerId }).IsUnique();
         modelBuilder.Entity<McpUserOAuthToken>()
             .HasIndex(t => t.ServerId);
-
-        modelBuilder.Entity<GraphEntity>()
-            .HasOne(g => g.Tenant).WithMany().HasForeignKey(g => g.TenantId).OnDelete(DeleteBehavior.Cascade);
-        modelBuilder.Entity<GraphEntity>()
-            .HasOne(g => g.Document).WithMany().HasForeignKey(g => g.DocumentId).OnDelete(DeleteBehavior.SetNull);
-
-        modelBuilder.Entity<GraphRelationship>()
-            .HasOne(r => r.Tenant).WithMany().HasForeignKey(r => r.TenantId).OnDelete(DeleteBehavior.Cascade);
-        modelBuilder.Entity<GraphRelationship>()
-            .HasOne(r => r.SourceEntity).WithMany(g => g.SourceRelationships).HasForeignKey(r => r.SourceEntityId).OnDelete(DeleteBehavior.Cascade);
-        modelBuilder.Entity<GraphRelationship>()
-            .HasOne(r => r.TargetEntity).WithMany(g => g.TargetRelationships).HasForeignKey(r => r.TargetEntityId).OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Notification>()
             .HasOne(n => n.Tenant).WithMany().HasForeignKey(n => n.TenantId).OnDelete(DeleteBehavior.Cascade);

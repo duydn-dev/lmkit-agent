@@ -304,6 +304,10 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
                     .AddInterceptors(provider.GetRequiredService<AuditSaveChangesInterceptor>()));
             services.RemoveAll<IMcpProtocolClient>();
             services.AddSingleton<IMcpProtocolClient, TestMcpProtocolClient>();
+            // Canned widget chat engine: the public-widget integration tests
+            // exercise the REAL auth/policy/quota pipeline without a model.
+            services.RemoveAll<LmKitOmniApi.Application.Widget.IWidgetChatEngine>();
+            services.AddSingleton<LmKitOmniApi.Application.Widget.IWidgetChatEngine, TestWidgetChatEngine>();
         });
     }
 
@@ -441,4 +445,18 @@ public sealed class TestMcpProtocolClient : IMcpProtocolClient
         string toolName,
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken ct) => Task.FromResult(new McpProtocolCallResult(false, $"{serverName}:{toolName}"));
+}
+
+/// <summary>Canned widget chat engine for integration tests — no model needed.</summary>
+public sealed class TestWidgetChatEngine : LmKitOmniApi.Application.Widget.IWidgetChatEngine
+{
+    public const string CannedAnswer = "Canned widget answer";
+
+    public async IAsyncEnumerable<string> StreamAnswerAsync(
+        LmKitOmniApi.Application.Widget.WidgetTurnRequest request,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        await Task.Yield();
+        yield return System.Text.Json.JsonSerializer.Serialize(new { done = true, answer = CannedAnswer });
+    }
 }

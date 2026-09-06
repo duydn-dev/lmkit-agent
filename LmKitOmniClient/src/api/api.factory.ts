@@ -28,7 +28,9 @@ export const ApiFactory = {
   AGENTS: {
     CUSTOM: '/api/agents/custom',
     CUSTOM_BY_ID: (id: string) => `/api/agents/custom/${id}`,
-    TOOL_CATALOG: '/api/agents/custom/tools'
+    TOOL_CATALOG: '/api/agents/custom/tools',
+    // Multi-stage content creation pipeline (research → outline → draft → fact-check).
+    CONTENT_PIPELINE: '/api/agents/content-creation-pipeline'
   },
   CANVAS: {
     LIST: (sessionId?: string) => sessionId ? `/api/canvas?sessionId=${sessionId}` : '/api/canvas',
@@ -115,5 +117,15 @@ export const ApiFactory = {
     BY_ID: (id: string) => `/api/database-connections/${id}`,
     TEST: (id: string) => `/api/database-connections/${id}/test`,
     REINDEX: (id: string) => `/api/database-connections/${id}/reindex`
+  },
+  // Public widget (key/token flow) + tenant-admin management.
+  WIDGET: {
+    // PUBLIC: exchange the raw widget key for a short-lived token. Plain fetch
+    // only — never via `http` (no auth session exists on the host page).
+    AUTH: '/api/widget/auth',
+    // PUBLIC (widget token): SSE chat stream. Plain fetch + reader.
+    CHAT: '/api/widget/chat',
+    ADMIN_SETTINGS: '/api/admin/widget/settings',
+    ADMIN_ROTATE: '/api/admin/widget/credentials:rotate'
   }
 };

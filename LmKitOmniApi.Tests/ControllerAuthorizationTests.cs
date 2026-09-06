@@ -17,6 +17,13 @@ public class ControllerAuthorizationTests
         // Login / logout / refresh must be reachable before a token exists.
         // Its authenticated-only endpoint (GetCurrentUser) still carries its own [Authorize].
         typeof(AuthController),
+
+        // Public embeddable widget. Only /api/widget/auth is truly anonymous (raw
+        // widget key + origin allowlist in lieu of a user session); /api/widget/chat
+        // carries its own [Authorize(AuthenticationSchemes = WidgetToken)] plus the
+        // WidgetOrigin policy and per-tenant+origin quotas. Both endpoints are
+        // rate-limited and audited; nothing else is reachable.
+        typeof(WidgetPublicController),
     };
 
     public static IEnumerable<object[]> AllApiControllers() =>

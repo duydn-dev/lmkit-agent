@@ -14,7 +14,7 @@ jobs:
       LMKIT_TEST_REDIS_CONNECTION: localhost:6379
     services:
       redis:
-        image: redis:7-alpine
+        image: redis:8-alpine
         ports:
           - 6379:6379
         options: >-
@@ -75,16 +75,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: docker compose config --quiet
+      - name: Validate compose (dev infra + prod full stack)
+        run: |
+          docker compose config --quiet
+          docker compose -f docker-compose.prod.yml config --quiet
         env:
           POSTGRES_PASSWORD: ci-only-password
           JWT_SECRET_KEY: ci-only-jwt-secret-that-is-longer-than-32-bytes
           REDIS_PASSWORD: ci-only-redis-password
-      - run: docker compose build api client
-        env:
-          POSTGRES_PASSWORD: ci-only-password
-          JWT_SECRET_KEY: ci-only-jwt-secret-that-is-longer-than-32-bytes
-          REDIS_PASSWORD: ci-only-redis-password
+      - name: Build images (no push)
+        run: ./scripts/build-push.sh --no-push api client
 
   fullstack-e2e:
     runs-on: ubuntu-latest
@@ -106,8 +106,28 @@ jobs:
         working-directory: LmKitOmniClient
       - run: npx playwright install --with-deps chromium
         working-directory: LmKitOmniClient
-      - run: docker compose -p lmkit-fullstack-e2e -f docker-compose.yml -f docker-compose.e2e.yml up -d --build --wait --wait-timeout 180
+      # Single-file e2e mode: all e2e behavior is env-var driven (see the
+      # mode-3 header comment in docker-compose.yml). Job-level env supplies
+      # the required secrets; the step env below adds the e2e-only overrides.
+      # compose up pulls the images; building them first keeps the run on the
+      # fresh commit instead of the last published Docker Hub tag.
+      - name: Build images locally (not pushed)
+        run: ./scripts/build-push.sh --no-push api client
+      - name: Start e2e stack (prod compose file)
+        run: >-
+          docker compose -f docker-compose.prod.yml --env-file .env.example -p lmkit-fullstack-e2e
+          up -d --wait --wait-timeout 180
+        env:
+          BOOTSTRAP_ADMIN_ENABLED: "true"
+          BOOTSTRAP_ADMIN_EMAIL: e2e-admin@example.test
+          BOOTSTRAP_ADMIN_PASSWORD: E2e-Admin-2026!
+          API_HOST_PORT: 15032
+          CLIENT_HOST_PORT: 18080
+          POSTGRES_HOST_PORT: 15432
+          QDRANT_HTTP_HOST_PORT: 16333
+          QDRANT_GRPC_HOST_PORT: 16334
+          REDIS_HOST_PORT: 16379
       - run: npm run test:e2e:fullstack
         working-directory: LmKitOmniClient
       - if: always()
-        run: docker compose -p lmkit-fullstack-e2e -f docker-compose.yml -f docker-compose.e2e.yml down -v --remove-orphans
+        run: docker compose -f docker-compose.prod.yml -p lmkit-fullstack-e2e down -v --remove-orphans

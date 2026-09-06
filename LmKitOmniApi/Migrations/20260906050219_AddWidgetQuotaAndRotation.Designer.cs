@@ -3,6 +3,7 @@ using System;
 using LmKitOmniApi.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace LmKitOmniApi.Migrations
 {
     [DbContext(typeof(HermesDbContext))]
-    partial class HermesDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260906050219_AddWidgetQuotaAndRotation")]
+    partial class AddWidgetQuotaAndRotation
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -640,6 +643,85 @@ namespace LmKitOmniApi.Migrations
                     b.HasIndex("TenantId");
 
                     b.ToTable("external_mcp_servers");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.GraphEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("DocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DocumentId");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("graph_entities");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.GraphRelationship", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RelationType")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("SourceEntityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TargetEntityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<double>("Weight")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SourceEntityId");
+
+                    b.HasIndex("TargetEntityId");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("graph_relationships");
                 });
 
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.LoraAdapterRegistration", b =>
@@ -1461,6 +1543,51 @@ namespace LmKitOmniApi.Migrations
                     b.Navigation("Tenant");
                 });
 
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.GraphEntity", b =>
+                {
+                    b.HasOne("LmKitOmniApi.Domain.Entities.Document", "Document")
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Document");
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.GraphRelationship", b =>
+                {
+                    b.HasOne("LmKitOmniApi.Domain.Entities.GraphEntity", "SourceEntity")
+                        .WithMany("SourceRelationships")
+                        .HasForeignKey("SourceEntityId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("LmKitOmniApi.Domain.Entities.GraphEntity", "TargetEntity")
+                        .WithMany("TargetRelationships")
+                        .HasForeignKey("TargetEntityId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SourceEntity");
+
+                    b.Navigation("TargetEntity");
+
+                    b.Navigation("Tenant");
+                });
+
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.Notification", b =>
                 {
                     b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
@@ -1621,6 +1748,13 @@ namespace LmKitOmniApi.Migrations
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.Document", b =>
                 {
                     b.Navigation("Chunks");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.GraphEntity", b =>
+                {
+                    b.Navigation("SourceRelationships");
+
+                    b.Navigation("TargetRelationships");
                 });
 
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.Tenant", b =>

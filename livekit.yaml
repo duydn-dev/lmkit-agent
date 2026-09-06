@@ -1,0 +1,19 @@
+# LiveKit server configuration (production profile).
+# Mounted into the livekit container by docker-compose.yml; secrets come from
+# LIVEKIT_API_KEY / LIVEKIT_API_SECRET in the .env file (rendered via envsubst
+# is NOT used — compose injects them through the `keys` block below instead).
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: true
+turn:
+  enabled: false
+# Key pairs the API uses to mint join tokens (Voice__LiveKitApiKey/Secret must
+# match one entry). Values are injected by docker-compose from the .env file.
+keys:
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+logging:
+  level: info

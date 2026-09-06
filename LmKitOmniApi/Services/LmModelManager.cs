@@ -33,6 +33,10 @@ public class LmModelManager : IDisposable
     private readonly TimeSpan _downloadTimeout;
     private readonly ILogger<LmModelManager> _logger;
 
+    // Local model registry (AiModels:Models): adding a model later means dropping its
+    // files under the models directory and editing appsettings — no code changes.
+    private readonly IReadOnlyDictionary<string, RegisteredModel> _registeredModels;
+
     public string DefaultChatModelId { get; set; }
     public string DefaultVisionModelId { get; set; }
     public string DefaultEmbeddingModelId { get; set; }
@@ -62,6 +66,9 @@ public class LmModelManager : IDisposable
             throw new InvalidOperationException("AiModels:DownloadTimeoutMinutes must be between 1 and 180.");
         _downloadTimeout = TimeSpan.FromMinutes(timeoutMinutes);
 
+        var modelsDirectory = ResolveModelsDirectory(config["ModelsDirectory"]);
+        _registeredModels = ParseRegisteredModels(modelsDirectory, config.GetSection("Models"));
+
         var limits = configuration.GetSection("SemaphoreLimits");
         var chatLimit = GetPositiveLimit(limits, "Chat", 1);
         var visionLimit = GetPositiveLimit(limits, "Vision", 1);
@@ -83,6 +90,96 @@ public class LmModelManager : IDisposable
         _segmentationInferenceGate = new SemaphoreSlim(segmentationLimit, segmentationLimit);
     }
 
+    /// <summary>Default folder (relative to the working directory) holding local model files.</summary>
+    internal const string DefaultModelsDirectoryName = "AIModels";
+
+    /// <summary>
+    /// A model declared in AiModels:Models. Paths are pre-resolved to absolute locations;
+    /// a non-null ResolvedMmprojPath marks a two-file vision model (GGUF + mmproj projector).
+    /// </summary>
+    internal sealed record RegisteredModel(string Key, string ResolvedModelPath, string? ResolvedMmprojPath);
+
+    internal static string ResolveModelsDirectory(string? configured)
+    {
+        var directory = string.IsNullOrWhiteSpace(configured) ? DefaultModelsDirectoryName : configured!;
+        return Path.IsPathRooted(directory)
+            ? directory
+            : Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), directory));
+    }
+
+    internal RegisteredModel? ResolveRegisteredModel(string? modelId) =>
+        modelId is not null
+        && _registeredModels.TryGetValue(modelId.Trim(), out var registered)
+            ? registered
+            : null;
+
+    private static IReadOnlyDictionary<string, RegisteredModel> ParseRegisteredModels(
+        string modelsDirectory,
+        IConfigurationSection section)
+    {
+        var models = new Dictionary<string, RegisteredModel>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in section.GetChildren())
+        {
+            var key = entry.Key.Trim();
+            if (key.Length == 0)
+                throw new InvalidOperationException("AiModels:Models entries must use a non-empty key.");
+            var modelPath = entry["Path"];
+            if (string.IsNullOrWhiteSpace(modelPath))
+                throw new InvalidOperationException($"AiModels:Models:{key}:Path must be set when the entry '{key}' is declared.");
+            var mmprojPath = entry["Mmproj"];
+            models[key] = new RegisteredModel(
+                key,
+                ResolveConfiguredPath(modelsDirectory, key, "Path", modelPath),
+                string.IsNullOrWhiteSpace(mmprojPath)
+                    ? null
+                    : ResolveConfiguredPath(modelsDirectory, key, "Mmproj", mmprojPath));
+        }
+        return models;
+    }
+
+    /// <summary>Test seam: <see cref="ParseRegisteredModels" /> is private.</summary>
+    internal static IReadOnlyDictionary<string, RegisteredModel> ParseRegisteredModelsForTests(
+        string modelsDirectory,
+        IConfigurationSection section) => ParseRegisteredModels(modelsDirectory, section);
+
+    /// <summary>Test seam: exposes registry lookup on a built manager instance.</summary>
+    internal RegisteredModel? ResolveRegisteredModelForTests(string? modelId) => ResolveRegisteredModel(modelId);
+
+    private static string ResolveConfiguredPath(string modelsDirectory, string entryKey, string settingName, string configuredPath)
+    {
+        if (Path.IsPathRooted(configuredPath))
+            return configuredPath;
+        if (configuredPath.Split('/', '\\').Contains(".."))
+            throw new InvalidOperationException(
+                $"AiModels:Models:{entryKey}:{settingName} must not traverse outside the models directory ('{configuredPath}').");
+        return Path.GetFullPath(Path.Combine(modelsDirectory, configuredPath));
+    }
+
+    private async Task<LM> LoadRegisteredModelAsync(RegisteredModel registered, CancellationToken ct)
+    {
+        if (!File.Exists(registered.ResolvedModelPath))
+            throw new FileNotFoundException(
+                $"Registered model '{registered.Key}' was not found at '{registered.ResolvedModelPath}'. " +
+                "Place the file under the configured models directory or update AiModels:Models.",
+                registered.ResolvedModelPath);
+        if (registered.ResolvedMmprojPath is not null && !File.Exists(registered.ResolvedMmprojPath))
+            throw new FileNotFoundException(
+                $"Registered model '{registered.Key}' references a missing multimodal projector at '{registered.ResolvedMmprojPath}'.",
+                registered.ResolvedMmprojPath);
+
+        _logger.LogInformation(
+            "Loading registered model {ModelKey} from {ModelPath}{ProjectorInfo}",
+            registered.Key,
+            registered.ResolvedModelPath,
+            registered.ResolvedMmprojPath is null ? string.Empty : $" with projector {registered.ResolvedMmprojPath}");
+
+        return await Task.Run(
+            () => registered.ResolvedMmprojPath is null
+                ? new LM(registered.ResolvedModelPath)
+                : new LM(new Uri(registered.ResolvedModelPath), new Uri(registered.ResolvedMmprojPath)),
+            ct);
+    }
+
     private static int GetPositiveLimit(IConfigurationSection section, string name, int fallback)
     {
         var value = section.GetValue<int>(name, fallback);
@@ -92,6 +189,10 @@ public class LmModelManager : IDisposable
     }
     private async Task<LM> LoadModelWithProgressAsync(string id, CancellationToken ct = default)
     {
+        var registered = ResolveRegisteredModel(id);
+        if (registered is not null)
+            return await LoadRegisteredModelAsync(registered, ct);
+
         if (id.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || id.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
             // Tự động chuyển link /blob/ sang /resolve/ của HuggingFace để lấy file RAW

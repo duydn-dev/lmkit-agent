@@ -174,7 +174,12 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     })
     // Programmatic access: X-Api-Key header validated against hashed TenantApiKeys.
     .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
-        ApiKeyAuthenticationHandler.SchemeName, null);
+        ApiKeyAuthenticationHandler.SchemeName, null)
+    // Public widget: X-Widget-Token short-lived JWT minted at key exchange. Never
+    // part of the default policy — only the /api/widget/chat endpoint names it
+    // explicitly, so a widget token can NEVER authenticate any other surface.
+    .AddScheme<AuthenticationSchemeOptions, LmKitOmniApi.Infrastructure.Security.WidgetTokenAuthenticationHandler>(
+        LmKitOmniApi.Infrastructure.Security.WidgetTokenAuthenticationHandler.SchemeName, null);
 
 // Plain [Authorize] must accept BOTH schemes: the default policy authenticates the
 // JWT cookie/bearer scheme AND the ApiKey scheme and merges their principals. The
@@ -187,7 +192,21 @@ builder.Services.AddAuthorization(options =>
             ApiKeyAuthenticationHandler.SchemeName)
         .RequireAuthenticatedUser()
         .Build();
+
+    // Public widget: widget-token principal + live origin-allowlist check.
+    options.AddPolicy("WidgetOrigin", policy =>
+    {
+        policy.AddAuthenticationSchemes(LmKitOmniApi.Infrastructure.Security.WidgetTokenAuthenticationHandler.SchemeName)
+              .RequireAuthenticatedUser()
+              .AddRequirements(new LmKitOmniApi.Infrastructure.Security.WidgetOriginRequirement());
+    });
 });
+// Scoped: the handler reads ACTIVE settings per request via HermesDbContext.
+builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, LmKitOmniApi.Infrastructure.Security.WidgetOriginAuthorizationHandler>();
+builder.Services.AddScoped<LmKitOmniApi.Application.Widget.WidgetAccessTokenService>();
+builder.Services.AddScoped<LmKitOmniApi.Application.Widget.WidgetSettingsLookup>();
+builder.Services.AddScoped<LmKitOmniApi.Application.Widget.WidgetQuotaService>();
+builder.Services.AddScoped<LmKitOmniApi.Application.Widget.IWidgetChatEngine, LmKitOmniApi.Application.Widget.WidgetChatEngine>();
 
 // 1. Cấu hình DbContext (PostgreSQL) đọc từ AppSettings
 builder.Services.AddHttpContextAccessor();
@@ -337,6 +356,9 @@ builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.AI.Voice.VoiceRoom
 // Filter Pipeline (ordered execution)
 builder.Services.AddScoped<IAgentFilter, InputSanitizationFilter>();
 builder.Services.AddScoped<IAgentFilter, OutputGuardrailFilter>();
+// Direct registration so non-pipeline consumers (widget chat engine) can inject
+// the SAME guardrail implementation the agent pipeline uses.
+builder.Services.AddScoped<OutputGuardrailFilter>();
 builder.Services.AddScoped<AgentFilterPipeline>();
 
 // ============================================================
@@ -496,12 +518,38 @@ builder.Services.AddSingleton<LmKitDefaultToolCatalog>();
 // Đăng ký Agent Orchestrator (FULLY INTEGRATED — all services wired)
 builder.Services.AddScoped<IAgentOrchestrator, AgentOrchestrator>();
 
+// Public widget chat engine (direct inference, output guardrail, no tools)
+// — registered above with the widget auth/policy block.
+
 // Đăng ký Advanced Tools
-builder.Services.AddHttpClient<IWebSearchService, LmKitOmniApi.Infrastructure.Web.DuckDuckGoSearchService>(client =>
+// Web search: composite provider chain (SearXNG self-hosted → Brave → Tavily →
+// DuckDuckGo scraper). SearXNG runs in Compose with no API key and is the first
+// link when WebSearch:Searx:BaseUrl is configured; API-key providers are skipped
+// until configured; the scraper stays as the last fallback.
+builder.Services.AddHttpClient<LmKitOmniApi.Infrastructure.Web.DuckDuckGoSearchService>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(10);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("LmKitOmniAgent/1.0");
 });
+builder.Services.AddHttpClient<LmKitOmniApi.Infrastructure.Web.Search.SearxSearchProvider>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("LmKitOmniAgent/1.0");
+});
+builder.Services.AddHttpClient<LmKitOmniApi.Infrastructure.Web.Search.BraveSearchProvider>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("LmKitOmniAgent/1.0");
+});
+builder.Services.AddHttpClient<LmKitOmniApi.Infrastructure.Web.Search.TavilySearchProvider>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+builder.Services.AddScoped<IWebSearchService, LmKitOmniApi.Infrastructure.Web.Search.ResilientWebSearchService>();
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.Web.Search.ISearchProvider>(sp => sp.GetRequiredService<LmKitOmniApi.Infrastructure.Web.Search.SearxSearchProvider>());
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.Web.Search.ISearchProvider>(sp => sp.GetRequiredService<LmKitOmniApi.Infrastructure.Web.Search.BraveSearchProvider>());
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.Web.Search.ISearchProvider>(sp => sp.GetRequiredService<LmKitOmniApi.Infrastructure.Web.Search.TavilySearchProvider>());
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.Web.Search.ISearchProvider>(sp => new LmKitOmniApi.Infrastructure.Web.Search.DuckDuckGoSearchProvider(sp.GetRequiredService<LmKitOmniApi.Infrastructure.Web.DuckDuckGoSearchService>()));
 
 // ============================================================
 // 🏥 Health Checks
@@ -575,6 +623,24 @@ builder.Services.AddRateLimiter(options =>
                 QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst,
                 QueueLimit = 0
             }));
+
+    // Public widget chat: per-tenant+origin token bucket (quota counters in the
+    // controller add minute/day budgets on top of this process-local gate).
+    options.AddPolicy("widget-chat", httpContext =>
+    {
+        var tenant = httpContext.User.FindFirst("TenantId")?.Value ?? "unknown";
+        httpContext.Items.TryGetValue("Widget.RequestOrigin", out var originObj);
+        var origin = originObj as string ?? "unknown";
+        return RateLimitPartition.GetTokenBucketLimiter(
+            $"widget:{tenant}:{origin}",
+            _ => new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 20,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(60),
+                TokensPerPeriod = 20,
+                AutoReplenishment = true
+            });
+    });
 });
 
 var app = builder.Build();
@@ -640,6 +706,9 @@ if (builder.Configuration.GetValue("HttpsRedirection:Enabled", true))
 }
 
 // Kích hoạt CORS (đã đổi tên policy từ "AllowAll" → "ProductionCors")
+// Widget embedding runs the app in a SAME-ORIGIN iframe, so no dynamic CORS is
+// needed; the embedded page's origin travels in X-Widget-Origin and is vetted
+// against the allowlist in WidgetOriginAuthorizationHandler.
 app.UseCors("ProductionCors");
 
 app.UseRouting();

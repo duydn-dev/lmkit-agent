@@ -18,3 +18,7 @@ test-embed.html
 *.user
 *.suo
 *.log
+
+# Models are bind-mounted at runtime (AI_MODELS_HOST_DIR); keep them out of the
+# image and out of the build context (multi-GB files).
+**/AIModels/

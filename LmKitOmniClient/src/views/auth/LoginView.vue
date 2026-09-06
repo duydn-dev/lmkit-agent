@@ -28,7 +28,7 @@
             <label for="login-email" class="block text-sm font-medium text-gray-700 mb-1.5">Email / Tài khoản</label>
             <IconField>
               <InputIcon class="pi pi-user" />
-              <InputText id="login-email" v-model="email" type="email" autocomplete="username" placeholder="Nhập email của bạn..." fluid required />
+              <InputText id="login-email" v-model="email" type="text" autocomplete="username" placeholder="Nhập email hoặc tài khoản của bạn..." fluid required />
             </IconField>
           </div>
           

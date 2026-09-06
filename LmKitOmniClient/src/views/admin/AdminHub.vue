@@ -91,6 +91,7 @@ const navCards = [
   { to: '/admin/mcp-servers', icon: 'pi pi-server', accent: 'bg-gradient-to-br from-emerald-500 to-emerald-600', title: 'Máy chủ MCP', description: 'Kết nối và quản lý máy chủ Model Context Protocol.' },
   { to: '/admin/knowledge', icon: 'pi pi-database', accent: 'bg-gradient-to-br from-violet-500 to-violet-600', title: 'Cơ sở tri thức', description: 'Quản lý nguồn tri thức dùng chung cho tenant.' },
   { to: '/admin/audit', icon: 'pi pi-shield', accent: 'bg-gradient-to-br from-slate-500 to-slate-600', title: 'Nhật ký hoạt động', description: 'Theo dõi hoạt động của agent và hệ thống.' },
+  { to: '/admin/widget', icon: 'pi pi-objects-column', accent: 'bg-gradient-to-br from-cyan-500 to-teal-600', title: 'Widget nhúng', description: 'Bật widget chat công khai, cho phép origin và quản lý khóa.' },
   { to: '/approvals', icon: 'pi pi-check-square', accent: 'bg-gradient-to-br from-amber-500 to-orange-600', title: 'Phê duyệt tác vụ', description: 'Xem xét và duyệt các tác vụ đang chờ.' }
 ];
 
