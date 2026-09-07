@@ -8,7 +8,13 @@ Use this runbook for Docker/VM rollout of LM-Kit Omni Agent.
 - TLS terminates before the browser; `AuthCookies:Secure=true`.
 - JWT secret, PostgreSQL password, LM-Kit license and LiveKit credentials come from a secrets manager.
 - Persistent volumes exist for `/var/lib/lmkit/keys`, `/app/Models` and `/app/Uploads`.
-- Target host has enough RAM for the configured models; the default chat model is `qwen3.5:2b`.
+- Target host has enough RAM for the configured models. The default chat model is
+  `bonsai` (`AiModels:DefaultChat` in `appsettings.json`); its weights must exist under
+  the directory bound to `/app/AIModels`, or `/health` and `/health/ready` report
+  Unhealthy — deliberately, so a deployment that cannot answer a single chat message
+  never passes as ready.
+- GPU hosts need `nvidia-container-toolkit`. On a CPU-only host set `API_GPU_COUNT=0`,
+  otherwise the API container fails to start with "could not select device driver".
 - Production sets `LMKIT_REQUIRE_LICENSE=true`, `AI_WARMUP_CHAT_MODEL=true` and
   `AI_REQUIRE_CHAT_MODEL_READY=true`. This makes `/health/ready` fail until the
   license is configured and the chat model has loaded successfully.
@@ -25,27 +31,38 @@ npm run test:unit
 npx playwright install chromium
 npm run test:e2e
 Set-Location ..
-docker compose config --quiet
+docker compose config --quiet                              # dev infra file
+docker compose -f docker-compose.prod.yml config --quiet   # the one production file
 ./scripts/build-push.sh --no-push api client   # Windows: scripts\build-push.bat --no-push api client
 ```
 
-Run the isolated real-stack browser gate (uses port `18080` and a separate Compose
-project/volumes; single compose file, e2e behavior is env-var driven — see the
-mode-3 header comment in `docker-compose.yml`):
+Run the isolated real-stack browser gate. It uses `docker-compose.prod.yml` — the
+same single file that ships production — and makes it side-by-side safe with
+environment variables plus its own Compose project (`lmkit-fullstack-e2e`), so it
+never touches a running stack's containers or volumes. See the mode-3 header
+comment in `docker-compose.yml`.
+
+Do not retype the environment by hand. One script owns every port, the bootstrap
+admin and the compose flags, and CI runs that same script, so a local gate and
+the pipeline execute identical commands:
 
 ```bash
-BOOTSTRAP_ADMIN_ENABLED=true BOOTSTRAP_ADMIN_EMAIL=e2e-admin@example.test \
-BOOTSTRAP_ADMIN_PASSWORD='E2e-Admin-2026!' \
-API_HOST_PORT=15032 CLIENT_HOST_PORT=18080 POSTGRES_HOST_PORT=15432 \
-QDRANT_HTTP_HOST_PORT=16333 QDRANT_GRPC_HOST_PORT=16334 REDIS_HOST_PORT=16379 \
-docker compose --env-file .env.example -p lmkit-fullstack-e2e up -d --wait --wait-timeout 180
-cd LmKitOmniClient && npm run test:e2e:fullstack && cd ..
-BOOTSTRAP_ADMIN_ENABLED=true BOOTSTRAP_ADMIN_EMAIL=e2e-admin@example.test \
-BOOTSTRAP_ADMIN_PASSWORD='E2e-Admin-2026!' \
-API_HOST_PORT=15032 CLIENT_HOST_PORT=18080 POSTGRES_HOST_PORT=15432 \
-QDRANT_HTTP_HOST_PORT=16333 QDRANT_GRPC_HOST_PORT=16334 REDIS_HOST_PORT=16379 \
-docker compose --env-file .env.example -p lmkit-fullstack-e2e down -v --remove-orphans
+./scripts/build-push.sh --no-push api client   # the gate runs the images, so build them first
+./scripts/e2e-fullstack.sh up                  # start + wait for healthy
+./scripts/e2e-fullstack.sh test                # Playwright against http://127.0.0.1:18080
+./scripts/e2e-fullstack.sh down                # stop; deletes only this project's volumes
 ```
+
+```powershell
+scripts\build-push.bat --no-push api client
+scripts\e2e-fullstack.bat up
+scripts\e2e-fullstack.bat test
+scripts\e2e-fullstack.bat down
+```
+
+`./scripts/e2e-fullstack.sh --help` lists the overrides (ports, admin credentials,
+wait timeout, `E2E_GPU_COUNT`). The gate requests **no** GPU by default so it runs
+on CPU-only machines and CI runners.
 
 Review the generated migration before rollout:
 
@@ -62,8 +79,14 @@ dotnet ef migrations script --idempotent --project .\LmKitOmniApi\LmKitOmniApi.c
    # Build machine (tags: latest + <git-sha>):
    ./scripts/build-push.sh            # Windows: scripts\build-push.bat
    # Target host — in .env set API_IMAGE_TAG=<git-sha> (and CLIENT_IMAGE_TAG), then:
-   docker compose --env-file .env pull && docker compose --env-file .env up -d
+   docker compose -f docker-compose.prod.yml --env-file .env pull
+   docker compose -f docker-compose.prod.yml --env-file .env up -d --wait
    ```
+
+   `-f docker-compose.prod.yml` is not optional. Without it Docker loads
+   `docker-compose.yml`, which is dev infrastructure only — it defines no `api` and
+   no `client` service, so the rollout would quietly bring up a stack that serves
+   nothing.
 
 1. Deploy one API instance with `Database:ApplyMigrations=true`.
 2. Wait for `/health/ready` to return HTTP 200. With production model gates enabled,

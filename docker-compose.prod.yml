@@ -49,6 +49,21 @@ x-api-resources: &api-resources
   limits:
     memory: 12G
     cpus: "4.0"
+  # GPU passthrough. This used to be the short form `gpus: all`, which CANNOT be
+  # switched off by an environment variable — the schema accepts the literal
+  # "all" and nothing else — so any host without a working NVIDIA GPU +
+  # nvidia-container-toolkit could not start the API at all (the daemon fails
+  # the container with "could not select device driver ... [[gpu]]", or with
+  # nvidia-container-cli init errors). That includes GPU-less CI runners and the
+  # CPU-only deployments LmKitOmniApi/Dockerfile explicitly supports.
+  # The long form takes a count, so ONE file covers both without an override:
+  #   API_GPU_COUNT unset / "all" -> every GPU (unchanged default behavior)
+  #   API_GPU_COUNT=0             -> no GPU requested; LM-Kit falls back to CPU
+  reservations:
+    devices:
+      - driver: nvidia
+        count: ${API_GPU_COUNT:-all}
+        capabilities: [gpu]
 
 services:
   api:
@@ -59,7 +74,23 @@ services:
     depends_on: *api-deps
     deploy:
       resources: *api-resources
-    gpus: all
+    # Liveness only, on purpose — and this OVERRIDES the image's own HEALTHCHECK
+    # (which curls /health). /health and /health/ready both run the "lmkit-model"
+    # check, which reports Unhealthy whenever AiModels:DefaultChat names a
+    # registered model whose weights file is not on disk. That is the normal
+    # state of a CI runner or a fresh checkout (LmKitOmniApi/AIModels/ is not in
+    # the repo), so waiting on them would leave `up --wait` hanging until timeout.
+    # /health/live is mapped with Predicate = _ => false: it runs no checks, so a
+    # 200 means only "Kestrel is accepting requests" — which in this app happens
+    # strictly AFTER EF migrations and the BootstrapAdmin seed, because both run
+    # before app.Run(). Backing-service readiness is already guaranteed by
+    # depends_on: service_healthy above, so the pair is a real readiness gate.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5000/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
     volumes: *api-volumes
 
@@ -79,13 +110,21 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # One-shot: the API runs as uid 1654 and must own its writable mounts.
+  # `up --wait` handles this correctly (it is satisfied by the exit-0 because
+  # `api` waits on it with service_completed_successfully). It only reports a
+  # failure if you start it WITHOUT that dependent — e.g.
+  # `up -d --wait volume-init postgres`; start the whole stack instead.
   volume-init:
     image: alpine:3.23
     user: root
     command: ["sh", "-c", "chown -R 1654:1654 /keys /models /uploads"]
     volumes:
       - dataprotectionkeys:/keys
-      - models:/models
+      # Must be the SAME source expression the api service mounts at /app/Models,
+      # or setting AI_MODELS_CACHE_HOST_DIR chowns the unused named volume and
+      # leaves the host directory the API actually writes to owned by root.
+      - ${AI_MODELS_CACHE_HOST_DIR:-models}:/models
       - uploads:/uploads
     restart: "no"
 
@@ -149,6 +188,16 @@ services:
       - "${CLIENT_HOST_PORT:-80}:80"
     depends_on:
       - api
+    # Without this, `up --wait` only waits for the container to be RUNNING, and
+    # nginx is "running" a moment before it serves anything — so the browser
+    # gate could fire its first request into a closed port. nginx:alpine has no
+    # curl; busybox wget is present (same probe the searxng service uses).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
     restart: unless-stopped
 
 volumes:
