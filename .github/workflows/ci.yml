@@ -42,16 +42,102 @@ jobs:
           name: backend-coverage
           path: TestResults/**/coverage.cobertura.xml
           if-no-files-found: error
+      # Coverage was collected, uploaded and then ignored: nothing ever compared it to
+      # anything, so it could fall to zero without turning the build red. This is a RATCHET,
+      # not a target. The numbers sit just under the figure master measured (56.0 line /
+      # 50.8 branch) so ordinary churn cannot trip it, while a real regression can. Raise
+      # them when the measured figure has moved up and stayed there; lowering them is a
+      # deliberate act that belongs in the same commit as whatever justified it.
+      - name: Enforce coverage floor
+        env:
+          MIN_LINE_RATE: '55.0'
+          MIN_BRANCH_RATE: '50.0'
+        run: |
+          set -euo pipefail
+          python3 - "$MIN_LINE_RATE" "$MIN_BRANCH_RATE" <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+
+          min_line, min_branch = float(sys.argv[1]), float(sys.argv[2])
+          reports = sorted(glob.glob("TestResults/**/coverage.cobertura.xml", recursive=True))
+          if not reports:
+              print("::error::No coverage report was produced, so the coverage floor could not "
+                    "be checked. The test step must run with the XPlat Code Coverage collector "
+                    "and LmKitOmniApi.Tests/coverage.runsettings.")
+              raise SystemExit(1)
+
+          covered = valid = branches_covered = branches_valid = 0
+          for report in reports:
+              root = ET.parse(report).getroot()
+              covered += int(root.get("lines-covered", 0))
+              valid += int(root.get("lines-valid", 0))
+              branches_covered += int(root.get("branches-covered", 0))
+              branches_valid += int(root.get("branches-valid", 0))
+
+          line_rate = 100.0 * covered / valid if valid else 0.0
+          branch_rate = 100.0 * branches_covered / branches_valid if branches_valid else 0.0
+          print(f"line   {line_rate:.2f}% ({covered}/{valid}), floor {min_line:.1f}%")
+          print(f"branch {branch_rate:.2f}% ({branches_covered}/{branches_valid}), floor {min_branch:.1f}%")
+
+          failures = []
+          if line_rate < min_line:
+              failures.append(f"line coverage {line_rate:.2f}% is below the {min_line:.1f}% floor")
+          if branch_rate < min_branch:
+              failures.append(f"branch coverage {branch_rate:.2f}% is below the {min_branch:.1f}% floor")
+          if failures:
+              print("::error::" + "; ".join(failures) + ". Add tests for the code this change "
+                    "touched. If the drop is legitimate (well covered code was deleted, or a "
+                    "large untested vendor surface was added on purpose), lower MIN_LINE_RATE / "
+                    "MIN_BRANCH_RATE in .github/workflows/ci.yml in the SAME commit and say why "
+                    "in the message. Do not disable this step.")
+              raise SystemExit(1)
+
+          print("Coverage floor met.")
+          PY
+      # Scans the whole SOLUTION, not just the API project. The narrower scan was a gate with
+      # a hole exactly where nothing else looked: LmKitOmniApi.IntegrationTests carried
+      # SSH.NET 2024.1.0 (GHSA-q939-rpr3-3284, High) transitively through Testcontainers, and
+      # because CI neither built nor scanned that project the gate reported clean for weeks.
       - name: Fail on vulnerable NuGet packages
         run: |
           set -euo pipefail
-          report="$(dotnet list LmKitOmniApi/LmKitOmniApi.csproj package --vulnerable --include-transitive)"
+          dotnet restore LmKitOmni.slnx
+          report="$(dotnet list LmKitOmni.slnx package --vulnerable --include-transitive)"
           echo "$report"
           if printf '%s\n' "$report" | grep -Eq '^[[:space:]]*>|[[:space:]](Critical|High|Moderate|Low)[[:space:]]'; then
-            echo "::error::Vulnerable NuGet package(s) detected in LmKitOmniApi. See the report above."
+            echo "::error::Vulnerable NuGet package(s) detected in the solution. See the report above."
             exit 1
           fi
           echo "No known-vulnerable NuGet packages detected."
+
+  # The live-engine tests existed for weeks without CI restoring, building or running them.
+  # They are their own job because they pull four database images and take minutes, which the
+  # fast backend job must not inherit. LMKIT_REQUIRE_CONTAINERS makes the fixtures honest: on
+  # a laptop without Docker they skip, here a container that will not start FAILS the job.
+  # Without that, this job could pass having started nothing at all.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      LMKIT_REQUIRE_CONTAINERS: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet restore LmKitOmniApi.IntegrationTests/LmKitOmniApi.IntegrationTests.csproj
+      - run: dotnet build LmKitOmniApi.IntegrationTests/LmKitOmniApi.IntegrationTests.csproj -c Release --no-restore
+      - name: Live-engine and migration tests
+        run: >-
+          dotnet test LmKitOmniApi.IntegrationTests/LmKitOmniApi.IntegrationTests.csproj
+          -c Release --no-build
+          --results-directory TestResults
+          --logger "trx;LogFileName=integration.trx"
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-results
+          path: TestResults/*.trx
+          if-no-files-found: warn
 
   frontend:
     runs-on: ubuntu-latest

@@ -293,7 +293,6 @@ Script là **nguồn duy nhất** của bộ env var này — đừng chép lạ
 | `AI_MODELS_CACHE_HOST_DIR` | Tùy chọn: thư mục host cho cache download `/app/Models` |
 | `VectorStore__ApiKey` | Tùy chọn: api-key gửi kèm khi Qdrant có xác thực (`VectorStore__BaseUrl` hỗ trợ `https://`) |
 | `SemaphoreLimits__Chat` | Số luồng inference chat đồng thời (mỗi slot model có limit riêng) |
-| `LMKit__LicenseKey` | License thương mại LM-Kit (production) |
 
 Tài liệu chi tiết:
 

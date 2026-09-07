@@ -9,8 +9,6 @@ x-api-environment: &api-env
   - HttpsRedirection__Enabled=false
   - Cors__AllowedOrigins__0=${CORS_ORIGIN:-http://localhost}
   - ConnectionStrings__Redis=${REDIS_CONNECTION_STRING:-redis:6379},password=${REDIS_PASSWORD:?Set REDIS_PASSWORD}
-  - LMKit__LicenseKey=${LMKIT_LICENSE_KEY:-}
-  - LMKit__RequireLicense=${LMKIT_REQUIRE_LICENSE:-false}
   - AiModels__DefaultChat=${AI_DEFAULT_CHAT:-bonsai}
   - AiModels__DefaultVision=${AI_DEFAULT_VISION:-glm-ocr}
   - AiModels__DefaultEmbedding=${AI_DEFAULT_EMBEDDING:-bge-m3}

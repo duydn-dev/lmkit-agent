@@ -29,6 +29,25 @@ describe('ChatSseParser', () => {
     ]);
   });
 
+  it('decodes the newline-terminated web-search marker the orchestrator emits', () => {
+    const parser = new ChatSseParser();
+    // Byte-for-byte what AgentOrchestrator now puts on the wire once search_web
+    // returned hits: "[WEB_SEARCH]:" + urls.join("|") + "\n". The trailing newline
+    // is required by the server-side stripper, so the decoder must drop it here —
+    // otherwise the last URL reaches the reference drawer as "https://b\n".
+    const events = parser.push([
+      'data: ' + JSON.stringify('[WEB_SEARCH]:https://a.example/x|https://b.example/y\n'),
+      'data: "Câu trả lời."',
+      ''
+    ].join('\n'));
+
+    expect(events).toEqual([
+      { type: 'web-search', value: 'https://a.example/x|https://b.example/y' },
+      { type: 'content', value: 'Câu trả lời.' }
+    ]);
+    expect(String(events[0].value).split('|')).toEqual(['https://a.example/x', 'https://b.example/y']);
+  });
+
   it('routes model reasoning to a distinct reasoning event, kept separate from the answer', () => {
     const parser = new ChatSseParser();
     const events = parser.push([

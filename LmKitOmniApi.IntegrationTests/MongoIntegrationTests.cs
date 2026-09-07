@@ -16,7 +16,7 @@ public sealed class MongoFixture : DatabaseContainerFixture
     public const int SeededCount = 4;
 
     protected override IContainer Build() =>
-        new MongoDbBuilder().WithImage("mongo:7").Build();
+        new MongoDbBuilder("mongo:7").Build();
 
     // MongoDbContainer does NOT implement IDatabaseContainer (unlike the SQL modules), so
     // the base cast would fail — resolve via the concrete container's own GetConnectionString().

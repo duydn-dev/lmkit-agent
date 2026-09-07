@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text;
 using LmKitOmniApi.Application.Chat.Handlers;
+using LmKitOmniApi.Infrastructure.AI;
 using LmKitOmniApi.Infrastructure.AI.ComputerUse;
 using LmKitOmniApi.Infrastructure.AI.Security;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -105,7 +106,127 @@ public class ProtocolMarkerStreamTests
             $"expected the line-anchored stripper to swallow everything, got: '{stripped}'");
     }
 
-    // ── 3. A real producer: ComputerUseAgent's emitted markers must hold the contract ──
+    // ── 3. A real producer: the [WEB_SEARCH] marker AgentOrchestrator now emits ──
+    //
+    // Until this round nothing in the backend wrote this marker: the only [WEB_SEARCH]
+    // in the API was the regex that strips it, while the client shipped a complete
+    // consumption path (chatSse → useChatStream → the "Read N web pages" chip and the
+    // reference drawer in ChatView/ShareView). The orchestrator now emits it from the
+    // URLs search_web actually returned, and it must hold the same newline contract
+    // every other marker does.
+
+    [Fact]
+    public void WebSearchMarker_EndsWithARealNewline_AndTheAnswerSurvivesStripping()
+    {
+        var marker = AgentOrchestrator.FormatWebSearchMarker(
+            new[] { "https://example.com/a", "https://example.com/b" });
+
+        Assert.DoesNotContain(@"\n", marker, StringComparison.Ordinal);
+        Assert.EndsWith("\n", marker, StringComparison.Ordinal);
+        Assert.Equal("[WEB_SEARCH]:https://example.com/a|https://example.com/b\n", marker);
+
+        var stripped = StripProtocolMarkers(marker + OneParagraphAnswer);
+
+        Assert.Equal(OneParagraphAnswer, stripped);
+        Assert.DoesNotContain("[WEB_SEARCH]", stripped, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WebSearchMarker_SurvivesTheRealEmissionOrder_AfterAFileMarker()
+    {
+        // [FILE:] markers carry no newline of their own and are emitted immediately
+        // before the citation marker, so the two are adjacent on the wire.
+        var stream = "[THINKING]: ✅ LM-Kit ReAct hoàn tất sau 2 inference(s)\n"
+            + "[FILE:{\"id\":\"c.png\",\"name\":\"chart.png\",\"contentType\":\"image/png\",\"size\":9}]"
+            + AgentOrchestrator.FormatWebSearchMarker(new[] { "https://example.com/a" })
+            + "[THINKING]: ✍️ Đang tổng hợp và tạo câu trả lời...\n"
+            + OneParagraphAnswer;
+
+        var stripped = StripProtocolMarkers(stream);
+
+        Assert.Contains(OneParagraphAnswer, stripped, StringComparison.Ordinal);
+        Assert.DoesNotContain("[WEB_SEARCH]", stripped, StringComparison.Ordinal);
+        Assert.DoesNotContain("[THINKING]", stripped, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The client splits the marker payload on '|' and reads each element as a URL, so
+    /// a hit whose URL carries the framing character (or a newline) would silently
+    /// become two bogus references — or terminate the marker early and leave the rest
+    /// of it rendered as prose. Those hits are dropped, and so is anything that is not
+    /// an absolute http/https URL (mirroring the client's isSafeWebUrl allowlist).
+    /// </summary>
+    [Fact]
+    public void ExtractWebReferences_KeepsOnlyUrlsThatAreSafeAndCannotCorruptTheMarker()
+    {
+        var observation = """
+            [
+              {"url":"https://ok.example/a","title":"A","snippet":"…"},
+              {"url":"http://ok.example/b","title":"B","snippet":"…"},
+              {"url":"javascript:alert(1)","title":"XSS","snippet":"…"},
+              {"url":"data:text/html,<script>","title":"XSS","snippet":"…"},
+              {"url":"/relative/path","title":"Relative","snippet":"…"},
+              {"url":"https://bad.example/a|https://bad.example/b","title":"Pipe","snippet":"…"},
+              {"url":"https://bad.example/c\nInjected line","title":"Newline","snippet":"…"},
+              {"url":"","title":"Empty","snippet":"…"},
+              {"title":"No url at all","snippet":"…"},
+              {"url":42}
+            ]
+            """;
+
+        var urls = AgentOrchestrator.ExtractWebReferences(observation);
+
+        Assert.Equal(new[] { "https://ok.example/a", "http://ok.example/b" }, urls);
+    }
+
+    /// <summary>
+    /// search_web answers failures with bracketed prose, not JSON ("[Web search is
+    /// temporarily unavailable.]", "[Tìm kiếm web đang tắt cho phiên này]", the
+    /// whitelist refusal). Both shapes start with '[', so the extractor must decide on
+    /// a real parse and fall back to "no citations" rather than throwing mid-stream.
+    /// </summary>
+    [Theory]
+    [InlineData("[Web search is temporarily unavailable.]")]
+    [InlineData("[Tìm kiếm web đang tắt cho phiên này]")]
+    [InlineData("[Công cụ này không khả dụng cho agent hiện tại]")]
+    [InlineData("[]")]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("{\"url\":\"https://example.com\"}")]
+    [InlineData("not json at all")]
+    public void ExtractWebReferences_YieldsNothing_ForEveryNonHitObservation(string observation)
+    {
+        Assert.Empty(AgentOrchestrator.ExtractWebReferences(observation));
+    }
+
+    /// <summary>
+    /// The producer contract end to end: the real serialization a successful
+    /// <see cref="LmKitOmniApi.Application.Abstractions.WebSearchOutcome"/> hands the
+    /// ReAct loop goes in, and a marker the shipping stripper removes cleanly — with
+    /// the answer intact — comes out.
+    /// </summary>
+    [Fact]
+    public void RealWebSearchOutcome_BecomesAMarkerTheStripperRemovesWithoutEatingTheAnswer()
+    {
+        var resultsJson = System.Text.Json.JsonSerializer.Serialize(new[]
+        {
+            new { url = "https://vnexpress.net/bai-viet", title = "Nguồn A", snippet = "…" },
+            new { url = "https://tuoitre.vn/bai-viet", title = "Nguồn B", snippet = "…" },
+        });
+        var toolOutput = LmKitOmniApi.Application.Abstractions.WebSearchOutcome
+            .Success(resultsJson)
+            .ToToolOutput();
+
+        var urls = AgentOrchestrator.ExtractWebReferences(toolOutput);
+        Assert.Equal(new[] { "https://vnexpress.net/bai-viet", "https://tuoitre.vn/bai-viet" }, urls);
+
+        var stripped = StripProtocolMarkers(
+            AgentOrchestrator.FormatWebSearchMarker(urls) + OneParagraphAnswer);
+
+        Assert.Equal(OneParagraphAnswer, stripped);
+    }
+
+    // ── 4. A real producer: ComputerUseAgent's emitted markers must hold the contract ──
 
     [Fact]
     public async Task RealAgentStream_EmitsRealNewlines_AndTheAnswerSurvivesStripping()

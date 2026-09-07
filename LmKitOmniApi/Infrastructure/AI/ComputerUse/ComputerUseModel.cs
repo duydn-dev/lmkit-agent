@@ -1,9 +1,13 @@
 using System.Linq;
 using System.Text;
+using LMKit.Model;
 using LMKit.TextGeneration;
 using LMKit.TextGeneration.Chat;
 using LMKit.TextGeneration.Sampling;
+using LmKitOmniApi.Infrastructure.AI.ComputerUse.Training;
+using LmKitOmniApi.Infrastructure.AI.Lora;
 using LmKitOmniApi.Services;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -17,6 +21,14 @@ namespace LmKitOmniApi.Infrastructure.AI.ComputerUse;
 /// AcquireVisionInferenceAsync — the same acquire-lease discipline the rest of the app
 /// uses). LIVE-ONLY: it needs a loaded vision model, so it is exercised in the running
 /// stack, not CI (the loop tests inject a scripted <see cref="IComputerUseModel"/>).
+///
+/// <para>
+/// GROUNDING ADAPTER. This is the model the grounding LoRA pipeline trains
+/// (<see cref="LmKitGroundingAdapterTrainerPort"/>), so it is also the model that can load the
+/// result: when <c>GroundingTraining:ApplyTrainedAdapter</c> is on, the tenant's newest active
+/// auto-trained grounding adapter is applied to the vision model for the duration of the
+/// decision and removed again before the vision lease is released.
+/// </para>
 /// </summary>
 public sealed class ComputerUseModel : IComputerUseModel
 {
@@ -26,11 +38,26 @@ public sealed class ComputerUseModel : IComputerUseModel
     private readonly ComputerUseOptions _options;
     private readonly ILogger<ComputerUseModel> _logger;
 
-    public ComputerUseModel(LmModelManager modelManager, IOptions<ComputerUseOptions> options, ILogger<ComputerUseModel> logger)
+    // Grounding-adapter hot-swap (off by default). Optional so existing call sites/tests that
+    // construct this positionally keep compiling; DI fills all three by type.
+    private readonly ILoraAdapterService? _loraService;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
+    private readonly GroundingTrainingOptions _groundingOptions;
+
+    public ComputerUseModel(
+        LmModelManager modelManager,
+        IOptions<ComputerUseOptions> options,
+        ILogger<ComputerUseModel> logger,
+        ILoraAdapterService? loraService = null,
+        IHttpContextAccessor? httpContextAccessor = null,
+        IOptions<GroundingTrainingOptions>? groundingOptions = null)
     {
         _modelManager = modelManager;
         _options = options.Value;
         _logger = logger;
+        _loraService = loraService;
+        _httpContextAccessor = httpContextAccessor;
+        _groundingOptions = groundingOptions?.Value ?? new GroundingTrainingOptions();
     }
 
     /// <summary>
@@ -49,6 +76,13 @@ public sealed class ComputerUseModel : IComputerUseModel
         var visionModel = await _modelManager.GetVisionModelAsync(ct: ct);
         await using var lease = await _modelManager.AcquireVisionInferenceAsync(ct);
 
+        // Grounding LoRA hot-swap: apply the tenant's trained adapter to the shared vision model
+        // for this one decision. Declared AFTER the lease and BEFORE the conversation, so `using`
+        // disposes it in reverse order — the adapter is removed while we still hold exclusive
+        // access to the model (Vision semaphore = 1), and even if generation throws. Null (a
+        // no-op) whenever the feature is off or the tenant has no adapter.
+        using var groundingAdapter = await TryApplyGroundingAdapterAsync(visionModel, ct);
+
         using var chat = new MultiTurnConversation(visionModel)
         {
             SystemPrompt = prompt.SystemPrompt,
@@ -63,15 +97,16 @@ public sealed class ComputerUseModel : IComputerUseModel
         using var grammar = TryBuildGrammar(prompt);
         if (grammar is not null) chat.Grammar = grammar;
 
-        var userText = BuildUserMessage(prompt);
+        var hasScreenshot = !string.IsNullOrEmpty(prompt.ScreenshotPath) && System.IO.File.Exists(prompt.ScreenshotPath);
+        var userText = BuildUserMessage(prompt, hasScreenshot);
 
         // Use only the LM-Kit overloads the rest of the app already relies on: a
         // (text, attachment) Message for the vision turn, or a plain text submit when no
         // screenshot was captured.
         string? completion;
-        if (!string.IsNullOrEmpty(prompt.ScreenshotPath) && System.IO.File.Exists(prompt.ScreenshotPath))
+        if (hasScreenshot)
         {
-            using var attachment = new LMKit.Data.Attachment(prompt.ScreenshotPath);
+            using var attachment = new LMKit.Data.Attachment(prompt.ScreenshotPath!);
             var message = new ChatHistory.Message(userText, attachment);
             completion = (await chat.SubmitAsync(message, ct)).Completion;
         }
@@ -104,8 +139,53 @@ public sealed class ComputerUseModel : IComputerUseModel
         }
     }
 
-    /// <summary>Renders the task, prior-step history, and the current observation into the user turn.</summary>
-    private static string BuildUserMessage(ComputerUsePrompt prompt)
+    /// <summary>
+    /// Applies the tenant's newest active auto-trained grounding adapter to the vision model, or
+    /// returns null (a no-op) when the feature is off, there is no request principal to read the
+    /// tenant from, the LoRA feature is off, or the tenant has never trained one.
+    ///
+    /// The caller MUST already hold the vision inference lease, and must dispose the returned
+    /// scope before releasing it — the same contract as
+    /// <see cref="ILoraAdapterService.BeginApplyForAgent"/> on the chat path.
+    /// </summary>
+    private async Task<LoraApplyScope?> TryApplyGroundingAdapterAsync(LM visionModel, CancellationToken ct)
+    {
+        if (!_groundingOptions.ApplyTrainedAdapter || _loraService is null) return null;
+
+        // The computer-use run and the grounding-eval harness are both authenticated HTTP
+        // requests, so the tenant comes from the same claim every controller reads.
+        var tenantClaim = _httpContextAccessor?.HttpContext?.User?.FindFirst("TenantId")?.Value;
+        if (!Guid.TryParse(tenantClaim, out var tenantId)) return null;
+
+        try
+        {
+            var adapterId = await GroundingAdapterNaming.SelectNewestActiveAsync(_loraService, tenantId, ct);
+            if (adapterId is null) return null;
+
+            var scope = _loraService.BeginApplyForAgent(visionModel, tenantId, adapterId, ct);
+            if (scope is not null)
+                _logger.LogDebug("🎯 [ComputerUse] Đã áp dụng adapter grounding {AdapterId} cho mô hình thị giác.", adapterId);
+            return scope;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Selecting/applying the adapter must never break a decision; run on the base model.
+            _logger.LogWarning(ex, "⚠️ [ComputerUse] Không áp dụng được adapter grounding — dùng mô hình gốc.");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Renders the task, prior-step history, and the current observation into the user turn.
+    /// <c>internal</c> so <c>GroundingTrainingPlanTests</c> can pin the TRAINING turn
+    /// (<see cref="GroundingTrainingPlan.RenderUserTurn"/>) to this exact rendering — a
+    /// fine-tune whose input shape differs from the inference input teaches the wrong thing.
+    /// </summary>
+    internal static string BuildUserMessage(ComputerUsePrompt prompt, bool hasScreenshot)
     {
         var sb = new StringBuilder();
         sb.Append("TASK: ").Append(prompt.TaskGoal).Append('\n');
@@ -139,7 +219,12 @@ public sealed class ComputerUseModel : IComputerUseModel
             }
         }
 
-        sb.Append("\nA screenshot of this page is attached. Respond with EXACTLY ONE action as JSON.");
+        // Only claim a screenshot when one is actually attached — the grounding trainer renders
+        // the same turn from the recorded sample, and telling the model about a picture it cannot
+        // see is both a lie and a training/inference mismatch.
+        sb.Append(hasScreenshot
+            ? "\nA screenshot of this page is attached. Respond with EXACTLY ONE action as JSON."
+            : "\nRespond with EXACTLY ONE action as JSON.");
         return sb.ToString();
     }
 }

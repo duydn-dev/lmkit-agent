@@ -7,7 +7,11 @@ namespace LmKitOmniApi.IntegrationTests;
 
 public sealed class SqlServerFixture : DatabaseContainerFixture
 {
-    protected override IContainer Build() => new MsSqlBuilder().Build();
+    // Pinned like every other engine here: the module's parameterless constructor is obsolete
+    // in Testcontainers 4.15, and an unpinned default image silently changes SQL Server major
+    // version underneath the test whenever the module is upgraded.
+    protected override IContainer Build() =>
+        new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04").Build();
 
     protected override async Task SeedAsync(string connectionString, CancellationToken ct)
     {

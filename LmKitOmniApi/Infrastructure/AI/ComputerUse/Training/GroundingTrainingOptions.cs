@@ -38,6 +38,20 @@ public sealed class GroundingTrainingOptions
     /// </summary>
     public string AdapterOutputPath { get; set; } = string.Empty;
 
+    /// <summary>
+    /// When true, the computer-use loop APPLIES the tenant's newest active auto-trained grounding
+    /// adapter to the vision model for each decision (acquire the vision lease → apply → decide →
+    /// remove → release, exactly like the chat LoRA path). False (default) = a trained adapter is
+    /// produced and registered but never applied automatically; it can still be applied by hand
+    /// through the normal LoRA hot-swap surface.
+    ///
+    /// This is a SEPARATE switch from <see cref="Enabled"/> on purpose: capturing samples and
+    /// training offline is cheap and reversible, whereas changing what the live browser-driving
+    /// agent decides is not. It also requires <c>Lora:Enabled</c>, since selection goes through
+    /// <c>ILoraAdapterService</c>.
+    /// </summary>
+    public bool ApplyTrainedAdapter { get; set; }
+
     /// <summary>Refuse to train until at least this many vetted samples exist for the tenant.</summary>
     public int MinSamplesToTrain { get; set; } = 50;
 

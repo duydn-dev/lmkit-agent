@@ -6,6 +6,16 @@ namespace LmKitOmniApi.Application.Abstractions;
 /// Interface for specialized agents in a multi-agent system.
 /// Each agent has a specific expertise and can be delegated tasks.
 /// Inspired by console_net/ai-agents/multi-agent-workflows + delegation.
+///
+/// <para>
+/// ROUTING DOES NOT HAPPEN HERE. <c>MultiAgentOrchestrator</c> registers every
+/// specialist as a worker of LM-Kit's <c>SupervisorOrchestrator</c> and the
+/// supervisor model chooses, reading only <see cref="AgentName"/>,
+/// <see cref="Description"/> and <see cref="SupportedCategories"/> — the worker
+/// directory it is given. Those three members plus <see cref="ExecuteAsync"/>
+/// are the entire contract; an agent-side scoring hook would never be consulted,
+/// so none is declared.
+/// </para>
 /// </summary>
 public interface ISpecializedAgent
 {
@@ -17,9 +27,6 @@ public interface ISpecializedAgent
 
     /// <summary>List of task categories this agent can handle.</summary>
     IReadOnlyList<string> SupportedCategories { get; }
-
-    /// <summary>Evaluate how confident this agent is for handling the given query (0.0–1.0).</summary>
-    Task<double> EvaluateConfidenceAsync(string query, CancellationToken ct = default);
 
     /// <summary>Execute the query and return a result context string.</summary>
     Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string userRole, string query, CancellationToken ct = default);

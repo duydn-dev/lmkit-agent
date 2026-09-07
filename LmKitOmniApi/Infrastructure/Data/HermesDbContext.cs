@@ -24,7 +24,6 @@ public class HermesDbContext : DbContext
     public DbSet<McpUserOAuthToken> McpUserOAuthTokens { get; set; } = null!;
     public DbSet<Notification> Notifications { get; set; } = null!;
     public DbSet<TaskApproval> TaskApprovals { get; set; } = null!;
-    public DbSet<TenantApiCryptoKey> TenantApiCryptoKeys { get; set; } = null!;
     public DbSet<TenantApiKey> TenantApiKeys { get; set; } = null!;
     public DbSet<TenantWidgetSettings> TenantWidgetSettings { get; set; } = null!;
     public DbSet<UserSession> UserSessions { get; set; } = null!;
@@ -168,6 +167,11 @@ public class HermesDbContext : DbContext
             .IsUnique();
         modelBuilder.Entity<ChatShareLink>()
             .HasIndex(l => l.ChatSessionId);
+        // No index on ExpiresAtUtc on purpose. The deadline is never a search key: the
+        // public read finds exactly one row through the unique TokenHash index and then
+        // compares that row's own deadline. Unlike TaskApproval there is no sweeper
+        // scanning for overdue rows, so an ExpiresAtUtc index would earn nothing and
+        // cost a write on every mint.
 
         // New Entity Relationships
         modelBuilder.Entity<AgentMemory>()
@@ -211,9 +215,6 @@ public class HermesDbContext : DbContext
         // It serves the pending-list query's deadline predicate too.
         modelBuilder.Entity<TaskApproval>()
             .HasIndex(t => new { t.Status, t.ExpiresAtUtc });
-
-        modelBuilder.Entity<TenantApiCryptoKey>()
-            .HasOne(t => t.Tenant).WithMany().HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<TenantApiKey>()
             .HasOne(t => t.Tenant).WithMany().HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);
