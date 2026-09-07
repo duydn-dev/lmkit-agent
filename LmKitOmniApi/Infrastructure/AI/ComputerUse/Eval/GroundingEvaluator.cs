@@ -127,7 +127,7 @@ public sealed class GroundingEvaluator : IGroundingEvaluator
     /// parsed action's <c>ref</c>:
     /// <list type="bullet">
     ///   <item>parse failed → <see cref="GroundingOutcome.Malformed"/>;</item>
-    ///   <item>no <c>ref</c> (done/ask/scroll/navigate/wait/screenshot/key, or a coordinate-only
+    ///   <item>no <c>ref</c> (done/ask/scroll/navigate/wait/screenshot, or a coordinate-only
     ///   click/type) → <see cref="GroundingOutcome.NonElement"/>;</item>
     ///   <item>a <c>ref</c> not in the observation → <see cref="GroundingOutcome.Hallucinated"/>;</item>
     ///   <item>a real <c>ref</c> outside the acceptable set → <see cref="GroundingOutcome.ValidButWrong"/>;</item>

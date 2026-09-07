@@ -58,6 +58,55 @@ public sealed class LiveKitMediaAudioTests
         Assert.Equal(new short[] { 15, 40 }, mono);
     }
 
+    // ── malformed headers must TERMINATE, not spin ──
+    //
+    // The chunk walk advanced with `i = body + size + (size & 1)`. A negative `size` moved the
+    // cursor backwards (or left it exactly where it was), so the scan never terminated: one
+    // corrupt/hostile WAV wedged the publishing thread forever. Every chunk step must now make
+    // strict forward progress and stay inside the buffer.
+
+    [Fact]
+    public void ParseWav_NegativeChunkSize_Terminates_AndReportsNoAudio()
+    {
+        var wav = BuildWav(new short[] { 1, 2, 3 }, 16000, 1);
+        // Corrupt the FIRST chunk ("fmt ") length to -8 → the old cursor arithmetic was a no-op.
+        BitConverter.GetBytes(-8).CopyTo(wav, 16);
+
+        var (pcm, _, channels) = ParseWithTimeout(wav);
+
+        Assert.Empty(pcm);
+        Assert.True(channels >= 1);
+    }
+
+    [Fact]
+    public void ParseWav_LargeBackwardsChunkSize_Terminates()
+    {
+        var wav = BuildWav(new short[] { 1, 2, 3 }, 16000, 1);
+        BitConverter.GetBytes(-1000).CopyTo(wav, 16); // cursor would walk off the front
+
+        Assert.Empty(ParseWithTimeout(wav).Pcm);
+    }
+
+    [Fact]
+    public void ParseWav_ChunkSizeBeyondBuffer_Terminates()
+    {
+        var wav = BuildWav(new short[] { 1, 2, 3 }, 16000, 1);
+        BitConverter.GetBytes(int.MaxValue).CopyTo(wav, 16); // would overflow past the end
+
+        Assert.Empty(ParseWithTimeout(wav).Pcm);
+    }
+
+    /// <summary>
+    /// Runs the parser on a background thread so a REGRESSION of the runaway chunk walk fails
+    /// this test in a few seconds instead of hanging the whole suite.
+    /// </summary>
+    private static (short[] Pcm, int SampleRate, int Channels) ParseWithTimeout(byte[] wav)
+    {
+        var task = Task.Run(() => LiveKitMediaSession.ParseWav(wav));
+        Assert.True(task.Wait(TimeSpan.FromSeconds(5)), "ParseWav did not terminate on a malformed header.");
+        return task.Result;
+    }
+
     private static byte[] BuildWav(short[] samples, int rate, int channels)
     {
         using var ms = new MemoryStream();

@@ -32,6 +32,13 @@ public static class ComputerUseActionGrammar
     /// constrained to exactly those integer values (only a real element can be addressed);
     /// when empty, <c>ref</c> is an unconstrained integer (the loop's grounding gate still
     /// refuses an un-groundable action, and the prompt tells the model no elements exist).
+    ///
+    /// The single <c>ref</c> property serves every element-targeted verb — <c>click</c>,
+    /// <c>type</c> AND <c>key</c> (a key press names the element it is sent to). Per-verb
+    /// required-field rules are NOT expressed here: this schema deliberately requires only
+    /// <c>action</c>, because a conditional (if/then) schema is far more likely to be
+    /// rejected by the grammar engine, which would silently disable constrained decoding
+    /// altogether. The parser enforces the per-verb requirements instead.
     /// </summary>
     public static string BuildActionSchema(IReadOnlyList<int> elementRefs)
     {

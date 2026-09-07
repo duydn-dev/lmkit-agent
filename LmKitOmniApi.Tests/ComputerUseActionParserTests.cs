@@ -65,10 +65,28 @@ public class ComputerUseActionParserTests
     }
 
     [Fact]
-    public void Parses_Key_Scroll_Wait_Screenshot()
+    public void Parses_KeyWithRef()
     {
-        Assert.Equal("Enter", Parse("{\"action\":\"key\",\"keys\":\"Enter\"}").Keys);
+        // A key press must NAME its target element, so the safety guard can inspect it and the
+        // loop can ground it. (A key action used to carry only `keys`, which made every key
+        // press un-groundable and terminated the run — see ComputerUseAgentTests case 10.)
+        var a = Parse("{\"action\":\"key\",\"ref\":4,\"keys\":\"Enter\"}");
+        Assert.Equal(ComputerUseActionType.Key, a.Type);
+        Assert.Equal(4, a.Ref);
+        Assert.Equal("Enter", a.Keys);
+        Assert.True(a.IsSideEffecting);
+    }
 
+    [Fact]
+    public void Parses_KeyThroughAliasesAndWrapper()
+    {
+        Assert.Equal("Ctrl+A", Parse("{\"action\":\"press\",\"ref\":1,\"key\":\"Ctrl+A\"}").Keys);
+        Assert.Equal(2, Parse("{\"action\":\"key\",\"params\":{\"ref\":2,\"keys\":\"Tab\"}}").Ref);
+    }
+
+    [Fact]
+    public void Parses_Scroll_Wait_Screenshot()
+    {
         var scroll = Parse("{\"action\":\"scroll\",\"direction\":\"down\",\"amount\":5}");
         Assert.Equal(ComputerUseActionType.Scroll, scroll.Type);
         Assert.Equal("down", scroll.Direction);
@@ -188,6 +206,7 @@ public class ComputerUseActionParserTests
         AssertRejected("{\"action\":\"type\",\"ref\":1}");         // no text
         AssertRejected("{\"action\":\"type\",\"text\":\"x\"}");    // no target
         AssertRejected("{\"action\":\"key\"}");                    // no keys
+        AssertRejected("{\"action\":\"key\",\"keys\":\"Enter\"}"); // keys but no target element
     }
 
     [Fact]

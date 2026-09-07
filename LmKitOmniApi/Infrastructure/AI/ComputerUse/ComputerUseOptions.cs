@@ -75,8 +75,19 @@ public sealed class ComputerUseOptions
     /// <summary>Hard wall-clock limit for a SINGLE step's container (seconds).</summary>
     public int StepTimeoutSeconds { get; set; } = 30;
 
-    /// <summary>Hard wall-clock limit for the WHOLE session across all steps (seconds).</summary>
-    public int SessionWallClockSeconds { get; set; } = 300;
+    /// <summary>
+    /// Hard wall-clock limit for the WHOLE session across all steps (seconds).
+    ///
+    /// It MUST be able to accommodate every step's own budget PLUS the human decision each
+    /// side-effecting step waits for, i.e.
+    /// <c>SessionWallClockSeconds &gt;= MaxSteps * (StepTimeoutSeconds + ApprovalTimeoutSeconds)</c>
+    /// — see <see cref="WorstCaseSessionSeconds"/>. The old default (300s, with a 300s
+    /// approval timeout) made the two mutually impossible: the session was cancelled at the
+    /// exact moment ONE approval was still allowed to be pending, so a run that asked a human
+    /// anything could never complete. The shipped default is now that worst-case sum:
+    /// 15 * (30 + 90) = 1800s.
+    /// </summary>
+    public int SessionWallClockSeconds { get; set; } = 1800;
 
     /// <summary>Memory ceiling passed to the runtime per step (MB).</summary>
     public int MemoryMb { get; set; } = 512;
@@ -123,6 +134,28 @@ public sealed class ComputerUseOptions
     /// </summary>
     public bool RequireApprovalPerAction { get; set; } = true;
 
-    /// <summary>How long the default approval gate waits for a human decision before failing closed (seconds).</summary>
-    public int ApprovalTimeoutSeconds { get; set; } = 300;
+    /// <summary>
+    /// How long the default approval gate waits for a human decision before failing closed
+    /// (seconds). 90s is long enough for an attentive operator to read one action and decide,
+    /// and short enough that <see cref="MaxSteps"/> of them still fit inside
+    /// <see cref="SessionWallClockSeconds"/>.
+    /// </summary>
+    public int ApprovalTimeoutSeconds { get; set; } = 90;
+
+    /// <summary>
+    /// The longest a run can legitimately take: every step burning its full container budget
+    /// AND its full human-approval budget. <see cref="SessionWallClockSeconds"/> must be at
+    /// least this, otherwise the session cancels while a step is still legally waiting.
+    /// </summary>
+    public long WorstCaseSessionSeconds =>
+        (long)Math.Max(0, MaxSteps)
+        * (Math.Max(0, StepTimeoutSeconds)
+           + (RequireApprovalPerAction ? Math.Max(0, ApprovalTimeoutSeconds) : 0));
+
+    /// <summary>
+    /// True when the configured budgets can actually co-exist. False means at least one step
+    /// is guaranteed to be cut off mid-approval — surface it to the operator rather than
+    /// letting runs die at the wall clock for no visible reason.
+    /// </summary>
+    public bool AreTimeBudgetsConsistent => SessionWallClockSeconds >= WorstCaseSessionSeconds;
 }

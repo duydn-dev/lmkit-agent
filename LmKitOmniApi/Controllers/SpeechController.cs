@@ -405,40 +405,51 @@ public class SpeechController : ApiControllerBase
         await Response.Body.FlushAsync(ct);
     }
 
+    /// <summary>
+    /// Mints the browser's LiveKit join token.
+    ///
+    /// The room name comes from <see cref="VoiceRoomNaming"/> — the SINGLE authoritative
+    /// naming function, also used by <see cref="VoiceRoomAgentHostedService"/>, so the
+    /// server-side agent and the caller land in the same room. The name is scoped to
+    /// tenant AND user (it used to be tenant-only, which put every colleague in one tenant
+    /// into a shared room where they could hear each other).
+    ///
+    /// Credentials come from <see cref="VoiceLiveKitCredentials"/> — the single source that
+    /// accepts either <c>Voice:LiveKit*</c> or the shared <c>LiveKit:*</c> block, so
+    /// configuring one no longer leaves the other half of the feature dead.
+    /// </summary>
     [HttpGet("token")]
-    public IActionResult GetLiveKitToken([FromServices] IConfiguration config, [FromQuery] string room = "omni-room")
+    public IActionResult GetLiveKitToken(
+        [FromServices] IConfiguration config,
+        [FromServices] IOptions<VoiceOptions> voiceOptions,
+        [FromQuery] string room = VoiceRoomNaming.DefaultLabel)
     {
-        if (string.IsNullOrWhiteSpace(room) || room.Length > 100)
-            return BadRequest("Room must contain between 1 and 100 characters.");
-
         if (!TryGetIdentity(out var tenantId, out var userId))
             return Unauthorized();
 
-        var apiKey = config["LiveKit:ApiKey"];
-        var apiSecret = config["LiveKit:ApiSecret"];
+        if (!VoiceRoomNaming.TryScopedRoom(tenantId, userId, room, out var scopedRoom, out var roomError))
+            return BadRequest(roomError);
 
-        if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(apiSecret))
+        var liveKit = VoiceLiveKitCredentials.Resolve(voiceOptions.Value, config);
+        if (!liveKit.IsConfigured)
             return StatusCode(500, "LiveKit is not configured");
 
-        var securityKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(apiSecret));
-        var credentials = new Microsoft.IdentityModel.Tokens.SigningCredentials(securityKey, Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256);
+        var securityKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(liveKit.ApiSecret));
+        var signingCredentials = new Microsoft.IdentityModel.Tokens.SigningCredentials(securityKey, Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256);
 
-        var header = new System.IdentityModel.Tokens.Jwt.JwtHeader(credentials);
+        var header = new System.IdentityModel.Tokens.Jwt.JwtHeader(signingCredentials);
         var payload = new System.IdentityModel.Tokens.Jwt.JwtPayload(
-            issuer: apiKey,
+            issuer: liveKit.ApiKey,
             audience: null,
             claims: null,
             notBefore: DateTime.UtcNow,
             expires: DateTime.UtcNow.AddHours(2)
         );
 
-        var safeRoom = System.Text.RegularExpressions.Regex.Replace(room, "[^a-zA-Z0-9_-]+", "-").Trim('-');
-        if (safeRoom.Length == 0) return BadRequest("Room contains no supported characters.");
-        var scopedRoom = $"{tenantId:N}-{safeRoom}";
         payload.AddClaim(new System.Security.Claims.Claim(
             System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub,
             userId.ToString("N")));
-        
+
         var videoClaim = new Dictionary<string, object>
         {
             { "roomJoin", true },
@@ -448,8 +459,10 @@ public class SpeechController : ApiControllerBase
 
         var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(header, payload);
         var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
-        
-        return Ok(new { token = tokenHandler.WriteToken(token) });
+
+        // `room` is echoed back so an operator can see exactly which room the caller was put
+        // in (and point Voice:AgentTenantId/AgentUserId at it) without decoding the JWT.
+        return Ok(new { token = tokenHandler.WriteToken(token), room = scopedRoom });
     }
 
     private PathValidationResult ValidateOwnedPath(string path)

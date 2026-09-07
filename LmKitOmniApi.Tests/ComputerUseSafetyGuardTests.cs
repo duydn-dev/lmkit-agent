@@ -21,6 +21,9 @@ public class ComputerUseSafetyGuardTests
     private static ComputerUseAction ClickRef(int r) =>
         new() { Type = ComputerUseActionType.Click, Ref = r };
 
+    private static ComputerUseAction KeyRef(int r, string keys = "Enter") =>
+        new() { Type = ComputerUseActionType.Key, Ref = r, Keys = keys };
+
     // ── credential fields (English) ──
 
     [Fact]
@@ -92,6 +95,95 @@ public class ComputerUseSafetyGuardTests
     {
         var obs = Obs(new InteractiveElement(1, "button", "Xác minh bạn là người", null));
         Assert.NotNull(ComputerUseSafetyGuard.RequiresHumanHandoff(ClickRef(1), obs));
+    }
+
+    // ── short acronym markers must match on WORD boundaries, not as bare substrings ──
+    //
+    // `Contains("pin")` classified "Shipping address", "Pinterest" and "spinner" as PIN
+    // fields, so typing a delivery address hard-terminated the session — and the shipped
+    // grounding-eval fixtures are checkout flows built from exactly these labels.
+
+    [Theory]
+    [InlineData("Shipping address")]
+    [InlineData("Pinterest")]
+    [InlineData("spinner")]
+    [InlineData("Pinned items")]
+    [InlineData("Zip / Postal code")]
+    public void ShortMarkerLookalikes_AreNotTreatedAsCredentialFields(string label)
+    {
+        var obs = Obs(new InteractiveElement(1, "textbox", label, null));
+        Assert.Null(ComputerUseSafetyGuard.RequiresHumanHandoff(TypeRef(1), obs));
+    }
+
+    [Theory]
+    [InlineData("PIN")]
+    [InlineData("Enter your PIN code")]
+    [InlineData("Mã PIN")]
+    [InlineData("OTP")]
+    [InlineData("Nhập mã OTP")]
+    [InlineData("CVV")]
+    [InlineData("CVV2")]
+    [InlineData("SSN")]
+    [InlineData("2FA code")]
+    public void ShortMarkers_StillMatchAsWholeWords(string label)
+    {
+        var obs = Obs(new InteractiveElement(1, "textbox", label, null));
+        Assert.NotNull(ComputerUseSafetyGuard.RequiresHumanHandoff(TypeRef(1), obs));
+    }
+
+    [Fact]
+    public void LongMarkers_StillMatchAsSubstrings()
+    {
+        // Long markers stay substring matches so suffixed/concatenated labels keep working.
+        var obs = Obs(new InteractiveElement(1, "textbox", "Password1", null));
+        Assert.NotNull(ComputerUseSafetyGuard.RequiresHumanHandoff(TypeRef(1), obs));
+    }
+
+    [Fact]
+    public void ContainsWord_RequiresLetterBoundaries()
+    {
+        Assert.True(ComputerUseSafetyGuard.ContainsWord("enter pin now", "pin"));
+        Assert.True(ComputerUseSafetyGuard.ContainsWord("pin", "pin"));
+        Assert.True(ComputerUseSafetyGuard.ContainsWord("cvv2", "cvv"));   // digits are boundaries
+        Assert.True(ComputerUseSafetyGuard.ContainsWord("pin_code", "pin"));
+        Assert.False(ComputerUseSafetyGuard.ContainsWord("shipping", "pin"));
+        Assert.False(ComputerUseSafetyGuard.ContainsWord("pinterest", "pin"));
+        Assert.False(ComputerUseSafetyGuard.ContainsWord("spinner", "pin"));
+        Assert.False(ComputerUseSafetyGuard.ContainsWord("adopt", "otp"));
+        // Must find a LATER whole-word occurrence even after an embedded near-miss.
+        Assert.True(ComputerUseSafetyGuard.ContainsWord("shipping pin", "pin"));
+    }
+
+    // ── `key` is text entry too: keystrokes must never reach a credential field ──
+
+    [Fact]
+    public void KeyPress_IntoPasswordField_IsRefused()
+    {
+        var obs = Obs(new InteractiveElement(1, "textbox", "Đăng nhập", null, "password"));
+        Assert.NotNull(ComputerUseSafetyGuard.RequiresHumanHandoff(KeyRef(1, "h"), obs));
+    }
+
+    [Fact]
+    public void KeyPress_IntoOtpField_IsRefused()
+    {
+        var obs = Obs(new InteractiveElement(1, "textbox", "OTP", null));
+        Assert.NotNull(ComputerUseSafetyGuard.RequiresHumanHandoff(KeyRef(1, "1"), obs));
+    }
+
+    [Fact]
+    public void KeyPress_OnCaptchaControl_IsRefused()
+    {
+        var obs = Obs(new InteractiveElement(1, "button", "reCAPTCHA", null));
+        Assert.NotNull(ComputerUseSafetyGuard.RequiresHumanHandoff(KeyRef(1), obs));
+    }
+
+    [Fact]
+    public void KeyPress_OnOrdinarySearchBox_IsAllowed()
+    {
+        // Pressing Enter to submit a search is the most common browser primitive; it must not
+        // be refused (it used to be impossible to express at all).
+        var obs = Obs(new InteractiveElement(1, "textbox", "Search", null));
+        Assert.Null(ComputerUseSafetyGuard.RequiresHumanHandoff(KeyRef(1), obs));
     }
 
     // ── ungroundable actions: the guard defers (returns null); the AGENT loop fails closed ──

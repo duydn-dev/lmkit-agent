@@ -53,14 +53,68 @@ public sealed class VoiceOptions
     // ── LiveKit real-time room agent (used only when LiveAgentEnabled) ──
     // All empty by default → the hosted service logs "not configured" and stands down.
 
-    /// <summary>LiveKit server URL, e.g. wss://livekit.example.com.</summary>
+    /// <summary>
+    /// LiveKit server URL, e.g. wss://livekit.example.com. Falls back to <c>LiveKit:Url</c>
+    /// — see <see cref="VoiceLiveKitCredentials"/>, the single credential source shared with
+    /// the browser token endpoint.
+    /// </summary>
     public string LiveKitUrl { get; set; } = string.Empty;
 
-    /// <summary>LiveKit API key/secret used to mint the agent's join token.</summary>
+    /// <summary>
+    /// LiveKit API key/secret used to mint the agent's join token. Falls back to
+    /// <c>LiveKit:ApiKey</c> / <c>LiveKit:ApiSecret</c> via
+    /// <see cref="VoiceLiveKitCredentials.Resolve"/>, so configuring EITHER block configures
+    /// both the endpoint and the agent.
+    /// </summary>
     public string LiveKitApiKey { get; set; } = string.Empty;
     public string LiveKitApiSecret { get; set; } = string.Empty;
 
-    /// <summary>Room the agent joins, and the identity/voice it uses.</summary>
-    public string Room { get; set; } = "omni-room";
+    /// <summary>
+    /// Room LABEL (NOT the full room name). The real room name is always
+    /// <c>{tenant:N}-{user:N}-{label}</c>, produced by <see cref="VoiceRoomNaming"/> — the
+    /// same function the browser token endpoint uses — so the agent and its caller land in
+    /// the same room and two users in one tenant never share one.
+    /// </summary>
+    public string Room { get; set; } = VoiceRoomNaming.DefaultLabel;
+
+    /// <summary>Participant identity the agent publishes under.</summary>
     public string AgentIdentity { get; set; } = "voice-agent";
+
+    // ── Which user's room the single hosted agent serves ──
+    // The hosted service is ONE background participant for the whole process, so it can only
+    // occupy ONE room. Because rooms are now scoped per user, the operator must name the
+    // tenant/user whose room that is. Empty (the default) ⇒ the hosted service stands down
+    // with a clear message rather than silently joining a room no caller will ever be in.
+    // Serving many users concurrently needs a room-dispatcher redesign — see
+    // VOICE-CU-FIX-INTEGRATION.md.
+
+    /// <summary>Tenant id (GUID) whose voice room the hosted agent joins. Empty ⇒ stand down.</summary>
+    public string AgentTenantId { get; set; } = string.Empty;
+
+    /// <summary>User id (GUID) whose voice room the hosted agent joins. Empty ⇒ stand down.</summary>
+    public string AgentUserId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Resolves the FULL room name the hosted agent must join, using the same
+    /// <see cref="VoiceRoomNaming"/> function as the token endpoint. Returns false with a
+    /// human-readable reason when <see cref="AgentTenantId"/>/<see cref="AgentUserId"/> are
+    /// missing or malformed, or the label sanitizes to nothing.
+    /// </summary>
+    public bool TryResolveAgentRoom(out string room, out string? error)
+    {
+        room = string.Empty;
+
+        if (!Guid.TryParse(AgentTenantId, out var tenantId) || tenantId == Guid.Empty)
+        {
+            error = "Voice:AgentTenantId must be a non-empty GUID naming the tenant whose room the agent joins.";
+            return false;
+        }
+        if (!Guid.TryParse(AgentUserId, out var userId) || userId == Guid.Empty)
+        {
+            error = "Voice:AgentUserId must be a non-empty GUID naming the user whose room the agent joins.";
+            return false;
+        }
+
+        return VoiceRoomNaming.TryScopedRoom(tenantId, userId, Room, out room, out error);
+    }
 }

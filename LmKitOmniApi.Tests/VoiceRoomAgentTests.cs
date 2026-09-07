@@ -1,7 +1,174 @@
 using LmKitOmniApi.Infrastructure.AI.Voice;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LmKitOmniApi.Tests;
+
+/// <summary>
+/// The voice room CONTRACT: one room-naming function and one credential source shared by the
+/// browser token endpoint (<c>SpeechController.GetLiveKitToken</c>) and the server-side agent
+/// (<c>VoiceRoomAgentHostedService</c>).
+///
+/// These pin the two defects that made the feature unusable: the endpoint minted
+/// <c>{tenant}-{room}</c> while the agent joined the bare <c>Voice:Room</c> label (two
+/// different rooms — the agent could never hear anyone), and rooms were scoped per TENANT, so
+/// two colleagues in one tenant shared a room and could hear each other.
+/// </summary>
+public sealed class VoiceRoomNamingTests
+{
+    private static readonly Guid Tenant = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid UserA = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    private static readonly Guid UserB = Guid.Parse("33333333-3333-3333-3333-333333333333");
+
+    [Fact]
+    public void ScopedRoom_IncludesTenantAndUser()
+    {
+        Assert.True(VoiceRoomNaming.TryScopedRoom(Tenant, UserA, "omni-room", out var room, out var error));
+        Assert.Null(error);
+        Assert.Equal($"{Tenant:N}-{UserA:N}-omni-room", room);
+    }
+
+    [Fact]
+    public void TwoUsersInOneTenant_NeverShareARoom()
+    {
+        Assert.True(VoiceRoomNaming.TryScopedRoom(Tenant, UserA, "omni-room", out var roomA, out _));
+        Assert.True(VoiceRoomNaming.TryScopedRoom(Tenant, UserB, "omni-room", out var roomB, out _));
+        Assert.NotEqual(roomA, roomB);
+    }
+
+    [Fact]
+    public void AgentRoom_MatchesTheRoomTheTokenEndpointWouldMint()
+    {
+        // THE regression: the agent must compute the same room name as the caller's token.
+        var options = new VoiceOptions
+        {
+            Room = "omni-room",
+            AgentTenantId = Tenant.ToString(),
+            AgentUserId = UserA.ToString(),
+        };
+
+        Assert.True(options.TryResolveAgentRoom(out var agentRoom, out var error));
+        Assert.Null(error);
+        Assert.True(VoiceRoomNaming.TryScopedRoom(Tenant, UserA, options.Room, out var callerRoom, out _));
+        Assert.Equal(callerRoom, agentRoom);
+        Assert.NotEqual(options.Room, agentRoom); // never the bare label it used to join
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not-a-guid")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    public void AgentRoom_WithoutAValidIdentity_IsRefusedWithAReason(string tenantId)
+    {
+        var options = new VoiceOptions { AgentTenantId = tenantId, AgentUserId = UserA.ToString() };
+
+        Assert.False(options.TryResolveAgentRoom(out var room, out var error));
+        Assert.Equal(string.Empty, room);
+        Assert.False(string.IsNullOrWhiteSpace(error));
+    }
+
+    [Fact]
+    public void Label_IsSanitizedAndDefaulted()
+    {
+        Assert.True(VoiceRoomNaming.TrySanitizeLabel(null, out var fallback, out _));
+        Assert.Equal(VoiceRoomNaming.DefaultLabel, fallback);
+
+        Assert.True(VoiceRoomNaming.TrySanitizeLabel("my room/../etc", out var safe, out _));
+        Assert.Equal("my-room-etc", safe);
+
+        // At the input cap the label is accepted but truncated to the bounded room-name length.
+        Assert.True(VoiceRoomNaming.TrySanitizeLabel(
+            new string('a', VoiceRoomNaming.MaxLabelInputLength), out var capped, out _));
+        Assert.Equal(VoiceRoomNaming.MaxSanitizedLabelLength, capped.Length);
+
+        Assert.False(VoiceRoomNaming.TrySanitizeLabel(
+            new string('a', VoiceRoomNaming.MaxLabelInputLength + 1), out _, out var tooLong));
+        Assert.False(string.IsNullOrWhiteSpace(tooLong));
+        Assert.False(VoiceRoomNaming.TrySanitizeLabel("///", out _, out var unusable));
+        Assert.False(string.IsNullOrWhiteSpace(unusable));
+    }
+
+    [Fact]
+    public void ScopedRoom_RequiresANonEmptyIdentity()
+    {
+        Assert.False(VoiceRoomNaming.TryScopedRoom(Guid.Empty, UserA, "r", out _, out var tenantError));
+        Assert.False(string.IsNullOrWhiteSpace(tenantError));
+        Assert.False(VoiceRoomNaming.TryScopedRoom(Tenant, Guid.Empty, "r", out _, out var userError));
+        Assert.False(string.IsNullOrWhiteSpace(userError));
+    }
+}
+
+/// <summary>
+/// One credential source. The token endpoint used to read <c>LiveKit:ApiKey/ApiSecret</c>
+/// while the hosted agent read <c>Voice:LiveKitApiKey/LiveKitApiSecret</c>, so configuring one
+/// left the other half of the feature dead with no diagnostic.
+/// </summary>
+public sealed class VoiceLiveKitCredentialsTests
+{
+    private static IConfiguration Config(params (string Key, string Value)[] entries) =>
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(entries.ToDictionary(e => e.Key, e => (string?)e.Value))
+            .Build();
+
+    [Fact]
+    public void SharedLiveKitBlock_ConfiguresTheAgentToo()
+    {
+        var config = Config(("LiveKit:Url", "ws://livekit:7880"), ("LiveKit:ApiKey", "k"), ("LiveKit:ApiSecret", "s"));
+
+        var resolved = VoiceLiveKitCredentials.Resolve(new VoiceOptions(), config);
+
+        Assert.True(resolved.IsConfigured);
+        Assert.True(resolved.CanJoin);
+        Assert.Equal("k", resolved.ApiKey);
+        Assert.Equal("s", resolved.ApiSecret);
+        Assert.Equal("ws://livekit:7880", resolved.Url);
+    }
+
+    [Fact]
+    public void VoiceKeys_ConfigureTheTokenEndpointToo_AndWinOnConflict()
+    {
+        var config = Config(("LiveKit:ApiKey", "shared"), ("LiveKit:ApiSecret", "shared-secret"));
+        var options = new VoiceOptions { LiveKitApiKey = "voice", LiveKitApiSecret = "voice-secret" };
+
+        var resolved = VoiceLiveKitCredentials.Resolve(options, config);
+
+        Assert.Equal("voice", resolved.ApiKey);
+        Assert.Equal("voice-secret", resolved.ApiSecret);
+    }
+
+    [Fact]
+    public void PartialOverride_FallsBackPerField()
+    {
+        var config = Config(("LiveKit:Url", "ws://shared:7880"), ("LiveKit:ApiKey", "k"), ("LiveKit:ApiSecret", "s"));
+        var options = new VoiceOptions { LiveKitUrl = "wss://voice.example/" };
+
+        var resolved = VoiceLiveKitCredentials.Resolve(options, config);
+
+        Assert.Equal("wss://voice.example/", resolved.Url);
+        Assert.Equal("k", resolved.ApiKey);
+        Assert.Equal("s", resolved.ApiSecret);
+    }
+
+    [Fact]
+    public void NothingConfigured_IsReportedAsUnconfigured_NotFabricated()
+    {
+        var resolved = VoiceLiveKitCredentials.Resolve(new VoiceOptions(), Config());
+
+        Assert.False(resolved.IsConfigured);
+        Assert.False(resolved.CanJoin);
+        Assert.Equal(string.Empty, resolved.ApiKey);
+    }
+
+    [Fact]
+    public void MissingUrl_CannotJoin_EvenWithCredentials()
+    {
+        var resolved = VoiceLiveKitCredentials.Resolve(
+            new VoiceOptions { LiveKitApiKey = "k", LiveKitApiSecret = "s" }, Config());
+
+        Assert.True(resolved.IsConfigured);
+        Assert.False(resolved.CanJoin);
+    }
+}
 
 /// <summary>
 /// Pure unit tests for the voice room agent's STT → LLM → TTS turn orchestration, driven

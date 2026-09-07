@@ -35,7 +35,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
         "  {\"action\":\"navigate\",\"url\":\"https://…\"}\n" +
         "  {\"action\":\"click\",\"ref\":<n>}            // prefer ref over x/y\n" +
         "  {\"action\":\"type\",\"ref\":<n>,\"text\":\"…\"}\n" +
-        "  {\"action\":\"key\",\"keys\":\"Enter\"}\n" +
+        "  {\"action\":\"key\",\"ref\":<n>,\"keys\":\"Enter\"}   // 'ref' is REQUIRED: name the element the keys go to\n" +
         "  {\"action\":\"scroll\",\"direction\":\"down\",\"amount\":3}\n" +
         "  {\"action\":\"wait\",\"ms\":500}\n" +
         "  {\"action\":\"screenshot\"}                    // re-observe without acting\n" +
@@ -67,6 +67,10 @@ public sealed class ComputerUseAgent : IComputerUseAgent
     // Logged at most once per process: warns that egress is not network-enforced when the
     // tool is enabled without an operator egress-restricted network (see GAP 2 remarks).
     private static int _egressNotEnforcedWarned;
+
+    // Logged at most once per process: warns when the session wall-clock cannot accommodate
+    // the per-step + per-approval budgets, so runs die at the wall clock for no visible reason.
+    private static int _timeBudgetWarned;
 
     public ComputerUseAgent(
         IComputerUseExecutor executor,
@@ -107,6 +111,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
         }
 
         WarnIfEgressNotNetworkEnforced();
+        WarnIfTimeBudgetsInconsistent();
 
         // Per-session wall-clock cap: a linked source that also fires on the configured budget.
         using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -442,6 +447,12 @@ public sealed class ComputerUseAgent : IComputerUseAgent
     /// element: <c>type</c>, <c>click</c>, <c>key</c>. <c>navigate</c> is host-gated
     /// (allowlist + SSRF) instead, and read-only ops (scroll / wait / screenshot) plus
     /// terminals (done / ask) need no target.
+    ///
+    /// <c>key</c> belongs here because a key press typed at whatever happens to be focused
+    /// could enter a credential character by character, around the <c>type</c> guard. The
+    /// parser therefore REQUIRES a <c>ref</c> on <c>key</c>, so a well-formed key press is
+    /// groundable, the safety guard can inspect its target, and pressing Enter is possible —
+    /// it used to be unrepresentable, which ended every session that tried it.
     /// </summary>
     private static bool RequiresGrounding(ComputerUseAction action) => action.Type
         is ComputerUseActionType.Type or ComputerUseActionType.Click or ComputerUseActionType.Key;
@@ -512,6 +523,25 @@ public sealed class ComputerUseAgent : IComputerUseAgent
             "⚠️ [ComputerUse] ComputerUse:NetworkName trống — egress KHÔNG được cưỡng chế ở tầng mạng. "
             + "Chỉ dựa vào allowlist máy chủ + thẩm định URL đích sau mỗi bước; hãy cấu hình một mạng "
             + "hạn chế egress (NetworkName) để phòng thủ đầy đủ trước redirect/subresource/websocket.");
+    }
+
+    /// <summary>
+    /// One-time WARNING (per process) that <see cref="ComputerUseOptions.SessionWallClockSeconds"/>
+    /// is smaller than the worst-case sum of the per-step and per-approval budgets, so at
+    /// least one step is guaranteed to be cancelled while a human is still legitimately
+    /// deciding. Warns only — never hard-fails; the caps themselves stay authoritative.
+    /// </summary>
+    private void WarnIfTimeBudgetsInconsistent()
+    {
+        if (_options.AreTimeBudgetsConsistent) return;
+        if (Interlocked.Exchange(ref _timeBudgetWarned, 1) != 0) return;
+        _logger.LogWarning(
+            "⚠️ [ComputerUse] Ngân sách thời gian không tương thích: SessionWallClockSeconds={Session}s "
+            + "nhỏ hơn mức tối đa cần thiết {WorstCase}s (MaxSteps={Steps} × (StepTimeoutSeconds={Step}s "
+            + "+ ApprovalTimeoutSeconds={Approval}s)). Phiên có thể bị huỷ ngay khi đang chờ người phê duyệt; "
+            + "hãy tăng SessionWallClockSeconds hoặc giảm ApprovalTimeoutSeconds/MaxSteps.",
+            _options.SessionWallClockSeconds, _options.WorstCaseSessionSeconds,
+            _options.MaxSteps, _options.StepTimeoutSeconds, _options.ApprovalTimeoutSeconds);
     }
 
     private IEnumerable<string> RenderStep(
@@ -657,7 +687,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
             ? JsonSerializer.Serialize(new { action = "click", @ref = r })
             : JsonSerializer.Serialize(new { action = "click", x = a.X, y = a.Y }),
         ComputerUseActionType.Type => JsonSerializer.Serialize(new { action = "type", @ref = a.Ref, text = a.Text }),
-        ComputerUseActionType.Key => JsonSerializer.Serialize(new { action = "key", keys = a.Keys }),
+        ComputerUseActionType.Key => JsonSerializer.Serialize(new { action = "key", @ref = a.Ref, keys = a.Keys }),
         _ => JsonSerializer.Serialize(new { action = a.Type.ToString().ToLowerInvariant() }),
     };
 
