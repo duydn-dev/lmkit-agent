@@ -13,18 +13,34 @@ namespace LmKitOmniApi.Application.AgentRuns;
 ///
 /// <para>
 /// <see cref="AwaitingApproval"/> is the only non-terminal resting state, and it is
-/// now BOUNDED. It is left by <c>AgentRunApprovalReconciler</c> when the gating
-/// <see cref="Domain.Entities.TaskApproval"/> is resolved — a human's approve
-/// resolves to <see cref="CompletedAfterApproval"/> (or <see cref="Failed"/> when the
-/// tool throws), a human's reject resolves to <see cref="Rejected"/>, and an approval
-/// that no human answers before its <c>ExpiresAtUtc</c> is swept to
-/// <see cref="Expired"/> by <c>ApprovalExpirySweeper</c>. With that last edge in
-/// place every run reaches a terminal state on its own; nothing parks here forever.
+/// BOUNDED. It is left by <c>AgentRunApprovalReconciler</c> when the gating
+/// <see cref="Domain.Entities.TaskApproval"/> is resolved — a human's reject resolves
+/// to <see cref="Rejected"/>, a tool that throws resolves to <see cref="Failed"/>, an
+/// approval nobody answers before its <c>ExpiresAtUtc</c> is swept to
+/// <see cref="Expired"/> by <c>ApprovalExpirySweeper</c>, and a human's approve hands
+/// the run back to <see cref="Running"/> to keep planning — or, when no continuation
+/// is possible, ends it at <see cref="CompletedAfterApproval"/>. Every run reaches a
+/// terminal state on its own; nothing parks here forever.
+/// </para>
+///
+/// <para>
+/// A resumed run can gate AGAIN and return to <see cref="AwaitingApproval"/>, so the
+/// lifecycle is a loop rather than a line. What bounds it is
+/// <c>AgentRunResumeOptions</c> (resumes per run, total steps per run), not the shape
+/// of the state machine.
 /// </para>
 /// </summary>
 public static class AgentRunStatuses
 {
-    /// <summary>Non-terminal: the ReAct loop is streaming.</summary>
+    /// <summary>
+    /// Non-terminal: the ReAct loop is streaming — or is queued to stream again after a
+    /// human's approval handed a parked run back to it. Deliberately one word for both:
+    /// they mean the same thing to anyone reading the status, namely "the agent is
+    /// working on this and is not waiting on you". WHICH of the two it is lives on
+    /// <see cref="Domain.Entities.AgentRun.ResumeState"/>, so the continuation machinery
+    /// can be precise without adding status vocabulary that existing readers (the run
+    /// list, the agent-run page's status pill) would render as unknown.
+    /// </summary>
     public const string Running = "Running";
 
     /// <summary>Terminal: the ReAct loop ran to completion and synthesized an answer.</summary>
@@ -40,16 +56,23 @@ public static class AgentRunStatuses
     public const string AwaitingApproval = "AwaitingApproval";
 
     /// <summary>
-    /// Terminal: a human approved the gated tool and it executed successfully. The
-    /// tool output is recorded as the run's last <see cref="Domain.Entities.AgentRunStep"/>
-    /// and appended to <see cref="Domain.Entities.AgentRun.Result"/>.
+    /// Terminal: a human approved the gated tool, it executed successfully, and the run
+    /// stopped there WITHOUT continuing to plan. The tool output is recorded as the run's
+    /// last <see cref="Domain.Entities.AgentRunStep"/> and appended to
+    /// <see cref="Domain.Entities.AgentRun.Result"/>.
     ///
     /// <para>
-    /// Deliberately NOT <see cref="Completed"/>: the ReAct loop is not resumed after
-    /// an approval (see <c>AgentRunApprovalReconciler</c> remarks), so the run ends
-    /// with the raw tool observation rather than a synthesized final answer. The
-    /// distinct status keeps that difference visible instead of pretending the agent
-    /// finished reasoning.
+    /// Reached in exactly three situations, all of them stated in the run's result rather
+    /// than left to be inferred: the process has no continuation worker registered, the
+    /// feature is switched off, or the run has spent its resume/step budget. When a
+    /// continuation IS possible the run goes to <see cref="Running"/> instead and ends at
+    /// <see cref="Completed"/> with a synthesized answer.
+    /// </para>
+    ///
+    /// <para>
+    /// Deliberately NOT <see cref="Completed"/>: this run ends on the raw tool
+    /// observation rather than on reasoning the agent finished. Keeping the two apart is
+    /// what stops a stopped run from reading as a completed one.
     /// </para>
     /// </summary>
     public const string CompletedAfterApproval = "CompletedAfterApproval";

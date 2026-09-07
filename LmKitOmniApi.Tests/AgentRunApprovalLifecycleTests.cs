@@ -26,6 +26,14 @@ namespace LmKitOmniApi.Tests;
 /// status with CompletedAtUtc set, both append a step, the approved output is
 /// persisted where the user can read it, a second approve of the same id can never
 /// execute the tool twice, and a plain chat approval is left completely alone.
+///
+/// <para><b>Still the contract, now for a specific host.</b> An approved gated call can
+/// since RESUME the run's ReAct loop (<c>AgentRunResumeService</c>) — but only where a
+/// continuation worker is registered. Every handler below is built WITHOUT one
+/// (<c>resumeQueue: null</c>), which is exactly what a host that never called
+/// <c>AddAgentRunResume</c> resolves, so this file remains the pin on the truthful
+/// terminal behaviour for that host and its assertions are unchanged. The resuming host
+/// is pinned separately by <see cref="AgentRunResumeTests"/>.</para>
 /// </summary>
 public sealed class AgentRunApprovalLifecycleTests : IDisposable
 {
@@ -278,8 +286,14 @@ public sealed class AgentRunApprovalLifecycleTests : IDisposable
     private ApproveTaskCommand Approve(Guid approvalId)
         => new() { TaskId = approvalId, TenantId = _tenantId, UserId = _userId };
 
+    /// <summary>
+    /// Explicitly the NO-CONTINUATION-WORKER host: a null queue is what a process that
+    /// never registered <c>AddAgentRunResume</c> resolves, and it is what keeps every
+    /// assertion in this file about the truthful terminal behaviour.
+    /// </summary>
     private ApproveTaskCommandHandler ApproveHandler()
-        => new(NewContext(), _orchestrator, _protector, NullLogger<ApproveTaskCommandHandler>.Instance);
+        => new(NewContext(), _orchestrator, _protector, NullLogger<ApproveTaskCommandHandler>.Instance,
+            resumeQueue: null);
 
     private RejectTaskCommandHandler RejectHandler()
         => new(NewContext(), _protector, NullLogger<RejectTaskCommandHandler>.Instance);
