@@ -108,10 +108,10 @@ public sealed class DeepResearchService
         }
 
         // ── Step 1: decompose (sub-question count ≤ min(3, maxSources)) ──
-        yield return "[THINKING]: 🔎 Đang phân rã câu hỏi thành các câu hỏi nghiên cứu nhỏ hơn...\\n";
+        yield return "[THINKING]: 🔎 Đang phân rã câu hỏi thành các câu hỏi nghiên cứu nhỏ hơn...\n";
         var maxSubQuestions = Math.Min(ResearchLimits.MaxSubQuestions, maxSources);
         var subQuestions = await DecomposeAsync(model, query, maxSubQuestions, ct, cancellationToken);
-        yield return $"[THINKING]: 🧩 Đã xác định {subQuestions.Count} câu hỏi phụ\\n";
+        yield return $"[THINKING]: 🧩 Đã xác định {subQuestions.Count} câu hỏi phụ\n";
 
         // ── Step 2: search (dedupe URLs across sub-questions) ──
         var candidates = new List<(string Url, string Title)>();
@@ -119,7 +119,7 @@ public sealed class DeepResearchService
         foreach (var subQuestion in subQuestions)
         {
             if (ct.IsCancellationRequested) break;
-            yield return $"[THINKING]: 🔎 Đang tìm kiếm \"{subQuestion}\"...\\n";
+            yield return $"[THINKING]: 🔎 Đang tìm kiếm \"{subQuestion}\"...\n";
             var hits = await SearchAsync(subQuestion, ct, cancellationToken);
             foreach (var hit in hits.Take(ResearchLimits.MaxUrlsPerSubQuestion))
             {
@@ -128,7 +128,7 @@ public sealed class DeepResearchService
                     candidates.Add((uri.AbsoluteUri, hit.Title ?? uri.Host));
             }
         }
-        yield return $"[THINKING]: 🌐 Tìm thấy {candidates.Count} địa chỉ nguồn tiềm năng\\n";
+        yield return $"[THINKING]: 🌐 Tìm thấy {candidates.Count} địa chỉ nguồn tiềm năng\n";
 
         // ── Step 3: fetch (SSRF-gated, bounded-parallel, per-source skip on failure) ──
         // Fetches run concurrently with bounded parallelism — sequential fetching of
@@ -140,7 +140,7 @@ public sealed class DeepResearchService
         // maxSources successful sources are kept. Determinism is restored by ordering
         // the kept sources by their original candidate index before synthesis.
         var attemptCandidates = candidates.Take(ResearchLimits.MaxTotalFetchAttempts).ToList();
-        yield return $"[THINKING]: 📖 Đang đọc song song {attemptCandidates.Count} nguồn tiềm năng...\\n";
+        yield return $"[THINKING]: 📖 Đang đọc song song {attemptCandidates.Count} nguồn tiềm năng...\n";
 
         using var fetchGate = new SemaphoreSlim(MaxParallelFetches);
         var fetchTasks = attemptCandidates
@@ -190,8 +190,8 @@ public sealed class DeepResearchService
 
         var skippedCount = attemptCandidates.Count - successfulSources.Count;
         if (skippedCount > 0)
-            yield return $"[THINKING]: ⚠️ Đã bỏ qua {skippedCount} nguồn không đọc được\\n";
-        yield return $"[THINKING]: 📚 Đã thu thập được {sources.Count} nguồn khả dụng\\n";
+            yield return $"[THINKING]: ⚠️ Đã bỏ qua {skippedCount} nguồn không đọc được\n";
+        yield return $"[THINKING]: 📚 Đã thu thập được {sources.Count} nguồn khả dụng\n";
 
         if (sources.Count == 0)
         {
@@ -200,7 +200,7 @@ public sealed class DeepResearchService
         }
 
         // ── Step 4: synthesize (streamed; blocking Submit on a dedicated thread) ──
-        yield return $"[THINKING]: ✍️ Đang tổng hợp báo cáo từ {sources.Count} nguồn...\\n";
+        yield return $"[THINKING]: ✍️ Đang tổng hợp báo cáo từ {sources.Count} nguồn...\n";
 
         var synthesisLease = await TryAcquireChatLeaseAsync(ct, cancellationToken);
         if (synthesisLease is null)
@@ -327,7 +327,7 @@ public sealed class DeepResearchService
         }
 
         // ── Step 5: persist to Canvas ──
-        yield return "[THINKING]: 💾 Đang lưu báo cáo vào Canvas...\\n";
+        yield return "[THINKING]: 💾 Đang lưu báo cáo vào Canvas...\n";
         var rootId = await PersistReportAsync(tenantId, userId, query, report, cancellationToken);
         if (rootId is Guid savedRootId)
         {
@@ -335,7 +335,7 @@ public sealed class DeepResearchService
         }
         else
         {
-            yield return "[THINKING]: ⚠️ Không thể lưu báo cáo vào Canvas (báo cáo vẫn hiển thị ở trên)\\n";
+            yield return "[THINKING]: ⚠️ Không thể lưu báo cáo vào Canvas (báo cáo vẫn hiển thị ở trên)\n";
         }
     }
 

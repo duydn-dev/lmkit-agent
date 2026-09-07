@@ -102,7 +102,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
 
         if (!IsEnabled)
         {
-            yield return "[THINKING]: ⚠️ Công cụ điều khiển trình duyệt chưa được bật.\\n";
+            yield return "[THINKING]: ⚠️ Công cụ điều khiển trình duyệt chưa được bật.\n";
             yield break;
         }
 
@@ -126,7 +126,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
             //    allowlist + SSRF gated by the executor, but not approval-gated) ──
             if (!string.IsNullOrWhiteSpace(request.StartUrl))
             {
-                yield return $"[THINKING]: 🌐 Mở trang bắt đầu: {request.StartUrl}\\n";
+                yield return $"[THINKING]: 🌐 Mở trang bắt đầu: {request.StartUrl}\n";
                 var navAction = new ComputerUseAction { Type = ComputerUseActionType.Navigate, Url = request.StartUrl };
                 var (startObs, cancelled) = await TryStepAsync(navAction, request, sessionDir, sct);
                 if (cancelled) yield break;
@@ -137,7 +137,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                 foreach (var marker in RenderStep(ordinal, navAction, observation, request)) yield return marker;
                 if (observation.IsError)
                 {
-                    yield return $"[THINKING]: ⚠️ Không mở được trang bắt đầu: {observation.Error}\\n";
+                    yield return $"[THINKING]: ⚠️ Không mở được trang bắt đầu: {observation.Error}\n";
                     yield break; // cannot proceed without a page
                 }
 
@@ -147,7 +147,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                 {
                     _logger.LogWarning("🔒 [ComputerUse] Dừng phiên — trang đích sau điều hướng không hợp lệ: {Reason}", startLanding);
                     await AuditAsync(request, navAction, "refused_offsite");
-                    yield return $"[THINKING]: 🔒 {startLanding} — dừng phiên để đảm bảo an toàn.\\n";
+                    yield return $"[THINKING]: 🔒 {startLanding} — dừng phiên để đảm bảo an toàn.\n";
                     yield return "Trang hiện tại đã rời khỏi phạm vi cho phép. Tôi dừng lại để đảm bảo an toàn.";
                     yield break;
                 }
@@ -158,7 +158,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
             {
                 if (sct.IsCancellationRequested)
                 {
-                    yield return "[THINKING]: ⏹️ Phiên vượt quá thời gian cho phép — dừng lại.\\n";
+                    yield return "[THINKING]: ⏹️ Phiên vượt quá thời gian cho phép — dừng lại.\n";
                     yield break;
                 }
 
@@ -172,14 +172,14 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                     await DecideGroundedAsync(request, observation, history, screenshotPath, sct);
                 if (!decided)
                 {
-                    yield return "[THINKING]: ⚠️ Không lấy được hành động từ mô hình — dừng lại.\\n";
+                    yield return "[THINKING]: ⚠️ Không lấy được hành động từ mô hình — dừng lại.\n";
                     yield break;
                 }
                 if (groundingRetries > 0 && action is not null)
-                    yield return $"[THINKING]: ↻ Mô hình tự chỉnh lại hành động sau {groundingRetries} lần nhắc định vị.\\n";
+                    yield return $"[THINKING]: ↻ Mô hình tự chỉnh lại hành động sau {groundingRetries} lần nhắc định vị.\n";
                 if (action is null)
                 {
-                    yield return $"[THINKING]: ⚠️ Không phân tích được hành động ({parseError}) — thử lại.\\n";
+                    yield return $"[THINKING]: ⚠️ Không phân tích được hành động ({parseError}) — thử lại.\n";
                     history.Add($"invalid action rejected: {parseError}");
                     TrimHistory(history);
                     continue; // a malformed action still consumes a step, so the loop can't spin forever
@@ -191,7 +191,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                 {
                     _logger.LogWarning("🛑 [ComputerUse] Từ chối hành động nhạy cảm: {Reason}", refusal);
                     await AuditAsync(request, action, "refused_handoff");
-                    yield return $"[THINKING]: 🛑 {refusal}\\n";
+                    yield return $"[THINKING]: 🛑 {refusal}\n";
                     yield return "Tôi không thể tự thực hiện bước này (nhập thông tin đăng nhập/thanh toán hoặc giải CAPTCHA). "
                                  + "Vui lòng tự thao tác bước đó rồi yêu cầu tôi tiếp tục.";
                     yield break;
@@ -208,7 +208,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                 {
                     _logger.LogWarning("🛑 [ComputerUse] Từ chối hành động không định vị được phần tử: {Action}", action.Describe());
                     await AuditAsync(request, action, "refused_ungroundable");
-                    yield return "[THINKING]: 🛑 Không xác định được phần tử mục tiêu cho hành động này — chuyển giao cho con người.\\n";
+                    yield return "[THINKING]: 🛑 Không xác định được phần tử mục tiêu cho hành động này — chuyển giao cho con người.\n";
                     yield return "Tôi không thể tự thực hiện thao tác này vì không xác định được chính xác phần tử mục tiêu trong trang "
                                  + "(có thể là ô nhập thông tin đăng nhập/thanh toán hoặc CAPTCHA). "
                                  + "Vui lòng tự thao tác bước đó rồi yêu cầu tôi tiếp tục.";
@@ -219,14 +219,14 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                 if (action.Type == ComputerUseActionType.Done)
                 {
                     await AuditAsync(request, action, "done");
-                    yield return "[THINKING]: ✅ Đã hoàn tất nhiệm vụ.\\n";
+                    yield return "[THINKING]: ✅ Đã hoàn tất nhiệm vụ.\n";
                     if (!string.IsNullOrWhiteSpace(action.Summary)) yield return action.Summary!;
                     yield break;
                 }
                 if (action.Type == ComputerUseActionType.Ask)
                 {
                     await AuditAsync(request, action, "ask");
-                    yield return "[THINKING]: ❓ Cần con người hỗ trợ.\\n";
+                    yield return "[THINKING]: ❓ Cần con người hỗ trợ.\n";
                     if (!string.IsNullOrWhiteSpace(action.Question)) yield return action.Question!;
                     yield break;
                 }
@@ -236,7 +236,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                 {
                     _logger.LogWarning("🔒 [ComputerUse] Điều hướng bị chặn (không nằm trong allowlist): {Url}", action.Url);
                     await AuditAsync(request, action, "navigation_denied");
-                    yield return $"[THINKING]: 🔒 Điều hướng tới '{action.Url}' không được phép (ngoài danh sách cho phép).\\n";
+                    yield return $"[THINKING]: 🔒 Điều hướng tới '{action.Url}' không được phép (ngoài danh sách cho phép).\n";
                     history.Add($"navigation to {action.Url} refused (not allowlisted)");
                     TrimHistory(history);
                     continue;
@@ -247,7 +247,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                 {
                     var approvalId = Guid.NewGuid();
                     yield return $"[HITL_APPROVAL_REQUIRED:{approvalId}]";
-                    yield return $"[THINKING]: ⏳ Chờ phê duyệt: {action.Describe()}\\n";
+                    yield return $"[THINKING]: ⏳ Chờ phê duyệt: {action.Describe()}\n";
 
                     var request2 = new ComputerUseApprovalRequest(
                         approvalId, request.TenantId, request.UserId, request.SessionId,
@@ -257,7 +257,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                     if (!approved)
                     {
                         await AuditAsync(request, action, "not_approved");
-                        yield return "[THINKING]: 🚫 Hành động không được phê duyệt — dừng lại.\\n";
+                        yield return "[THINKING]: 🚫 Hành động không được phê duyệt — dừng lại.\n";
                         yield break;
                     }
                 }
@@ -283,7 +283,7 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                     await CaptureGroundingSampleAsync(request, action, groundingPreObservation);
                 foreach (var marker in RenderStep(ordinal, action, observation, request)) yield return marker;
                 if (observation.IsError)
-                    yield return $"[THINKING]: ⚠️ {observation.Error}\\n";
+                    yield return $"[THINKING]: ⚠️ {observation.Error}\n";
 
                 // ── Post-navigation re-validation: a link click / JS nav / redirect can leave the
                 //    page on a host the initial allowlist + SSRF check never saw. Re-vet where we
@@ -294,13 +294,13 @@ public sealed class ComputerUseAgent : IComputerUseAgent
                 {
                     _logger.LogWarning("🔒 [ComputerUse] Dừng phiên — trang rời allowlist/SSRF sau bước: {Reason}", landing);
                     await AuditAsync(request, action, "refused_offsite");
-                    yield return $"[THINKING]: 🔒 {landing} — dừng phiên để đảm bảo an toàn.\\n";
+                    yield return $"[THINKING]: 🔒 {landing} — dừng phiên để đảm bảo an toàn.\n";
                     yield return "Trang hiện tại đã rời khỏi phạm vi cho phép. Tôi dừng lại để đảm bảo an toàn.";
                     yield break;
                 }
             }
 
-            yield return $"[THINKING]: ⏹️ Đã đạt giới hạn {_options.MaxSteps} bước — dừng lại.\\n";
+            yield return $"[THINKING]: ⏹️ Đã đạt giới hạn {_options.MaxSteps} bước — dừng lại.\n";
         }
         finally
         {
