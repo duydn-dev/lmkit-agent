@@ -317,9 +317,15 @@ public abstract class DocumentsApiFactoryBase : WebApplicationFactory<Program>
     protected abstract bool DocumentToolsEnabled { get; }
     protected virtual long MaxInputBytes => 25L * 1024 * 1024;
 
-    /// <summary>Per-host key ring — see the note on <c>LmKitApiFactory</c>.</summary>
-    private readonly string _dataProtectionKeyPath =
-        Path.Combine(Path.GetTempPath(), $"lmkit-tests-dpkeys-{Guid.NewGuid():N}");
+    /// <summary>
+    /// Per-host key ring — see <see cref="TestHostConfiguration.NewDataProtectionKeyPath"/>.
+    /// Exposed for the same reason as on <c>LmKitApiFactory</c>: a host derived from this one
+    /// must nest its own ring inside this directory rather than inherit it.
+    /// </summary>
+    private readonly string _dataProtectionKeyPath = TestHostConfiguration.NewDataProtectionKeyPath();
+
+    /// <inheritdoc cref="_dataProtectionKeyPath"/>
+    internal string DataProtectionKeyPath => _dataProtectionKeyPath;
 
     /// <summary>Named shared-cache in-memory db — see the note on <c>LmKitApiFactory</c>.</summary>
     private readonly string _databaseName = $"lmkit-tests-{Guid.NewGuid():N}";
@@ -342,7 +348,7 @@ public abstract class DocumentsApiFactoryBase : WebApplicationFactory<Program>
         // Host configuration, the same single layer LmKitApiFactory uses — see
         // TestHostConfiguration for why this host has no ConfigureAppConfiguration layer.
         var settings = TestHostConfiguration.SharedDefaults();
-        settings["DataProtection:KeyPath"] = _dataProtectionKeyPath;
+        settings[TestHostConfiguration.DataProtectionKeyPathSetting] = _dataProtectionKeyPath;
         TestHostConfiguration.Apply(builder, settings);
         builder.ConfigureServices(services =>
         {

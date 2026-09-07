@@ -54,6 +54,63 @@ internal static class TestHostConfiguration
         ["AiModels:RequireChatModelReady"] = "false"
     };
 
+    /// <summary>The one setting that must never be shared between two live hosts.</summary>
+    public const string DataProtectionKeyPathSetting = "DataProtection:KeyPath";
+
+    /// <summary>
+    /// Mints a data-protection key-ring directory that no other host will ever open.
+    ///
+    /// <para><b>Why per host.</b> <c>Program.cs</c> reads
+    /// <see cref="DataProtectionKeyPathSetting"/> in a top-level statement and defaults it
+    /// to <c>&lt;content root&gt;/App_Data/DataProtectionKeys</c> — ONE directory shared by
+    /// every factory in the process. Under real parallelism several hosts create and read
+    /// that key ring at the same time, and a host that reads a half-written key XML fails
+    /// its first protected operation, which surfaces as a 500 on login and takes the whole
+    /// fixture with it. Reproduced at <c>xUnit.MaxParallelThreads=32</c>.</para>
+    ///
+    /// <para><b>Why a DERIVED host needs its own.</b> <c>WithWebHostBuilder</c> replays the
+    /// parent's <c>ConfigureWebHost</c> — including the parent's key path — and then layers
+    /// the derived overrides on top. A derived host that does not override this setting
+    /// therefore runs a SECOND host on the parent's key ring, which is precisely the
+    /// configuration the per-host path was introduced to eliminate; the parent factory is a
+    /// long-lived class/collection fixture, so the two are live at the same time by
+    /// construction.</para>
+    ///
+    /// <para>Passing <paramref name="parentKeyPath"/> nests the new ring INSIDE the parent's
+    /// directory. That is deliberate and does two things at once: the directories are
+    /// distinct (<c>FileSystemXmlRepository</c> enumerates <c>*.xml</c> in its own directory
+    /// only, never a subdirectory, so neither host can see the other's keys), and the
+    /// parent's <c>Dispose</c> — which deletes its directory recursively — also cleans up
+    /// every ring derived from it, so no derived host leaks a temp directory.</para>
+    /// </summary>
+    public static string NewDataProtectionKeyPath(string? parentKeyPath = null)
+        => Path.Combine(
+            string.IsNullOrWhiteSpace(parentKeyPath) ? Path.GetTempPath() : parentKeyPath,
+            $"lmkit-tests-dpkeys-{Guid.NewGuid():N}");
+
+    /// <summary>
+    /// Host configuration for a host DERIVED from <paramref name="parentKeyPath"/>'s factory
+    /// via <c>WithWebHostBuilder</c>. Identical to <see cref="Apply"/> except that it also
+    /// gives the derived host its own key ring unless the caller deliberately named one —
+    /// the single thing a derived host must not inherit. Call it instead of
+    /// <see cref="Apply"/> from EVERY <c>WithWebHostBuilder</c> callback;
+    /// <c>DerivedTestHostIsolationTests</c> is what keeps that true.
+    /// </summary>
+    public static void ApplyDerived(
+        IWebHostBuilder builder,
+        string parentKeyPath,
+        IEnumerable<KeyValuePair<string, string?>> settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        var merged = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in settings) merged[key] = value;
+        if (!merged.ContainsKey(DataProtectionKeyPathSetting))
+            merged[DataProtectionKeyPathSetting] = NewDataProtectionKeyPath(parentKeyPath);
+
+        Apply(builder, merged);
+    }
+
     /// <summary>
     /// Writes <paramref name="settings"/> as host configuration. Later keys overwrite
     /// earlier ones, including across calls, so a factory can apply its defaults first

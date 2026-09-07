@@ -253,18 +253,28 @@ import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import {
-  findApprovalChatSession,
+  resolveApprovalChatSession,
   streamApprovedContinuation,
   submitApprovalDecision
 } from '@/composables/useTaskApproval';
 
-/** A pending approval as returned by GET /api/taskapproval/pending. */
+/**
+ * A pending approval as returned by GET /api/taskapproval/pending.
+ *
+ * The three `chatSession*`/`isChatSession` fields say where an approved result
+ * belongs. They are optional so the page keeps working against an API that does not
+ * project them yet — `resolveApprovalChatSession` then falls back to the content
+ * search, which is what this page used to do unconditionally.
+ */
 interface PendingApproval {
   id: string;
   actionName: string;
   details?: string;
   createdAtUtc: string;
   expiresAtUtc?: string;
+  chatSessionId?: string;
+  isChatSession?: boolean;
+  chatSessionTitle?: string;
 }
 
 /**
@@ -310,6 +320,9 @@ const toRow = (item: PendingApproval): ApprovalRow => ({
   details: item.details,
   createdAtUtc: item.createdAtUtc,
   expiresAtUtc: item.expiresAtUtc,
+  chatSessionId: item.chatSessionId,
+  isChatSession: item.isChatSession,
+  chatSessionTitle: item.chatSessionTitle,
   busyAction: null,
   error: '',
   done: false,
@@ -372,6 +385,9 @@ const loadPending = async (reset: boolean) => {
  * from here — same prompt, same endpoint — so the transcript is identical no
  * matter which surface the user approved from. Every outcome other than "written"
  * is stated on the card rather than hidden behind the success badge.
+ *
+ * The session comes from the pending row itself; `resolveApprovalChatSession`
+ * only searches when the API did not say.
  */
 const writeResultToConversation = async (row: ApprovalRow): Promise<void> => {
   row.continuation = 'running';
@@ -379,7 +395,7 @@ const writeResultToConversation = async (row: ApprovalRow): Promise<void> => {
   row.continuationAnswer = '';
   row.followUpApprovalId = '';
 
-  const session = await findApprovalChatSession(row.id);
+  const session = await resolveApprovalChatSession(row);
   if (!session) {
     row.continuation = 'skipped';
     return;

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  approvalChatSessionFromRow,
   approvalContinuationPrompt,
   approvalFailureMessage,
   approvalIdFromMarkerText,
@@ -7,6 +8,7 @@ import {
   findApprovalChatSession,
   isApprovalId,
   isSettledStatus,
+  resolveApprovalChatSession,
   streamApprovedContinuation,
   submitApprovalDecision
 } from './useTaskApproval';
@@ -259,6 +261,80 @@ describe('findApprovalChatSession', () => {
   it('returns null instead of throwing when the search fails', async () => {
     installFetch(() => Promise.reject(new Error('offline')));
     expect(await findApprovalChatSession(APPROVAL_ID)).toBeNull();
+  });
+});
+
+// --- The session the pending row itself names -------------------------------
+
+describe('approvalChatSessionFromRow', () => {
+  it('reads the session straight off a row that carries one', () => {
+    expect(approvalChatSessionFromRow({
+      id: APPROVAL_ID,
+      chatSessionId: SESSION_ID,
+      isChatSession: true,
+      chatSessionTitle: 'Báo cáo doanh thu'
+    })).toEqual({ id: SESSION_ID, title: 'Báo cáo doanh thu' });
+  });
+
+  it('tolerates a session with no title', () => {
+    expect(approvalChatSessionFromRow({
+      id: APPROVAL_ID, chatSessionId: SESSION_ID, isChatSession: true
+    })).toEqual({ id: SESSION_ID, title: '' });
+  });
+
+  it('says "no conversation" for an agent-run or temporary-chat approval', () => {
+    // isChatSession:false is the API stating the two cases the content search used
+    // to express by finding nothing: a hidden IsAgentRun substrate and an
+    // IsEphemeral chat. Both carry a real ChatSessionId, which is exactly why the
+    // raw id alone cannot be trusted.
+    expect(approvalChatSessionFromRow({
+      id: APPROVAL_ID, chatSessionId: SESSION_ID, isChatSession: false
+    })).toBeNull();
+  });
+
+  it('says "server did not tell me" when the fields are absent', () => {
+    expect(approvalChatSessionFromRow({ id: APPROVAL_ID })).toBeUndefined();
+  });
+
+  it('refuses a row that claims a chat session but names no usable id', () => {
+    // Half a truth is not a session to post an approval result into.
+    for (const chatSessionId of [
+      undefined, '', '   ', 'not-a-guid', '00000000-0000-0000-0000-000000000000'
+    ]) {
+      expect(approvalChatSessionFromRow({ id: APPROVAL_ID, chatSessionId, isChatSession: true }))
+        .toBeUndefined();
+    }
+  });
+});
+
+describe('resolveApprovalChatSession', () => {
+  it('uses the row and never touches the network', async () => {
+    const { fetchMock } = installFetch(() => json([{ id: 'zzz', title: 'wrong session' }]));
+
+    const session = await resolveApprovalChatSession({
+      id: APPROVAL_ID, chatSessionId: SESSION_ID, isChatSession: true, chatSessionTitle: 'Đúng'
+    });
+
+    expect(session).toEqual({ id: SESSION_ID, title: 'Đúng' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not search for an approval the row says has no conversation', async () => {
+    const { fetchMock } = installFetch(() => json([{ id: SESSION_ID, title: 'bất kỳ' }]));
+
+    expect(await resolveApprovalChatSession({
+      id: APPROVAL_ID, chatSessionId: SESSION_ID, isChatSession: false
+    })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('degrades to the content search against a server without the fields', async () => {
+    const { calls } = installFetch(() => json([{ id: SESSION_ID, title: 'Tìm bằng marker' }]));
+
+    const session = await resolveApprovalChatSession({ id: APPROVAL_ID });
+
+    expect(session).toEqual({ id: SESSION_ID, title: 'Tìm bằng marker' });
+    expect(calls[0].url).toBe(`/api/chat/sessions/search?q=${APPROVAL_ID}`);
   });
 });
 

@@ -300,9 +300,17 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
     /// top-level statements can see — see <see cref="TestHostConfiguration"/>, which is now
     /// how EVERY setting on this host is written, including
     /// <see cref="ConfigurationOverrides"/>.
+    ///
+    /// Exposed as <see cref="DataProtectionKeyPath"/> so a host derived from this factory can
+    /// be given its OWN ring nested inside this one — <c>WithWebHostBuilder</c> replays this
+    /// method and would otherwise hand the derived host the same directory, re-creating the
+    /// shared-ring race one call away. See
+    /// <see cref="TestHostConfiguration.NewDataProtectionKeyPath"/>.
     /// </summary>
-    private readonly string _dataProtectionKeyPath =
-        Path.Combine(Path.GetTempPath(), $"lmkit-tests-dpkeys-{Guid.NewGuid():N}");
+    private readonly string _dataProtectionKeyPath = TestHostConfiguration.NewDataProtectionKeyPath();
+
+    /// <inheritdoc cref="_dataProtectionKeyPath"/>
+    internal string DataProtectionKeyPath => _dataProtectionKeyPath;
 
     /// <summary>
     /// A NAMED shared-cache in-memory database, not a single shared <see cref="SqliteConnection"/>
@@ -334,7 +342,7 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
         builder.UseEnvironment("Testing");
 
         var settings = TestHostConfiguration.SharedDefaults();
-        settings["DataProtection:KeyPath"] = _dataProtectionKeyPath;
+        settings[TestHostConfiguration.DataProtectionKeyPathSetting] = _dataProtectionKeyPath;
         // These two are read by Program.cs BEFORE builder.Build() and are the reason the
         // seam matters: while they were layered as app configuration the window stayed at
         // the appsettings default of 60s no matter what this said — measured through the

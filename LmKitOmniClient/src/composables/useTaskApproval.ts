@@ -248,20 +248,86 @@ export interface ApprovalChatSession {
   title: string;
 }
 
+/** All-zero GUID, which is how `System.Text.Json` serializes an unset `Guid`. */
+const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * The three fields `GET /api/taskapproval/pending` carries about the conversation an
+ * approval belongs to. All optional: a server that predates them simply omits them,
+ * and {@link resolveApprovalChatSession} falls back to the content search.
+ */
+export interface ApprovalSessionFields {
+  /** The approval's own id — the search term for the fallback path. */
+  id: string;
+  /** `TaskApproval.ChatSessionId`, straight off the row. */
+  chatSessionId?: string | null;
+  /**
+   * True when {@link chatSessionId} names a session the user can actually open and
+   * continue. False for the two substrates that carry a real ChatSessionId but are
+   * excluded from every chat list and search: the hidden `IsAgentRun` session behind
+   * an agent run or a computer-use gate, and a temporary (`IsEphemeral`) chat.
+   */
+  isChatSession?: boolean | null;
+  /** Title of that session; only meaningful when {@link isChatSession}. */
+  chatSessionTitle?: string | null;
+}
+
+/**
+ * The conversation to write an approved result into, straight off the pending row.
+ *
+ * Returns null when the row states there is no such conversation — no request is
+ * made in that case, which is the whole point: an agent-run or temporary-chat
+ * approval is answered without a speculative search.
+ *
+ * Returns undefined when the row says nothing, i.e. the server has not (yet) grown
+ * the fields. The caller then uses {@link findApprovalChatSession}.
+ */
+export function approvalChatSessionFromRow(
+  row: ApprovalSessionFields
+): ApprovalChatSession | null | undefined {
+  if (row.isChatSession === false) return null;
+  if (row.isChatSession !== true) return undefined;
+
+  const id = typeof row.chatSessionId === 'string' ? row.chatSessionId.trim() : '';
+  // A row that claims to be a chat session but carries no usable id contradicts
+  // itself; treat it as "server said nothing" rather than trusting half of it.
+  if (!isApprovalId(id) || id === EMPTY_GUID) return undefined;
+
+  return { id, title: typeof row.chatSessionTitle === 'string' ? row.chatSessionTitle : '' };
+}
+
+/**
+ * The one call a surface makes to learn where an approved result should go.
+ *
+ * Prefers the row's own `chatSessionId` — the id is already on `task_approvals` and
+ * needs no guesswork. {@link findApprovalChatSession} is the fallback for a server
+ * that does not yet project those fields, and can be deleted along with this branch
+ * once every deployed API carries them.
+ */
+export async function resolveApprovalChatSession(
+  row: ApprovalSessionFields
+): Promise<ApprovalChatSession | null> {
+  const fromRow = approvalChatSessionFromRow(row);
+  if (fromRow !== undefined) return fromRow;
+  return findApprovalChatSession(row.id);
+}
+
 /**
  * Finds the chat session an approval was raised in, by searching message content
  * for the `[HITL_APPROVAL_REQUIRED:{id}]` marker the orchestrator emitted and the
  * chat handler persisted with the assistant turn.
  *
- * This is a lookup the API does not offer directly: `GET /api/taskapproval/pending`
- * projects `ActionName`/`Details`/`CreatedAtUtc` and deliberately not the row's
- * `ChatSessionId`. The content search is exact enough to stand in — the term is a
- * GUID, so a match is the session that raised this very approval.
+ * TRANSITIONAL: only reached when the pending row omits the fields
+ * {@link approvalChatSessionFromRow} reads. It is fragile in exactly the ways a
+ * derived lookup is — it breaks if the marker text changes, if the message is edited
+ * or trimmed, and it finds nothing for a session that persists no messages — which is
+ * why the row's own `ChatSessionId` supersedes it.
  *
  * Returns null (not an error) for the two cases where there is legitimately nothing
  * to continue: the search endpoint excludes agent-run sessions — those resolve
  * themselves through the reconciler and are surfaced on the agent-run page — and
- * temporary chats, which persist no messages to match against.
+ * temporary chats, which persist no messages to match against. Those are the same two
+ * cases `isChatSession: false` names directly.
  */
 export async function findApprovalChatSession(approvalId: string): Promise<ApprovalChatSession | null> {
   if (!isApprovalId(approvalId)) return null;
