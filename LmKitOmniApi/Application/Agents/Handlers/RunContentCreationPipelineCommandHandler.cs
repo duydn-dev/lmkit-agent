@@ -86,7 +86,7 @@ Include: A compelling title, Introduction, 3-5 main sections, Key points, Conclu
                             request.UserRole,
                             "SearchWeb",
                             query,
-                            token => _webSearch.SearchWebAsync(query, count: 5, token),
+                            async token => (await _webSearch.SearchWebAsync(query, count: 5, token)).ToToolOutput(),
                             ct);
                         if (!execution.IsSuccess) throw new InvalidOperationException(execution.ErrorMessage);
                         return execution.Output;

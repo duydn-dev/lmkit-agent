@@ -33,12 +33,23 @@ public sealed class ComputerUseModel : IComputerUseModel
         _logger = logger;
     }
 
+    /// <summary>
+    /// Asks the vision model for exactly one next action.
+    ///
+    /// EVERY native handle opened here is disposed on the way out. The conversation, the
+    /// grammar and the screenshot attachment are all <see cref="IDisposable"/>, and this
+    /// method runs once per step, once per grounding retry (up to
+    /// <c>ComputerUse:GroundingRetries</c> + 1) and once per grounding-eval case (a batch can
+    /// be hundreds) — leaking two or three handles per call exhausted native resources long
+    /// before a run finished. Generation uses <c>SubmitAsync</c> so the request thread is
+    /// never blocked on the native call.
+    /// </summary>
     public async Task<string> DecideNextActionAsync(ComputerUsePrompt prompt, CancellationToken ct = default)
     {
         var visionModel = await _modelManager.GetVisionModelAsync(ct: ct);
         await using var lease = await _modelManager.AcquireVisionInferenceAsync(ct);
 
-        var chat = new MultiTurnConversation(visionModel)
+        using var chat = new MultiTurnConversation(visionModel)
         {
             SystemPrompt = prompt.SystemPrompt,
             MaximumCompletionTokens = MaxCompletionTokens,
@@ -48,39 +59,49 @@ public sealed class ComputerUseModel : IComputerUseModel
         // elements, to the REAL ref set) so a malformed / hallucinated-ref action cannot even be
         // sampled. Fail-safe — if LM-Kit rejects the schema, fall back to free generation (the
         // loop's self-correction retry + fail-closed grounding gate still protect).
-        if (_options.ConstrainedDecoding)
-        {
-            try
-            {
-                var refs = prompt.Observation.Elements.Select(element => element.Ref).ToList();
-                chat.Grammar = Grammar.CreateJsonGrammarFromJsonSchema(ComputerUseActionGrammar.BuildActionSchema(refs));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "⚠️ [ComputerUse] Không dựng được grammar ràng buộc — sinh tự do (retry + grounding gate vẫn bảo vệ).");
-            }
-        }
+        // `using` on a null Grammar is a no-op, so the fallback path allocates nothing.
+        using var grammar = TryBuildGrammar(prompt);
+        if (grammar is not null) chat.Grammar = grammar;
 
         var userText = BuildUserMessage(prompt);
 
         // Use only the LM-Kit overloads the rest of the app already relies on: a
-        // (text, attachment) Message for the vision turn, or a plain text Submit when no
+        // (text, attachment) Message for the vision turn, or a plain text submit when no
         // screenshot was captured.
         string? completion;
         if (!string.IsNullOrEmpty(prompt.ScreenshotPath) && System.IO.File.Exists(prompt.ScreenshotPath))
         {
-            var attachment = new LMKit.Data.Attachment(prompt.ScreenshotPath);
+            using var attachment = new LMKit.Data.Attachment(prompt.ScreenshotPath);
             var message = new ChatHistory.Message(userText, attachment);
-            completion = chat.Submit(message, ct).Completion;
+            completion = (await chat.SubmitAsync(message, ct)).Completion;
         }
         else
         {
-            completion = chat.Submit(userText, ct).Completion;
+            completion = (await chat.SubmitAsync(userText, ct)).Completion;
         }
 
         _logger.LogInformation("🧠 [ComputerUse] Mô hình đề xuất hành động tiếp theo ({Chars} ký tự).",
             completion?.Length ?? 0);
         return completion ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Builds the constrained-decoding grammar, or null when constrained decoding is off or
+    /// LM-Kit rejects the schema. The caller owns (and disposes) the returned handle.
+    /// </summary>
+    private Grammar? TryBuildGrammar(ComputerUsePrompt prompt)
+    {
+        if (!_options.ConstrainedDecoding) return null;
+        try
+        {
+            var refs = prompt.Observation.Elements.Select(element => element.Ref).ToList();
+            return Grammar.CreateJsonGrammarFromJsonSchema(ComputerUseActionGrammar.BuildActionSchema(refs));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "⚠️ [ComputerUse] Không dựng được grammar ràng buộc — sinh tự do (retry + grounding gate vẫn bảo vệ).");
+            return null;
+        }
     }
 
     /// <summary>Renders the task, prior-step history, and the current observation into the user turn.</summary>

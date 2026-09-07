@@ -130,7 +130,19 @@ public static class ComputerUseActionParser
                     error = "key requires a 'keys' value.";
                     return false;
                 }
-                action = new ComputerUseAction { Type = actionType, Keys = keys.Trim() };
+                // A key press is side-effecting and must be GROUNDED to an element the agent
+                // can inspect, exactly like click/type: a bare key press would go to whatever
+                // is focused — possibly a password/OTP field — which the safety guard cannot
+                // vet. Rejecting it HERE (rather than letting the loop's fail-closed gate end
+                // the session) lets the grounding retry hand the model the valid-ref list so it
+                // can re-emit the same key press correctly.
+                var keyRef = ReadInt(fields, "ref") ?? ReadInt(root, "ref");
+                if (keyRef is null)
+                {
+                    error = "key requires a 'ref' naming the element the keys are sent to.";
+                    return false;
+                }
+                action = new ComputerUseAction { Type = actionType, Ref = keyRef, Keys = keys.Trim() };
                 return true;
             }
 

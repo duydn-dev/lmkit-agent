@@ -40,7 +40,8 @@ public sealed class AgentVoiceTurnLlm : IVoiceTurnLlm
         var model = await _models.GetChatModelAsync(ct: ct);
         await using var lease = await _models.AcquireChatInferenceAsync(ct);
 
-        var chat = new MultiTurnConversation(model)
+        // MultiTurnConversation owns a native context — dispose it, or every voice turn leaks a handle.
+        using var chat = new MultiTurnConversation(model)
         {
             SystemPrompt = VoiceSystemPrompt,
             MaximumCompletionTokens = MaxReplyTokens

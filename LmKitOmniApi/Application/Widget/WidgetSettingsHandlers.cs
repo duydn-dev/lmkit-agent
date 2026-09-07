@@ -116,28 +116,65 @@ public sealed class UpdateWidgetSettingsCommandHandler : IRequestHandler<UpdateW
         if (position is not ("bottom-right" or "bottom-left"))
             return Invalid("Position chỉ nhận 'bottom-right' hoặc 'bottom-left'.");
 
+        var originsJson = WidgetOrigins.Serialize(origins);
+
+        void Apply(TenantWidgetSettings target)
+        {
+            target.IsActive = request.IsActive;
+            target.AllowedOriginsJson = originsJson;
+            target.RequestsPerMinute = request.RequestsPerMinute ?? target.RequestsPerMinute;
+            target.RequestsPerDay = request.RequestsPerDay ?? target.RequestsPerDay;
+            target.WidgetTitle = request.WidgetTitle?.Trim() is { Length: > 0 } title ? title : null;
+            target.WelcomeMessage = request.WelcomeMessage?.Trim() is { Length: > 0 } welcome ? welcome : null;
+            target.BrandColor = brandColor is { Length: > 0 } ? brandColor : null;
+            target.LogoUrl = request.LogoUrl?.Trim() is { Length: > 0 } logo ? logo : null;
+            target.Position = position;
+            target.UpdatedAtUtc = DateTime.UtcNow;
+        }
+
         var settings = await _db.TenantWidgetSettings
             .SingleOrDefaultAsync(s => s.TenantId == request.TenantId, cancellationToken);
+        var inserting = settings is null;
         if (settings is null)
         {
             settings = new TenantWidgetSettings { TenantId = request.TenantId };
             _db.TenantWidgetSettings.Add(settings);
         }
 
-        settings.IsActive = request.IsActive;
-        settings.AllowedOriginsJson = WidgetOrigins.Serialize(origins);
-        settings.RequestsPerMinute = request.RequestsPerMinute ?? settings.RequestsPerMinute;
-        settings.RequestsPerDay = request.RequestsPerDay ?? settings.RequestsPerDay;
-        settings.WidgetTitle = request.WidgetTitle?.Trim() is { Length: > 0 } title ? title : null;
-        settings.WelcomeMessage = request.WelcomeMessage?.Trim() is { Length: > 0 } welcome ? welcome : null;
-        settings.BrandColor = brandColor is { Length: > 0 } ? brandColor : null;
-        settings.LogoUrl = request.LogoUrl?.Trim() is { Length: > 0 } logo ? logo : null;
-        settings.Position = position;
-        settings.UpdatedAtUtc = DateTime.UtcNow;
+        Apply(settings);
 
-        await _db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (inserting && IsTenantUniqueViolation(ex))
+        {
+            // Lost the read-then-insert race: a concurrent PUT inserted the row first
+            // and the unique index on TenantId rejected ours. Drop the loser, re-read
+            // the winner and apply this request on top of it (last write wins) instead
+            // of leaving the tenant with two rows — which would make every later
+            // SingleOrDefaultAsync throw and brick the widget permanently.
+            _db.Entry(settings).State = EntityState.Detached;
+            var winner = await _db.TenantWidgetSettings
+                .SingleAsync(s => s.TenantId == request.TenantId, cancellationToken);
+            Apply(winner);
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+
         return new WidgetMutationResult { Status = WidgetMutationStatus.Success };
     }
+
+    /// <summary>
+    /// True when the failure is the unique-index violation on
+    /// <c>tenant_widget_settings.TenantId</c> (PostgreSQL 23505 / SQLite
+    /// SQLITE_CONSTRAINT). Any other database failure keeps propagating.
+    /// </summary>
+    private static bool IsTenantUniqueViolation(DbUpdateException exception) => exception.InnerException switch
+    {
+        Npgsql.PostgresException postgres => postgres.SqlState == "23505",
+        Microsoft.Data.Sqlite.SqliteException sqlite => sqlite.SqliteErrorCode == 19,
+        _ => false
+    };
 
     private static WidgetMutationResult Invalid(string message) => new()
     {

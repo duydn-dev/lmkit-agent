@@ -73,7 +73,7 @@ public class ResearchAgent : ISpecializedAgent
             _logger.LogInformation("🔬 [{Agent}] Searching the web...", AgentName);
             var webExecution = await _toolGateway.ExecuteReadOnlyAsync(
                 tenantId, userId, userRole, "SearchWeb", query,
-                token => _webSearch.SearchWebAsync(query, count: 3, token), ct);
+                async token => (await _webSearch.SearchWebAsync(query, count: 3, token)).ToToolOutput(), ct);
             if (webExecution.IsSuccess && !string.IsNullOrWhiteSpace(webExecution.Output))
             {
                 results.AppendLine("[Web Search]: " + webExecution.Output);

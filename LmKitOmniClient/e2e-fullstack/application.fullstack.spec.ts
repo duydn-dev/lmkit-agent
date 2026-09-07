@@ -15,8 +15,18 @@ test('real stack supports auth, sessions, documents, user admin and logout', asy
   const loginResponse = await page.goto('/login');
   expect(loginResponse?.status()).toBe(200);
   expect(loginResponse?.headers()['x-content-type-options']).toBe('nosniff');
+  // App routes stay unframable...
   expect(loginResponse?.headers()['content-security-policy']).toContain("frame-ancestors 'self'");
   expect(loginResponse?.headers()['permissions-policy']).toContain('microphone=(self)');
+
+  // ...but the embeddable widget document must NOT be forced to 'self' — that
+  // blocked every customer embed. Its frame-ancestors comes from the API, per
+  // widget key; an unknown key fails closed to 'none' (never 'self').
+  const anonymousWidget = await page.request.get('/widget/chat?key=not-a-real-widget-key');
+  expect(anonymousWidget.status()).toBe(200);
+  expect(anonymousWidget.headers()['content-security-policy']).toContain("frame-ancestors 'none'");
+  expect(anonymousWidget.headers()['content-security-policy']).not.toContain("frame-ancestors 'self'");
+  expect(anonymousWidget.headers()['x-content-type-options']).toBe('nosniff');
 
   await page.getByLabel('Email / Tài khoản').fill(adminEmail);
   await page.getByLabel('Mật khẩu').fill(adminPassword);
@@ -81,6 +91,38 @@ test('real stack supports auth, sessions, documents, user admin and logout', asy
   await expect(page.getByText('Kết nối MCP Streamable HTTP theo tenant.')).toBeVisible();
   await expect(page.getByRole('checkbox', { name: /Tin cậy khai báo/ })).not.toBeChecked();
   expect((await api.get('/api/mcp-servers')).status()).toBe(200);
+
+  // ── Public widget embed contract ──
+  // Allowlist an origin, mint a key, and check that the widget document is framable
+  // by exactly that origin — the per-tenant frame-ancestors the API derives from the
+  // allowlist, not the app-wide 'self' nginx used to force on every route.
+  const embedOrigin = 'https://widget-e2e.example.com';
+  const widgetSettings = await api.put('/api/admin/widget/settings', {
+    data: {
+      isActive: true,
+      allowedOrigins: [embedOrigin],
+      requestsPerMinute: 30,
+      requestsPerDay: 500,
+      widgetTitle: 'E2E widget'
+    }
+  });
+  expect(widgetSettings.status()).toBe(204);
+  const rotated = await api.post('/api/admin/widget/credentials:rotate');
+  expect(rotated.status()).toBe(200);
+  const widgetKey: string = (await rotated.json()).rawKey;
+
+  const embeddedWidget = await page.request.get(`/widget/chat?key=${encodeURIComponent(widgetKey)}`);
+  expect(embeddedWidget.status()).toBe(200);
+  expect(embeddedWidget.headers()['content-security-policy']).toContain(`frame-ancestors ${embedOrigin}`);
+
+  // The shipped loader must forward that key into the iframe URL; without it the
+  // frame boots the authenticated path, 401s, and redirects the customer's visitors
+  // to our login screen.
+  const loader = await page.request.get('/widget.js');
+  expect(loader.status()).toBe(200);
+  const loaderSource = await loader.text();
+  expect(loaderSource).toContain("'/widget/chat?key='");
+  expect(loaderSource).not.toContain('embed=true');
 
   expect(browserErrors).toEqual([]);
   await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();

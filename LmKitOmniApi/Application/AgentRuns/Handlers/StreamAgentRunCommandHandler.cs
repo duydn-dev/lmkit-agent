@@ -67,7 +67,7 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
             UserId = request.UserId,
             ChatSessionId = session.Id,
             Goal = goal.Length > 4000 ? goal[..4000] : goal,
-            Status = "Running"
+            Status = AgentRunStatuses.Running
         };
         _dbContext.AgentRuns.Add(run);
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -123,7 +123,13 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
 
         var result = MarkerRegex.Replace(rawContent, string.Empty).Trim();
         run.Result = string.IsNullOrWhiteSpace(result) ? null : result;
-        run.Status = awaitingApproval ? "AwaitingApproval" : completed ? "Completed" : "Failed";
+        // AwaitingApproval is the one non-terminal outcome: CompletedAtUtc stays null
+        // until the human resolves the gating approval, at which point
+        // AgentRunApprovalReconciler moves the run to a terminal status. Without that
+        // reconciliation this state was permanent — see AgentRunStatuses.
+        run.Status = awaitingApproval ? AgentRunStatuses.AwaitingApproval
+            : completed ? AgentRunStatuses.Completed
+            : AgentRunStatuses.Failed;
         if (!completed && !awaitingApproval) run.Error = "Thực thi bị dừng hoặc thất bại.";
         run.CompletedAtUtc = awaitingApproval ? null : DateTime.UtcNow;
 

@@ -11,7 +11,12 @@ public enum ComputerUseActionType
     Click,
     /// <summary>Type text into an element by ref (side-effecting).</summary>
     Type,
-    /// <summary>Press a key / chord, e.g. "Enter", "Ctrl+A" (side-effecting).</summary>
+    /// <summary>
+    /// Press a key / chord, e.g. "Enter", "Ctrl+A", against a named element ref
+    /// (side-effecting). A <c>ref</c> is required so the target can be inspected by the
+    /// safety guard — a bare key press could otherwise enter a credential one character at
+    /// a time into whatever happens to be focused.
+    /// </summary>
     Key,
     /// <summary>Scroll the viewport (read-only).</summary>
     Scroll,
@@ -81,7 +86,7 @@ public sealed record ComputerUseAction
         ComputerUseActionType.Navigate => $"navigate → {Url}",
         ComputerUseActionType.Click => Ref is int r ? $"click element #{r}" : $"click ({X},{Y})",
         ComputerUseActionType.Type => $"type into element #{Ref}: \"{Truncate(Text, 60)}\"",
-        ComputerUseActionType.Key => $"press keys: {Keys}",
+        ComputerUseActionType.Key => Ref is int kr ? $"press keys \"{Keys}\" on element #{kr}" : $"press keys: {Keys}",
         ComputerUseActionType.Scroll => $"scroll {Direction} {Amount}",
         ComputerUseActionType.Wait => $"wait {Ms}ms",
         ComputerUseActionType.Screenshot => "re-observe (screenshot)",

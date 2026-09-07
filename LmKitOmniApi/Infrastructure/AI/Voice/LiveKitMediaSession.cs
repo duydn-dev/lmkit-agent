@@ -29,8 +29,12 @@ public sealed class LiveKitMediaSession : ILiveKitMediaSession
     private const int MinUtteranceMs = 300;          // ignore blips shorter than this
     private const int MaxUtteranceMs = 30000;        // hard cap per utterance
 
+    /// <summary>How long <see cref="LeaveAsync"/> waits for the reader loop to unwind before giving up on it.</summary>
+    private static readonly TimeSpan ReaderDrainTimeout = TimeSpan.FromSeconds(5);
+
     private readonly ILogger<LiveKitMediaSession> _logger;
     private readonly Channel<byte[]> _utterances = System.Threading.Channels.Channel.CreateUnbounded<byte[]>();
+    private readonly object _readerLock = new();
 
     private Room? _room;
     private AudioSource? _source;
@@ -52,9 +56,11 @@ public sealed class LiveKitMediaSession : ILiveKitMediaSession
         await _room.ConnectAsync(options.Url, options.Token, new RoomOptions { AutoSubscribe = true }, ct);
 
         // Output path: a mono 16 kHz source published as the agent's voice track.
+        var localParticipant = _room.LocalParticipant
+            ?? throw new InvalidOperationException("LiveKit room connected without a local participant; cannot publish the agent voice track.");
         _source = new AudioSource(SampleRate, Channels, 1000);
         _outTrack = LocalAudioTrack.Create(options.Identity + "-voice", _source);
-        await _room.LocalParticipant.PublishTrackAsync(
+        await localParticipant.PublishTrackAsync(
             _outTrack, new TrackPublishOptions { Source = LiveKit.Proto.TrackSource.SourceMicrophone }, ct);
 
         _logger.LogInformation("🎙️ [LiveKit] Voice agent joined room '{Room}' as '{Id}'.", options.Room, options.Identity);
@@ -62,12 +68,31 @@ public sealed class LiveKitMediaSession : ILiveKitMediaSession
 
     private void OnTrackSubscribed(object? sender, TrackSubscribedEventArgs e)
     {
-        // Only start one reader, and only for an audio track.
-        if (_readerTask is not null || e.Track is not { } track) return;
-        _readerCts = new CancellationTokenSource();
-        _readerTask = Task.Run(() => ReadLoopAsync(track, _readerCts.Token));
+        if (e.Track is not { } track) return;
+
+        // ONLY an audio track may start the endpointing reader. The reader latches onto the
+        // FIRST track it accepts, so without this check a participant that publishes video
+        // (screen share, camera) before unmuting their mic would permanently bind the reader
+        // to a video track and STT would never see a single sample.
+        if (!IsAudioTrack(track))
+        {
+            _logger.LogDebug("🎙️ [LiveKit] Ignoring subscribed non-audio track '{Name}' ({Kind}).", track.Name, track.Kind);
+            return;
+        }
+
+        // Start at most one reader even if several audio tracks arrive concurrently.
+        lock (_readerLock)
+        {
+            if (_readerTask is not null) return;
+            _readerCts = new CancellationTokenSource();
+            var readerToken = _readerCts.Token;
+            _readerTask = Task.Run(() => ReadLoopAsync(track, readerToken));
+        }
         _logger.LogInformation("🎙️ [LiveKit] Subscribed to caller audio; endpointing started.");
     }
+
+    /// <summary>True only for an audio track (never video/unknown), so the reader can't bind to a camera.</summary>
+    private static bool IsAudioTrack(Track track) => track.Kind == LiveKit.Proto.TrackKind.KindAudio;
 
     /// <summary>Reads inbound frames, endpoints them into utterances, and queues each as WAV.</summary>
     private async Task ReadLoopAsync(Track track, CancellationToken ct)
@@ -150,23 +175,74 @@ public sealed class LiveKitMediaSession : ILiveKitMediaSession
         }
     }
 
+    /// <summary>
+    /// Stops the inbound reader and leaves the room. The reader task is AWAITED (bounded by
+    /// <see cref="ReaderDrainTimeout"/>) before the room is disconnected: it holds an
+    /// <c>AudioStream</c> over the native track, so tearing the room down while it is still
+    /// running races the reader against disposal of the native objects it is reading from.
+    /// Idempotent and never throws.
+    /// </summary>
     public async Task LeaveAsync(CancellationToken ct = default)
     {
-        try { _readerCts?.Cancel(); } catch { /* ignore */ }
+        // Detach FIRST, so a track subscribed mid-teardown can't start a fresh reader behind
+        // the drain we are about to do.
+        if (_room is not null) _room.TrackSubscribed -= OnTrackSubscribed;
+
+        Task? reader;
+        CancellationTokenSource? readerCts;
+        lock (_readerLock)
+        {
+            reader = _readerTask;
+            readerCts = _readerCts;
+            _readerTask = null;
+            _readerCts = null;
+        }
+
+        try { readerCts?.Cancel(); } catch { /* ignore */ }
+        await DrainReaderAsync(reader);
+        try { readerCts?.Dispose(); } catch { /* ignore */ }
+
         if (_room is not null)
         {
-            _room.TrackSubscribed -= OnTrackSubscribed;
             try { await _room.DisconnectAsync(); } catch { /* ignore */ }
+        }
+
+        _utterances.Writer.TryComplete();
+    }
+
+    /// <summary>
+    /// Waits for the cancelled reader loop to unwind. Bounded so a wedged native read can
+    /// never hang shutdown; a timeout is logged and disposal continues.
+    /// </summary>
+    private async Task DrainReaderAsync(Task? reader)
+    {
+        if (reader is null) return;
+        try
+        {
+            var completed = await Task.WhenAny(reader, Task.Delay(ReaderDrainTimeout));
+            if (!ReferenceEquals(completed, reader))
+            {
+                _logger.LogWarning(
+                    "🎙️ [LiveKit] Inbound audio reader did not stop within {Seconds}s; continuing teardown.",
+                    ReaderDrainTimeout.TotalSeconds);
+                return;
+            }
+            await reader; // observe any fault so it is not unobserved
+        }
+        catch (OperationCanceledException) { /* expected on cancel */ }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "🎙️ [LiveKit] Inbound audio reader ended with an error during teardown.");
         }
     }
 
     public async ValueTask DisposeAsync()
     {
+        // LeaveAsync awaits the reader, so by here nothing is still touching the natives.
         await LeaveAsync(CancellationToken.None);
         try { _outTrack?.Dispose(); } catch { }
         try { _source?.Dispose(); } catch { }
         try { _room?.Dispose(); } catch { }
-        _readerCts?.Dispose();
     }
 
     // ── audio helpers (int16 mono PCM) ──
@@ -189,7 +265,13 @@ public sealed class LiveKitMediaSession : ILiveKitMediaSession
     private static byte[] SamplesToWav(short[] samples) =>
         new AudioFrame(samples, SampleRate, Channels, samples.Length).ToWavBytes();
 
-    /// <summary>Minimal RIFF/WAV parser → 16-bit PCM samples + rate + channels.</summary>
+    /// <summary>
+    /// Minimal RIFF/WAV parser → 16-bit PCM samples + rate + channels. Defensive against a
+    /// malformed/hostile header: a NEGATIVE or non-advancing chunk size used to walk the
+    /// cursor backwards (or leave it in place) and spin the scan forever — every chunk step
+    /// must now move strictly forward and stay inside the buffer, otherwise the scan stops
+    /// and the audio is reported as unparseable.
+    /// </summary>
     internal static (short[] Pcm, int SampleRate, int Channels) ParseWav(byte[] wav)
     {
         // Locate the "fmt " and "data" chunks rather than assuming a fixed 44-byte header.
@@ -200,6 +282,7 @@ public sealed class LiveKitMediaSession : ILiveKitMediaSession
             var id = System.Text.Encoding.ASCII.GetString(wav, i, 4);
             var size = BitConverter.ToInt32(wav, i + 4);
             var body = i + 8;
+            if (size < 0) break; // malformed chunk length — refuse rather than loop
             if (id == "fmt " && body + 16 <= wav.Length)
             {
                 channels = BitConverter.ToInt16(wav, body + 2);
@@ -212,9 +295,13 @@ public sealed class LiveKitMediaSession : ILiveKitMediaSession
                 dataLen = Math.Min(size, wav.Length - body);
                 break;
             }
-            i = body + size + (size & 1);
+            // Advance with a widened accumulator so a huge size can't overflow back into the
+            // buffer, and require strict forward progress.
+            var next = (long)body + size + (size & 1);
+            if (next <= i || next > wav.Length) break;
+            i = (int)next;
         }
-        if (dataOffset < 0 || bits != 16) return (Array.Empty<short>(), rate, channels);
+        if (dataOffset < 0 || bits != 16 || dataLen <= 0) return (Array.Empty<short>(), rate, Math.Max(1, channels));
         var pcm = new short[dataLen / 2];
         Buffer.BlockCopy(wav, dataOffset, pcm, 0, pcm.Length * 2);
         return (pcm, rate, Math.Max(1, channels));

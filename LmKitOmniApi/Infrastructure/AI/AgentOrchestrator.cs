@@ -244,7 +244,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         // (or all-default values) preserves today's behavior exactly.
 
         // ── Step 1: Security Check ──
-        yield return "[THINKING]: 🛡️ Kiểm tra bảo mật đầu vào...\\n";
+        yield return "[THINKING]: 🛡️ Kiểm tra bảo mật đầu vào...\n";
 
         var filterContext = new AgentFilterContext { TenantId = tenantId, OriginalInput = query, ProcessedInput = query };
         var inputResult = await _filterPipeline.RunInputFiltersAsync(filterContext, cancellationToken);
@@ -257,15 +257,15 @@ public class AgentOrchestrator : IAgentOrchestrator
         query = inputResult.ProcessedContent;
 
         yield return inputResult.Warnings.Count > 0
-            ? $"[THINKING]: ⚠️ Phát hiện {inputResult.Warnings.Count} cảnh báo bảo mật (mức thấp)\\n"
-            : "[THINKING]: ✅ Đầu vào an toàn\\n";
+            ? $"[THINKING]: ⚠️ Phát hiện {inputResult.Warnings.Count} cảnh báo bảo mật (mức thấp)\n"
+            : "[THINKING]: ✅ Đầu vào an toàn\n";
 
         // ── Step 2: Memory Recall ──
-        yield return "[THINKING]: 🧠 Tìm kiếm ký ức liên quan...\\n";
+        yield return "[THINKING]: 🧠 Tìm kiếm ký ức liên quan...\n";
         var memoryContext = await _memoryService.GetMemoryContextAsync(tenantId, userId, query, cancellationToken);
         yield return !string.IsNullOrEmpty(memoryContext)
-            ? "[THINKING]: 🧠 Đã tìm thấy ký ức liên quan\\n"
-            : "[THINKING]: 🧠 Không có ký ức liên quan\\n";
+            ? "[THINKING]: 🧠 Đã tìm thấy ký ức liên quan\n"
+            : "[THINKING]: 🧠 Không có ký ức liên quan\n";
 
         // ── Two-pass inference design (deliberate trade-off — do not collapse casually) ──
         // Pass 1 (Steps 3-4): the LM-Kit native ReAct agent runs the tool stage. It sees
@@ -279,7 +279,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         // until that evaluation exists, this two-pass flow is the documented, intentional
         // behavior — not a bug.
         // ── Step 3-4: LM-Kit native tool discovery + ReAct planning ──
-        yield return "[THINKING]: 📋 Khởi tạo LM-Kit ReAct agent với công cụ có cấu trúc...\\n";
+        yield return "[THINKING]: 📋 Khởi tạo LM-Kit ReAct agent với công cụ có cấu trúc...\n";
         await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(cancellationToken);
         // LoRA hot-swap: apply the custom agent's adapter to the shared chat model for the
         // whole inference (ReAct tool pass + synthesis pass), then remove it before the lease
@@ -300,7 +300,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             yield break;
         }
 
-        yield return $"[THINKING]: ✅ LM-Kit ReAct hoàn tất sau {nativeRun.InferenceCount} inference(s)\\n";
+        yield return $"[THINKING]: ✅ LM-Kit ReAct hoàn tất sau {nativeRun.InferenceCount} inference(s)\n";
 
         // Agent runs: surface the captured tool steps as [STEP:] markers (display
         // twin of the stepSink the run handler persists). Never emitted for chat,
@@ -342,7 +342,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             : $"[LM-Kit ReAct result]:\n{nativeRun.Content}";
 
         // ── Step 5: Generate Response with Template ──
-        yield return "[THINKING]: ✍️ Đang tổng hợp và tạo câu trả lời...\\n";
+        yield return "[THINKING]: ✍️ Đang tổng hợp và tạo câu trả lời...\n";
 
         var model = await _modelManager.GetChatModelAsync(ct: cancellationToken);
         var chat = new MultiTurnConversation(model, history);
@@ -965,6 +965,13 @@ public class AgentOrchestrator : IAgentOrchestrator
         var currentPermission = await _toolPermission.CanInvokeToolAsync(tenantId, userId, currentRole, permissionName, ct);
         if (!currentPermission.IsAllowed && !currentPermission.RequiresApproval)
             throw new UnauthorizedAccessException(currentPermission.DenialReason ?? "Tool permission was revoked after approval.");
+
+        // Approving an action must never grant MORE authority than the turn that
+        // REQUESTED it. Recover that turn's execution scope (custom-agent tool
+        // whitelist, RAG knowledge scope, web-search switch) from the approval's own
+        // chat session, which is what the approval row persists.
+        var approvedOptions = await ResolveApprovedActionOptionsAsync(_dbContext, tenantId, userId, approvalId, ct);
+
         using var toolActivity = _telemetry.StartToolInvocation(action);
         try
         {
@@ -972,12 +979,18 @@ public class AgentOrchestrator : IAgentOrchestrator
                 action,
                 async resilienceCt =>
                 {
-                    // Approved (HITL) executions carry no per-request options (null =
-                    // web search available, no whitelist, no knowledge scope),
-                    // matching pre-switch behavior.
+                    // Approved (HITL) executions run under the SAME per-request scope as
+                    // the turn that requested approval (see
+                    // ResolveApprovedActionOptionsAsync). Passing null here used to drop
+                    // the custom agent's AllowedTools whitelist, its KnowledgeDocumentIds
+                    // RAG scope and AllowWebSearch — so approval silently widened
+                    // authority (most visibly: a RAG approval requested under a
+                    // document-scoped agent would query the whole tenant knowledge base).
+                    // Null is still passed for approvals with no recoverable scope, which
+                    // is exactly the unbound-session case = pre-existing behavior.
                     var sandboxResult = await _sandbox.ExecuteInSandboxAsync(
                         action,
-                        sandboxCt => ExecuteActionCoreAsync(tenantId, userId, currentRole, query, action, options: null, sandboxCt),
+                        sandboxCt => ExecuteActionCoreAsync(tenantId, userId, currentRole, query, action, approvedOptions, sandboxCt),
                         resilienceCt);
 
                     if (sandboxResult.IsSuccess) return sandboxResult.Output;
@@ -1007,6 +1020,100 @@ public class AgentOrchestrator : IAgentOrchestrator
                 approvalId, CancellationToken.None);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Recovers the per-request execution scope that applied to the turn which REQUESTED
+    /// an approval, so that approving it cannot grant MORE authority than that turn had.
+    ///
+    /// Nothing extra needs persisting: the approval row already stores its
+    /// <c>ChatSessionId</c>, the session stores its bound <c>CustomAgentId</c>, and the
+    /// custom agent is the single source of every narrowing field
+    /// (<see cref="AgentRequestOptions.AllowedTools"/>,
+    /// <see cref="AgentRequestOptions.KnowledgeDocumentIds"/>,
+    /// <see cref="AgentRequestOptions.AllowWebSearch"/>). Reading it at EXECUTION time is
+    /// deliberately stricter than snapshotting it at request time: an agent whose
+    /// whitelist was narrowed while the approval sat pending is honoured at its
+    /// narrower setting, mirroring the permission re-check above it.
+    ///
+    /// Outcomes:
+    /// <list type="bullet">
+    /// <item>no approval id, or a session with no bound agent → <c>null</c> (unscoped —
+    /// byte-identical to the pre-fix behavior, and correct: that turn was unscoped too);</item>
+    /// <item>bound agent still visible → its scope, a pure narrowing;</item>
+    /// <item>bound agent still present but no longer VISIBLE to this caller (un-shared
+    /// since) → a DENY-ALL whitelist. The requesting turn WAS scoped, that scope is
+    /// unreadable, and running unscoped would widen authority — so the action is refused
+    /// instead. The chat path may drop an invisible agent and continue, but chat re-plans
+    /// under the unscoped tool set; an approval cannot re-plan, it only executes.</item>
+    /// </list>
+    ///
+    /// One residual gap, forced by the schema: DELETING a custom agent NULLs every
+    /// session's binding to it (<c>ChatSession.CustomAgentId</c>,
+    /// <c>DeleteBehavior.SetNull</c>), so a pending approval from that session then
+    /// resolves as unbound and executes unscoped. Closing that case needs the scope
+    /// snapshotted onto the approval row itself (a schema change) — see
+    /// CORE-FIX-INTEGRATION.md.
+    ///
+    /// Internal (not private) so the approval-scoping contract is directly testable
+    /// without constructing the full orchestrator dependency graph; static and
+    /// DbContext-parameterised for the same reason.
+    /// </summary>
+    internal static async Task<AgentRequestOptions?> ResolveApprovedActionOptionsAsync(
+        LmKitOmniApi.Infrastructure.Data.HermesDbContext dbContext,
+        Guid tenantId,
+        Guid userId,
+        Guid? approvalId,
+        CancellationToken ct)
+    {
+        if (approvalId is not Guid id) return null;
+
+        var chatSessionId = await dbContext.TaskApprovals
+            .AsNoTracking()
+            .Where(approval => approval.Id == id
+                && approval.TenantId == tenantId
+                && approval.UserId == userId)
+            .Select(approval => (Guid?)approval.ChatSessionId)
+            .FirstOrDefaultAsync(ct);
+        if (chatSessionId is not Guid sessionId) return null;
+
+        var boundAgentId = await dbContext.ChatSessions
+            .AsNoTracking()
+            .Where(session => session.Id == sessionId && session.TenantId == tenantId)
+            .Select(session => session.CustomAgentId)
+            .FirstOrDefaultAsync(ct);
+        if (boundAgentId is not Guid customAgentId) return null;
+
+        // Same visibility rule the chat path applies when binding an agent to a turn
+        // (owner, or shared with the tenant).
+        var agent = await dbContext.CustomAgents
+            .AsNoTracking()
+            .FirstOrDefaultAsync(candidate => candidate.Id == customAgentId
+                && candidate.TenantId == tenantId
+                && (candidate.OwnerUserId == userId || candidate.IsSharedWithTenant), ct);
+
+        if (agent is null)
+        {
+            return new AgentRequestOptions
+            {
+                AllowWebSearch = false,
+                AllowedTools = Array.Empty<string>()
+            };
+        }
+
+        var allowedTools = LmKitOmniApi.Application.CustomAgents.CustomAgentRules.ParseToolsCsv(agent.AllowedToolsCsv);
+        return new AgentRequestOptions
+        {
+            // The per-turn user toggle (StreamChatCommand.EnableWebSearch) is NOT stored
+            // with the approval, so only the agent half of that composition is
+            // recoverable. Harmless in practice: "SearchWeb" is not an approval-required
+            // tool, so no approval is ever created for a web search.
+            AllowWebSearch = allowedTools is null
+                || allowedTools.Contains("SearchWeb", StringComparer.OrdinalIgnoreCase),
+            AllowedTools = allowedTools,
+            KnowledgeDocumentIds = LmKitOmniApi.Application.CustomAgents.CustomAgentRules
+                .ParseDocumentIdsCsv(agent.KnowledgeDocumentIdsCsv)
+        };
     }
 
     // CODE and PYTHON are retry-safe: both run side-effect-free from the app's

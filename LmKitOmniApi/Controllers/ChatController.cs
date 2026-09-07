@@ -171,7 +171,7 @@ public class ChatController : ApiControllerBase
                 if (file.Length == 0) continue;
                 if (file.Length > MaxAttachmentBytes)
                 {
-                    await WriteSseAsync($"[THINKING]: ⚠️ Bỏ qua file quá 20 MB: {Path.GetFileName(file.FileName)}\\n", cancellationToken);
+                    await WriteSseAsync($"[THINKING]: ⚠️ Bỏ qua file quá 20 MB: {Path.GetFileName(file.FileName)}\n", cancellationToken);
                     continue;
                 }
 
@@ -179,7 +179,7 @@ public class ChatController : ApiControllerBase
                 var extension = Path.GetExtension(safeFileName);
                 if (string.IsNullOrWhiteSpace(safeFileName) || !AllowedAttachmentExtensions.Contains(extension))
                 {
-                    await WriteSseAsync($"[THINKING]: ⚠️ Loại file không được hỗ trợ: {safeFileName}\\n", cancellationToken);
+                    await WriteSseAsync($"[THINKING]: ⚠️ Loại file không được hỗ trợ: {safeFileName}\n", cancellationToken);
                     continue;
                 }
                 if (!await UploadFileValidator.HasExpectedSignatureAsync(file, extension, cancellationToken))
@@ -198,7 +198,7 @@ public class ChatController : ApiControllerBase
                         await file.CopyToAsync(stream, cancellationToken);
                     }
 
-                    await WriteSseAsync($"[THINKING]: Đang xử lý file đính kèm: {file.FileName}...\\n", cancellationToken);
+                    await WriteSseAsync($"[THINKING]: Đang xử lý file đính kèm: {file.FileName}...\n", cancellationToken);
 
                     var result = await _ocrIngestion.ProcessFileForChatAsync(
                         tenantId,
@@ -216,11 +216,11 @@ public class ChatController : ApiControllerBase
                         fileContextParts.Add($"[File: {result.FileName} ({result.FileType})]: {truncated}");
 
                         var persistenceMessage = saveToKnowledge ? " và lưu vào kho tri thức" : string.Empty;
-                        await WriteSseAsync($"[THINKING]: ✅ Đã xử lý {safeFileName} ({result.FileType}){persistenceMessage}\\n", cancellationToken);
+                        await WriteSseAsync($"[THINKING]: ✅ Đã xử lý {safeFileName} ({result.FileType}){persistenceMessage}\n", cancellationToken);
                     }
                     else
                     {
-                        await WriteSseAsync($"[THINKING]: ⚠️ Không thể xử lý {file.FileName}: {result.ErrorMessage}\\n", cancellationToken);
+                        await WriteSseAsync($"[THINKING]: ⚠️ Không thể xử lý {file.FileName}: {result.ErrorMessage}\n", cancellationToken);
                     }
                 }
                 finally

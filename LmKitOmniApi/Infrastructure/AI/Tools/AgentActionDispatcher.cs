@@ -279,7 +279,8 @@ public sealed class AgentActionDispatcher
     {
         var webResult = await _webSearch.SearchWebAsync(query, WebSearchMaxResults, ct);
         await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "SearchWeb", query, ct);
-        return webResult;
+        // ToToolOutput(): the JSON hit array on success, a bracketed notice otherwise.
+        return webResult.ToToolOutput();
     }
 
     private async Task<string> ExecuteDelegationAsync(Guid tenantId, Guid? userId, string userRole, string query, CancellationToken ct)

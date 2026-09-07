@@ -215,6 +215,17 @@ public class HermesDbContext : DbContext
 
         modelBuilder.Entity<TenantWidgetSettings>()
             .HasOne(t => t.Tenant).WithMany().HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);
+        // Exactly one widget-settings row per tenant. Every read is a
+        // SingleOrDefaultAsync, so a second row would make EVERY later read throw and
+        // permanently brick that tenant's widget; the unique index makes the admin
+        // upsert's "load existing or insert" race-safe at the DB level (same guarantee
+        // UserPreference and LoraAdapterRegistration already rely on).
+        modelBuilder.Entity<TenantWidgetSettings>()
+            .HasIndex(t => t.TenantId).IsUnique();
+        // Backs the anonymous key exchange (POST /api/widget/auth) which filters on
+        // WidgetApiKeyHash. NOT unique: un-rotated rows all carry an empty hash.
+        modelBuilder.Entity<TenantWidgetSettings>()
+            .HasIndex(t => t.WidgetApiKeyHash);
 
         modelBuilder.Entity<UserSession>()
             .HasOne(u => u.User).WithMany().HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.Cascade);

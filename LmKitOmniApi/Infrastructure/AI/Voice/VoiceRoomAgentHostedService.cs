@@ -1,4 +1,5 @@
 using Livekit.Server.Sdk.Dotnet;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -16,21 +17,39 @@ namespace LmKitOmniApi.Infrastructure.AI.Voice;
 /// being present all log and stand down (or retry) instead of crashing startup. The media
 /// loop itself is live-only (needs a LiveKit server + native runtime + a real caller), so it
 /// never runs in CI; the turn loop <see cref="RunSessionAsync"/> is unit-tested with fakes.
+///
+/// ROOM: the room name comes from <see cref="VoiceRoomNaming"/> — the SAME function the
+/// browser token endpoint uses — via <see cref="VoiceOptions.TryResolveAgentRoom"/>. It used
+/// to join the bare <c>Voice:Room</c> label while the endpoint minted a tenant-scoped name,
+/// so the agent and its callers were permanently in different rooms.
+///
+/// ONE ROOM PER PROCESS: this service is a single background participant, so it occupies
+/// exactly ONE room — the one belonging to <c>Voice:AgentTenantId</c> / <c>Voice:AgentUserId</c>.
+/// It stands down (loudly) when those are unset instead of joining a room no caller will ever
+/// be in. Serving many users at once requires a room-dispatcher redesign; see
+/// <c>VOICE-CU-FIX-INTEGRATION.md</c>.
+///
+/// CREDENTIALS: resolved once through <see cref="VoiceLiveKitCredentials"/>, so
+/// <c>Voice:LiveKit*</c> and the shared <c>LiveKit:*</c> block configure this agent and the
+/// token endpoint identically.
 /// </summary>
 public sealed class VoiceRoomAgentHostedService : BackgroundService
 {
     private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(10);
 
     private readonly VoiceOptions _options;
+    private readonly IConfiguration _configuration;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<VoiceRoomAgentHostedService> _logger;
 
     public VoiceRoomAgentHostedService(
         IOptions<VoiceOptions> options,
+        IConfiguration configuration,
         IServiceScopeFactory scopeFactory,
         ILogger<VoiceRoomAgentHostedService> logger)
     {
         _options = options.Value;
+        _configuration = configuration;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -43,20 +62,34 @@ public sealed class VoiceRoomAgentHostedService : BackgroundService
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(_options.LiveKitUrl)
-            || string.IsNullOrWhiteSpace(_options.LiveKitApiKey)
-            || string.IsNullOrWhiteSpace(_options.LiveKitApiSecret))
+        // ONE credential source shared with SpeechController's token endpoint.
+        var credentials = VoiceLiveKitCredentials.Resolve(_options, _configuration);
+        if (!credentials.CanJoin)
         {
-            _logger.LogWarning("Voice live room agent enabled but LiveKit URL/API key/secret are not configured; standing down.");
+            _logger.LogWarning(
+                "Voice live room agent enabled but LiveKit URL/API key/secret are not configured "
+                + "(set Voice:LiveKitUrl/LiveKitApiKey/LiveKitApiSecret or the shared LiveKit:Url/ApiKey/ApiSecret); standing down.");
+            return;
+        }
+
+        // ONE room-naming function shared with the token endpoint. Without an explicit
+        // tenant/user the agent has no room it could usefully occupy — stand down loudly
+        // instead of joining a room no caller will ever be in.
+        if (!_options.TryResolveAgentRoom(out var roomName, out var roomError))
+        {
+            _logger.LogWarning(
+                "Voice live room agent enabled but its room cannot be resolved: {Reason} "
+                + "Rooms are scoped per tenant+user, so the single hosted agent must be told which user's room to join; standing down.",
+                roomError);
             return;
         }
 
         string token;
         try
         {
-            token = new AccessToken(_options.LiveKitApiKey, _options.LiveKitApiSecret)
+            token = new AccessToken(credentials.ApiKey, credentials.ApiSecret)
                 .WithIdentity(_options.AgentIdentity)
-                .WithGrants(new VideoGrants { RoomJoin = true, Room = _options.Room, CanPublish = true, CanSubscribe = true })
+                .WithGrants(new VideoGrants { RoomJoin = true, Room = roomName, CanPublish = true, CanSubscribe = true })
                 .WithTtl(TimeSpan.FromHours(6))
                 .ToJwt();
         }
@@ -68,14 +101,14 @@ public sealed class VoiceRoomAgentHostedService : BackgroundService
 
         var room = new VoiceRoomOptions
         {
-            Url = _options.LiveKitUrl,
+            Url = credentials.Url,
             Token = token,
-            Room = _options.Room,
+            Room = roomName,
             Identity = _options.AgentIdentity,
             Voice = _options.DefaultVoice
         };
 
-        _logger.LogInformation("🎙️ Voice live room agent starting for room '{Room}'.", _options.Room);
+        _logger.LogInformation("🎙️ Voice live room agent starting for room '{Room}'.", roomName);
         while (!stoppingToken.IsCancellationRequested)
         {
             try

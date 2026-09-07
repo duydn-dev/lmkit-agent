@@ -5,10 +5,38 @@ using LmKitOmniApi.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Options;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace LmKitOmniApi.Infrastructure.AI;
+
+/// <summary>
+/// Operator-gated agent-memory behaviour. Bound from the "AgentMemory" configuration
+/// section; every default reproduces the pre-option behaviour exactly, so an app that
+/// never binds this section (the constructor parameter is optional) is unchanged.
+/// </summary>
+public sealed class AgentMemoryOptions
+{
+    /// <summary>Configuration section name: <c>AgentMemory</c>.</summary>
+    public const string SectionName = "AgentMemory";
+
+    /// <summary>
+    /// When true, <see cref="AgentMemoryService.RecallMemoriesAsync"/> also considers
+    /// memories that have NOT been confirmed by the user — i.e. the heuristically
+    /// extracted facts written by <see cref="AgentMemoryService.ExtractAndStoreFactsAsync"/>,
+    /// which are stored with <c>IsConfirmed = false</c> by design.
+    ///
+    /// DEFAULT FALSE — today's behaviour, and the privacy-preserving one: an inferred
+    /// fact (regex extraction is fallible) is never injected into a prompt until a human
+    /// confirms it through <c>POST /api/memory/{id}/confirm</c>. Turning this on makes the
+    /// extract → embed → upsert → recall loop self-closing WITHOUT that human step; enable
+    /// it only where auto-recall of inferred facts is an accepted product decision.
+    /// Memory SCOPE (owner/tenant visibility, expiry) is unaffected either way —
+    /// <see cref="MemoryScopePolicy"/> and the expiry filter still apply.
+    /// </summary>
+    public bool RecallUnconfirmed { get; set; }
+}
 
 /// <summary>
 /// Persistent agent memory service using PostgreSQL (AgentMemory entity).
@@ -22,14 +50,26 @@ public class AgentMemoryService : IAgentMemoryService
     private readonly IVectorStoreService _vectorStore;
     private readonly ILogger<AgentMemoryService> _logger;
     private readonly IDistributedCache _cache;
+    private readonly AgentMemoryOptions _options;
 
-    public AgentMemoryService(HermesDbContext dbContext, LmModelManager modelManager, IVectorStoreService vectorStore, ILogger<AgentMemoryService> logger, IDistributedCache cache)
+    /// <param name="memoryOptions">
+    /// Optional (defaulted) so the service keeps resolving — with pre-option behaviour —
+    /// whether or not the host binds the "AgentMemory" configuration section.
+    /// </param>
+    public AgentMemoryService(
+        HermesDbContext dbContext,
+        LmModelManager modelManager,
+        IVectorStoreService vectorStore,
+        ILogger<AgentMemoryService> logger,
+        IDistributedCache cache,
+        IOptions<AgentMemoryOptions>? memoryOptions = null)
     {
         _dbContext = dbContext;
         _modelManager = modelManager;
         _vectorStore = vectorStore;
         _logger = logger;
         _cache = cache;
+        _options = memoryOptions?.Value ?? new AgentMemoryOptions();
     }
 
     public async Task<Guid> StoreMemoryAsync(Guid tenantId, Guid? userId, string memoryType, string key, string value,
@@ -174,8 +214,16 @@ public class AgentMemoryService : IAgentMemoryService
 
         // Always filter after the shared tenant cache is loaded. A cache hit must
         // never broaden the caller's memory scope.
+        //
+        // Confirmation gate: ExtractAndStoreFactsAsync deliberately writes inferred
+        // facts with IsConfirmed = false, so by DEFAULT they are not recalled — a
+        // human closes the loop via POST /api/memory/{id}/confirm (MemoryView.vue).
+        // AgentMemory:RecallUnconfirmed = true opts a deployment into recalling those
+        // inferred facts too. Scope (MemoryScopePolicy) and expiry are NEVER relaxed
+        // by that switch; only the confirmation requirement is.
+        var recallUnconfirmed = _options.RecallUnconfirmed;
         candidates = candidates
-            .Where(memory => memory.IsConfirmed
+            .Where(memory => (memory.IsConfirmed || recallUnconfirmed)
                 && MemoryScopePolicy.CanRecall(memory.UserId, userId))
             .ToList();
 
@@ -307,18 +355,29 @@ public class AgentMemoryService : IAgentMemoryService
         }
     }
 
+    /// <summary>
+    /// Renders recalled memories as a prompt block, or an EMPTY string when nothing was
+    /// recalled. The empty case is load-bearing: callers use
+    /// <c>!string.IsNullOrEmpty(memoryContext)</c> as the "did we find anything?" test
+    /// (AgentOrchestrator's "🧠 Đã tìm thấy ký ức liên quan" status marker), and an
+    /// unconditional wrapper made that guard always true — the UI claimed recalled
+    /// memories even with zero of them, and the model received an empty
+    /// "Recalled Facts" header for every turn.
+    /// </summary>
     public async Task<string> GetMemoryContextAsync(Guid tenantId, Guid? userId, string currentQuery, CancellationToken ct = default)
     {
         var memories = await RecallMemoriesAsync(tenantId, userId, currentQuery, maxResults: 5, ct);
-        
+
+        if (memories.Count == 0) return string.Empty;
+
         var builder = new System.Text.StringBuilder();
         builder.AppendLine("\n--- Agent Memory (Recalled Facts) ---");
-        
+
         foreach (var m in memories)
         {
             builder.AppendLine($"• [{m.MemoryType}] {m.Key}: {m.Value}");
         }
-        
+
         builder.AppendLine("--- End Memory ---");
         return builder.ToString();
     }

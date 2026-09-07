@@ -1,22 +1,26 @@
 (function () {
-    // 1. Determine the app origin that serves this widget (and the chat iframe).
+    // 1. Locate our own <script> tag: it carries both the app origin that serves
+    //    the chat iframe and the tenant's widget key.
     //    Prefer document.currentScript (accurate for a synchronously executed
-    //    classic script); fall back to locating our own <script> by filename,
-    //    and finally to the host page origin rather than a hardcoded localhost.
-    function resolveAppOrigin() {
+    //    classic script); fall back to locating our own <script> by filename.
+    function resolveScript() {
         var script = document.currentScript;
-        if (!(script && script.src)) {
-            var scripts = document.getElementsByTagName('script');
-            for (var i = scripts.length - 1; i >= 0; i--) {
-                if (scripts[i].src && scripts[i].src.indexOf('widget.js') !== -1) {
-                    script = scripts[i];
-                    break;
-                }
-            }
+        if (script && script.src && script.src.indexOf('widget.js') !== -1) return script;
+        var scripts = document.getElementsByTagName('script');
+        for (var i = scripts.length - 1; i >= 0; i--) {
+            if (scripts[i].src && scripts[i].src.indexOf('widget.js') !== -1) return scripts[i];
         }
-        if (script && script.src) {
+        return script || null;
+    }
+
+    var loaderScript = resolveScript();
+
+    // The app origin, taken from our own src; falls back to the host page origin
+    // rather than a hardcoded localhost.
+    function resolveAppOrigin() {
+        if (loaderScript && loaderScript.src) {
             try {
-                return new URL(script.src).origin;
+                return new URL(loaderScript.src).origin;
             } catch (e) {
                 /* fall through to the host origin */
             }
@@ -24,7 +28,44 @@
         return window.location.origin;
     }
 
+    // The tenant's PUBLIC widget key. Accepted, in order, from:
+    //   <script src=".../widget.js" data-widget-key="KEY"></script>
+    //   <script src=".../widget.js?key=KEY"></script>
+    //   window.LmKitWidget = { key: 'KEY' }   (set before this script loads)
+    // The iframe MUST receive it: /widget/chat switches to the public
+    // (key + widget-token) flow only when ?key= is present. Without it the frame
+    // boots the authenticated dashboard path, gets a 401, fails to refresh and
+    // sends the customer's visitors to our login screen.
+    function resolveWidgetKey() {
+        if (loaderScript) {
+            var attribute = loaderScript.getAttribute('data-widget-key');
+            if (attribute) return attribute.trim();
+            if (loaderScript.src) {
+                try {
+                    var fromQuery = new URL(loaderScript.src).searchParams.get('key');
+                    if (fromQuery) return fromQuery.trim();
+                } catch (e) {
+                    /* malformed src — fall through */
+                }
+            }
+        }
+        if (window.LmKitWidget && window.LmKitWidget.key) return String(window.LmKitWidget.key).trim();
+        return '';
+    }
+
     var baseUrl = resolveAppOrigin();
+    var widgetKey = resolveWidgetKey();
+
+    if (!widgetKey) {
+        // Fail visibly in the console instead of mounting a widget that would 401
+        // and redirect the embedding page. Nothing is added to the host DOM.
+        if (window.console && window.console.error) {
+            window.console.error(
+                '[LM-Kit widget] Thiếu khóa widget. Thêm data-widget-key="<WIDGET_KEY>" vào thẻ <script> nhúng widget.js.'
+            );
+        }
+        return;
+    }
 
     // 2. Add styles for the widget components
     var style = document.createElement('style');
@@ -141,8 +182,10 @@
     
     var iframe = document.createElement('iframe');
     iframe.id = 'lmkit-chat-iframe';
-    // Append a query param to indicate it's embedded if needed
-    iframe.src = baseUrl + '/widget/chat?embed=true';
+    // The key is what switches the frame to the anonymous public flow
+    // (POST /api/widget/auth → widget token → POST /api/widget/chat).
+    iframe.src = baseUrl + '/widget/chat?key=' + encodeURIComponent(widgetKey);
+    iframe.title = 'Trợ lý AI';
     iframe.allow = "clipboard-write; clipboard-read"; // Allow permissions if needed
     
     iframeContainer.appendChild(iframe);

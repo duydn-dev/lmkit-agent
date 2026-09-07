@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Threading.RateLimiting;
 using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Infrastructure.Data.Interceptors;
@@ -8,6 +9,7 @@ using LmKitOmniApi.Infrastructure.AI.Mcp;
 using LmKitOmniApi.Infrastructure.Workers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -15,6 +17,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace LmKitOmniApi.Tests;
 
@@ -245,6 +248,15 @@ public sealed class ApiIntegrationTests : IClassFixture<LmKitApiFactory>
 
 public sealed class LmKitApiFactory : WebApplicationFactory<Program>
 {
+    /// <summary>
+    /// Extra configuration layered on top of the shared test settings, for a one-off
+    /// host (e.g. a tighter rate-limit window). Populate it BEFORE touching
+    /// <c>Services</c>/<c>CreateClient</c> — the host is built lazily on first use.
+    /// Kept as a property rather than a constructor argument: xunit class fixtures
+    /// require this type to have exactly one public constructor.
+    /// </summary>
+    public Dictionary<string, string?> ConfigurationOverrides { get; } = [];
+
     public static readonly Guid TenantId = Guid.Parse("11111111-1111-1111-1111-111111111111");
     public static readonly Guid UserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     public const string Email = "integration@example.test";
@@ -276,8 +288,13 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
                 ["AiModels:WarmupChatModel"] = "false",
                 ["AiModels:RequireChatModelReady"] = "false",
                 ["RateLimiting:AiRequestsPerWindow"] = "10",
-                ["RateLimiting:AiWindowSeconds"] = "3600"
+                ["RateLimiting:AiWindowSeconds"] = "3600",
+                // Generous by default so the widget suite's key exchanges never trip the
+                // limiter; the throttling test spins up its own host with a tight window.
+                ["RateLimiting:WidgetAuthRequestsPerWindow"] = "500",
+                ["RateLimiting:WidgetAuthWindowSeconds"] = "3600"
             });
+            configuration.AddInMemoryCollection(ConfigurationOverrides);
         });
         builder.ConfigureServices(services =>
         {
@@ -304,10 +321,21 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
                     .AddInterceptors(provider.GetRequiredService<AuditSaveChangesInterceptor>()));
             services.RemoveAll<IMcpProtocolClient>();
             services.AddSingleton<IMcpProtocolClient, TestMcpProtocolClient>();
-            // Canned widget chat engine: the public-widget integration tests
-            // exercise the REAL auth/policy/quota pipeline without a model.
+
+            // The public-widget integration tests run the REAL WidgetChatEngine — only
+            // its LM boundary (model load + native Submit) is canned, so the engine's
+            // token subscription, channel drain and guardrail are covered end to end.
+            services.AddSingleton<LmKitOmniApi.Application.Widget.IWidgetInferenceSessionFactory,
+                TestWidgetInferenceSessionFactory>();
             services.RemoveAll<LmKitOmniApi.Application.Widget.IWidgetChatEngine>();
-            services.AddSingleton<LmKitOmniApi.Application.Widget.IWidgetChatEngine, TestWidgetChatEngine>();
+            services.AddScoped<LmKitOmniApi.Application.Widget.IWidgetChatEngine>(provider =>
+                new LmKitOmniApi.Application.Widget.WidgetChatEngine(
+                    provider.GetRequiredService<LmKitOmniApi.Application.Widget.IWidgetInferenceSessionFactory>(),
+                    provider.GetRequiredService<LmKitOmniApi.Infrastructure.AI.Filters.OutputGuardrailFilter>(),
+                    provider.GetRequiredService<ILogger<LmKitOmniApi.Application.Widget.WidgetChatEngine>>()));
+
+            // The "widget-auth" rate-limit policy that POST /api/widget/auth requires is now
+            // registered by Program.cs, so the test host no longer mirrors it here.
         });
     }
 
@@ -447,16 +475,41 @@ public sealed class TestMcpProtocolClient : IMcpProtocolClient
         CancellationToken ct) => Task.FromResult(new McpProtocolCallResult(false, $"{serverName}:{toolName}"));
 }
 
-/// <summary>Canned widget chat engine for integration tests — no model needed.</summary>
-public sealed class TestWidgetChatEngine : LmKitOmniApi.Application.Widget.IWidgetChatEngine
+/// <summary>
+/// Canned LM boundary for the widget engine. Only the model call is faked: the
+/// REAL <see cref="LmKitOmniApi.Application.Widget.WidgetChatEngine"/> runs on top
+/// of it, so the widget integration tests cover its channel plumbing — the token
+/// subscription, the drain and the guardrail. (Substituting the whole engine is
+/// what let a missing AfterTextCompletion subscription ship: every widget answer
+/// was empty and the endpoint always returned the canned apology.)
+/// </summary>
+public sealed class TestWidgetInferenceSessionFactory : LmKitOmniApi.Application.Widget.IWidgetInferenceSessionFactory
 {
     public const string CannedAnswer = "Canned widget answer";
 
-    public async IAsyncEnumerable<string> StreamAnswerAsync(
+    /// <summary>The canned answer, split so the test proves segments are concatenated.</summary>
+    private static readonly string[] Segments = ["Canned ", "widget ", "answer"];
+
+    public ValueTask<LmKitOmniApi.Application.Widget.IWidgetInferenceSession> OpenAsync(
         LmKitOmniApi.Application.Widget.WidgetTurnRequest request,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        CancellationToken ct)
+        => ValueTask.FromResult<LmKitOmniApi.Application.Widget.IWidgetInferenceSession>(new Session());
+
+    private sealed class Session : LmKitOmniApi.Application.Widget.IWidgetInferenceSession
     {
-        await Task.Yield();
-        yield return System.Text.Json.JsonSerializer.Serialize(new { done = true, answer = CannedAnswer });
+        public event EventHandler<LmKitOmniApi.Application.Widget.WidgetTextSegmentEventArgs>? AfterTextCompletion;
+
+        /// <summary>Mirrors the native call: raises each segment synchronously, then returns.</summary>
+        public void Submit(string message, CancellationToken ct)
+        {
+            foreach (var segment in Segments)
+            {
+                ct.ThrowIfCancellationRequested();
+                AfterTextCompletion?.Invoke(this, new LmKitOmniApi.Application.Widget.WidgetTextSegmentEventArgs(
+                    LMKit.TextGeneration.Chat.TextSegmentType.UserVisible, segment));
+            }
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

@@ -232,7 +232,12 @@ public sealed class ComputerUseExecutor : IComputerUseExecutor
                 if (action.Y is int ty) payload["y"] = ty;
                 payload["text"] = action.Text;
                 break;
-            case ComputerUseActionType.Key: payload["keys"] = action.Keys; break;
+            case ComputerUseActionType.Key:
+                // 'ref' names the element the keys are dispatched to (the image focuses it
+                // first); the parser guarantees it is present for a well-formed key press.
+                if (action.Ref is int kr) payload["ref"] = kr;
+                payload["keys"] = action.Keys;
+                break;
             case ComputerUseActionType.Scroll:
                 payload["direction"] = action.Direction;
                 payload["amount"] = action.Amount;

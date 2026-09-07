@@ -369,15 +369,94 @@ public class ComputerUseAgentTests
         Assert.Contains(output, s => s.Contains("🛑"));
     }
 
-    // ── 10. (GAP 1) a bare key press cannot be grounded → refused (closes the
-    //        character-by-character credential-entry bypass around the `type` guard) ──
+    // ── 10. `key` — the NEW contract ──
+    //
+    // HISTORY: this slot used to hold Loop_BareKeyPress_Ungroundable_IsRefused_NotExecuted,
+    // which asserted that a bare `{"action":"key","keys":"h"}` reached the loop's fail-closed
+    // handoff and `yield break`d. That test enshrined a BUG: the parser never populated a Ref
+    // on a key action, RequiresGrounding included Key, and IsGrounded needs a Ref — so EVERY
+    // key press terminated the session, while the system prompt and the decoding grammar both
+    // advertised `key`. Pressing Enter, the most common browser primitive, was impossible.
+    //
+    // The contract now: a key press must NAME the element it is sent to. A bare key press is
+    // rejected by the PARSER (so the grounding retry can hand the model the valid refs and it
+    // can re-emit the same press correctly, instead of the run ending), and a key press with a
+    // real ref is groundable, is vetted by the safety guard, is approval-gated, and executes.
 
     [Fact]
-    public async Task Loop_BareKeyPress_Ungroundable_IsRefused_NotExecuted()
+    public async Task Loop_BareKeyPress_WithoutRef_IsRejected_NotExecuted_AndRunContinues()
     {
         var executor = new FakeExecutor(WithElements(new InteractiveElement(1, "textbox", "Search", null)));
-        // Repeated via fallback so it persists through the grounding retries and still fails closed.
-        var model = new FakeModel(Array.Empty<string>(), fallback: "{\"action\":\"key\",\"keys\":\"h\"}");
+        var model = new FakeModel(new[]
+        {
+            "{\"action\":\"key\",\"keys\":\"h\"}",              // no ref → not representable
+            "{\"action\":\"done\",\"summary\":\"gave up on the key\"}",
+        });
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_(o => o.GroundingRetries = 0));
+
+        var output = await CollectAsync(agent.RunAsync(Request(startUrl: "https://1.1.1.1/"), default));
+
+        Assert.DoesNotContain(ComputerUseActionType.Key, executor.Actions); // never executed
+        Assert.Equal(0, gate.CallCount);                                    // never gated
+        // Rejected as unparseable, and the loop CONTINUES (it used to end the whole session).
+        Assert.Contains(output, s => s.Contains("Không phân tích được hành động"));
+        Assert.Contains(output, s => s.Contains("gave up on the key"));
+    }
+
+    [Fact]
+    public async Task Loop_KeyPressWithRef_IsApproved_AndExecuted()
+    {
+        // Pressing Enter on a real element is the primitive the old contract made impossible.
+        var executor = new FakeExecutor(WithElements(new InteractiveElement(1, "textbox", "Search", null)));
+        var model = new FakeModel(new[]
+        {
+            "{\"action\":\"screenshot\"}",                        // observe → ref 1 is known
+            "{\"action\":\"key\",\"ref\":1,\"keys\":\"Enter\"}",  // groundable key press
+            "{\"action\":\"done\",\"summary\":\"submitted\"}",
+        });
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_());
+
+        var output = await CollectAsync(agent.RunAsync(Request(), default));
+
+        Assert.Equal(new[] { ComputerUseActionType.Screenshot, ComputerUseActionType.Key }, executor.Actions);
+        Assert.Equal(1, gate.CallCount); // side-effecting → still human-approved
+        Assert.Contains(output, s => s.StartsWith("[HITL_APPROVAL_REQUIRED:", StringComparison.Ordinal));
+        Assert.Contains(output, s => s.Contains("submitted"));
+    }
+
+    [Fact]
+    public async Task Loop_KeyPressIntoPasswordField_IsHandedOff_NeverPressed()
+    {
+        // The safety property the old (broken) behaviour bought by accident must survive:
+        // keystrokes must never reach a credential field, one character at a time.
+        var executor = new FakeExecutor(WithElements(
+            new InteractiveElement(1, "textbox", "Tên đăng nhập", null),
+            new InteractiveElement(2, "textbox", "Mật khẩu", null)));
+        var model = new FakeModel(new[]
+        {
+            "{\"action\":\"screenshot\"}",
+            "{\"action\":\"key\",\"ref\":2,\"keys\":\"h\"}",
+        });
+        var gate = new FakeApprovalGate(decision: true);
+        var agent = CreateAgent(executor, model, gate, Options_());
+
+        var output = await CollectAsync(agent.RunAsync(Request(), default));
+
+        Assert.Equal(new[] { ComputerUseActionType.Screenshot }, executor.Actions);
+        Assert.DoesNotContain(ComputerUseActionType.Key, executor.Actions);
+        Assert.Equal(0, gate.CallCount); // refused outright — never routed to approval
+        Assert.Contains(output, s => s.Contains("🛑"));
+    }
+
+    [Fact]
+    public async Task Loop_KeyPressWithStaleRef_IsRefused_NotExecuted()
+    {
+        // A key press naming an element that is NOT in the current observation is still
+        // un-groundable and still fails closed.
+        var executor = new FakeExecutor(WithElements(new InteractiveElement(1, "textbox", "Search", null)));
+        var model = new FakeModel(Array.Empty<string>(), fallback: "{\"action\":\"key\",\"ref\":99,\"keys\":\"Enter\"}");
         var gate = new FakeApprovalGate(decision: true);
         var agent = CreateAgent(executor, model, gate, Options_());
 
@@ -411,6 +490,27 @@ public class ComputerUseAgentTests
         Assert.DoesNotContain(ComputerUseActionType.Type, executor.Actions);
         Assert.Equal(0, gate.CallCount);
         Assert.Contains(output, s => s.Contains("🛑"));
+    }
+
+    // ── 11b. the shipped time budgets must be able to co-exist ──
+
+    [Fact]
+    public void DefaultTimeBudgets_AreMutuallyAchievable()
+    {
+        // SessionWallClockSeconds=300 with ApprovalTimeoutSeconds=300 was self-defeating: the
+        // session was cancelled at exactly the moment ONE approval was still allowed to be
+        // pending, so any run that asked a human anything could never finish.
+        var defaults = new ComputerUseOptions();
+
+        Assert.True(defaults.AreTimeBudgetsConsistent,
+            $"Session budget {defaults.SessionWallClockSeconds}s cannot cover the worst case "
+            + $"{defaults.WorstCaseSessionSeconds}s ({defaults.MaxSteps} × ({defaults.StepTimeoutSeconds}s + "
+            + $"{defaults.ApprovalTimeoutSeconds}s)).");
+        Assert.True(defaults.ApprovalTimeoutSeconds < defaults.SessionWallClockSeconds);
+
+        // And the check actually detects the old, broken pairing.
+        var broken = new ComputerUseOptions { SessionWallClockSeconds = 300, ApprovalTimeoutSeconds = 300 };
+        Assert.False(broken.AreTimeBudgetsConsistent);
     }
 
     // ── 12. (GAP 2) a step whose observation.Url leaves the allowlist → session stops ──

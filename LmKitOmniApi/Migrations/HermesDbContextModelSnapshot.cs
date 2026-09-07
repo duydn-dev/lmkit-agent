@@ -1118,7 +1118,10 @@ namespace LmKitOmniApi.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId");
+                    b.HasIndex("TenantId")
+                        .IsUnique();
+
+                    b.HasIndex("WidgetApiKeyHash");
 
                     b.ToTable("tenant_widget_settings");
                 });

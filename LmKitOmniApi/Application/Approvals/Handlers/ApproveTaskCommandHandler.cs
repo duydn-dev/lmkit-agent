@@ -53,9 +53,12 @@ public class ApproveTaskCommandHandler : IRequestHandler<ApproveTaskCommand, App
         // Execute tool directly. The orchestrator re-checks the caller's current
         // permissions at execution time.
         string result;
+        // Hoisted out of the try so the reconciler below can record the same input on
+        // both paths; an unprotect failure leaves it empty and lands in the catch.
+        var parameters = string.Empty;
         try
         {
-            var parameters = _payloadProtector.Unprotect(task.ParametersJson);
+            parameters = _payloadProtector.Unprotect(task.ParametersJson);
             result = await _agentOrchestrator.ExecuteDirectActionAsync(
                 request.TenantId,
                 request.UserId,
@@ -78,9 +81,41 @@ public class ApproveTaskCommandHandler : IRequestHandler<ApproveTaskCommand, App
                 .ExecuteUpdateAsync(
                     setters => setters.SetProperty(t => t.Status, "Failed"),
                     cancellationToken);
+            await ReconcileAgentRunAsync(
+                () => AgentRunApprovalReconciler.RecordFailedExecutionAsync(
+                    _dbContext, task, parameters, cancellationToken),
+                request.TaskId);
             return new ApproveTaskResult { Outcome = ApproveTaskOutcome.Failed };
         }
 
+        // An agent run parked on this approval is otherwise stuck in
+        // "AwaitingApproval" forever: record the call it was waiting on as a real
+        // step and move the run to a terminal state. No-ops for a chat approval.
+        await ReconcileAgentRunAsync(
+            () => AgentRunApprovalReconciler.RecordApprovedExecutionAsync(
+                _dbContext, task, parameters, result, cancellationToken),
+            request.TaskId);
+
         return new ApproveTaskResult { Outcome = ApproveTaskOutcome.Completed, Result = result };
+    }
+
+    /// <summary>
+    /// Runs the agent-run reconciliation without letting it change the approval's
+    /// outcome. The tool has already run (or already failed) and the approval row is
+    /// already resolved by this point, so a bookkeeping failure must not turn a
+    /// successful approval into a 500 that invites a pointless retry.
+    /// </summary>
+    private async Task ReconcileAgentRunAsync(Func<Task<bool>> reconcile, Guid taskId)
+    {
+        try
+        {
+            await reconcile();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to reconcile the agent run parked on approval {TaskId}; the run may stay in AwaitingApproval.",
+                taskId);
+        }
     }
 }
