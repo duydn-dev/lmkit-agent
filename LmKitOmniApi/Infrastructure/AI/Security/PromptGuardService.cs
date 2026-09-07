@@ -110,13 +110,28 @@ public class PromptGuardService : IPromptGuardService
     };
 
     // Output leakage patterns — precompiled once at load; scanned in order against model output.
+    //
+    // The credential and PII entries compile the pattern TEXTS owned by
+    // OutputGuardrailFilter rather than spelling patterns of their own. Detection and
+    // redaction used to carry two hand-maintained copies per threat class, and they had
+    // drifted: the credential detector demanded a ':'/'=' separator that the redactor
+    // treated as optional. Because redaction only runs once detection has fired, that
+    // one difference decided whether a real secret ("SECRET_KEY hunter2xyz") was
+    // scrubbed or emitted verbatim — and it decided it from unrelated text elsewhere in
+    // the same answer. Compiling one string twice (this copy keeps the detector's 500 ms
+    // match timeout; the redaction copy stays untimed like the rest of the redaction
+    // path) makes detection-narrower-than-redaction impossible by construction.
+    //
+    // The dependency runs Security -> Filters on purpose: OutputGuardrailFilter is the
+    // documented owner of the redaction transform, so the text lives next to the Regex
+    // that applies it. These are compile-time consts, so there is no type-init ordering
+    // between the two classes.
     private static readonly (Regex Rx, string ThreatType)[] LeakagePatterns =
     {
         (new Regex(@"(?i)(system\s+prompt|my\s+instructions?\s+are|i\s+was\s+told\s+to|my\s+guidelines?\s+(say|are))", RegexOptions.Compiled, TimeSpan.FromMilliseconds(500)), ThreatTypes.SystemPromptLeakage),
-        (new Regex(@"(?i)(API[-_\s]?KEY|SECRET[-_\s]?KEY|PASSWORD|TOKEN)\s*[:=]\s*\S+", RegexOptions.Compiled, TimeSpan.FromMilliseconds(500)), ThreatTypes.CredentialLeakage),
-        (new Regex(@"(?i)\bBEARER\s+\S+", RegexOptions.Compiled, TimeSpan.FromMilliseconds(500)), ThreatTypes.CredentialLeakage),
-        (new Regex(@"\b(?:\d{3}[-.\s]?\d{2}[-.\s]?\d{4})\b", RegexOptions.Compiled, TimeSpan.FromMilliseconds(500)), ThreatTypes.PIILeakage), // SSN pattern
-        (new Regex(@"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", RegexOptions.Compiled, TimeSpan.FromMilliseconds(500)), ThreatTypes.PIILeakage), // Email pattern
+        (new Regex(Filters.OutputGuardrailFilter.CredentialPatternText, RegexOptions.Compiled, TimeSpan.FromMilliseconds(500)), ThreatTypes.CredentialLeakage),
+        (new Regex(Filters.OutputGuardrailFilter.SsnPatternText, RegexOptions.Compiled, TimeSpan.FromMilliseconds(500)), ThreatTypes.PIILeakage),
+        (new Regex(Filters.OutputGuardrailFilter.EmailPatternText, RegexOptions.Compiled, TimeSpan.FromMilliseconds(500)), ThreatTypes.PIILeakage),
     };
 
     // Heuristic thresholds

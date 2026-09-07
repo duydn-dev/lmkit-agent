@@ -87,8 +87,16 @@ public sealed class StreamingGuardrailGatePropertyTests
     [InlineData("bob.smith@example.com")]
     [InlineData("a@b.co")]
     [InlineData("API_KEY: sk-live-abcdef")]
-    [InlineData("Bearer eyJhbGciOi")]
+    // A real JWT header segment. It used to read "Bearer eyJhbGciOi", which the old
+    // \bBEARER\s+\S+ detector matched because ANY word after "Bearer" was a credential
+    // to it — the same rule that rewrote "Bearer authentication is required" in ordinary
+    // answers. The shared pattern asks the value to look like a secret (8+ characters,
+    // at least one digit), which every real base64url token satisfies and that
+    // hand-truncated stub did not. The residual is pinned in
+    // CredentialGuardrailCorpusTests.SeparatorLessValueWithNoDigit_IsTheDocumentedResidual.
+    [InlineData("Bearer eyJhbGciOiJIUzI1NiJ9")]
     [InlineData("password=hunter2")]
+    [InlineData("SECRET_KEY hunter2xyz")]
     public async Task MatchEndingExactlyAtTheLiveEdge_NeverEscapes(string secret)
     {
         var document = Prose(30) + " " + secret;
@@ -234,29 +242,34 @@ public sealed class StreamingGuardrailGatePropertyTests
     }
 
     /// <summary>
-    /// Finding surfaced by the randomized corpus, OUTSIDE this gate's scope and NOT
-    /// fixed here. <see cref="OutputGuardrailFilter.CredentialRedactionPattern"/> makes
-    /// the ':'/'=' separator optional, but <c>PromptGuardService</c>'s detection pattern
-    /// makes it mandatory — and the filter only redacts when the detector fires. So a
-    /// credential written with a plain space ("SECRET_KEY hunter2") is never detected
-    /// and therefore never redacted, unless some OTHER credential in the same answer
-    /// happens to trip the detector, at which point the broader redaction pattern
-    /// scrubs it too.
+    /// Finding surfaced by the randomized corpus, since FIXED — this test used to be
+    /// called <c>CredentialsWithoutASeparatorAreNeverDetected</c> and PINNED the leak.
     ///
-    /// <para>This test pins the current behaviour so the gate's own tests cannot
-    /// silently assume a scrub that the product does not perform. The gate is correct
-    /// either way: it holds nothing back that the full pass would have kept.</para>
+    /// <para><see cref="OutputGuardrailFilter.CredentialRedactionPattern"/> made the
+    /// ':'/'=' separator optional while <c>PromptGuardService</c>'s detection pattern
+    /// made it mandatory, and the filter only redacts once the detector has fired. A
+    /// credential written with a plain space ("SECRET_KEY hunter2xyz") was therefore
+    /// delivered to the user in the clear — UNLESS some unrelated credential in the same
+    /// answer happened to carry a colon, at which point the wider redaction pattern
+    /// scrubbed it after all. The same secret leaked or did not depending on text
+    /// elsewhere in the answer.</para>
+    ///
+    /// <para>Both stages now compile
+    /// <see cref="OutputGuardrailFilter.CredentialPatternText"/>, so this asserts what
+    /// the product must do: scrub the value either way, and identically. The
+    /// false-positive cost of the wider detector is measured in
+    /// <c>CredentialGuardrailCorpusTests</c>.</para>
     /// </summary>
     [Fact]
-    public async Task CredentialsWithoutASeparatorAreNeverDetected()
+    public async Task CredentialsWithoutASeparatorAreScrubbedRegardlessOfTheRestOfTheAnswer()
     {
         var guard = new PromptGuardService(NullLogger<PromptGuardService>.Instance);
         var filter = new OutputGuardrailFilter(guard, NullLogger<OutputGuardrailFilter>.Instance);
 
         var spaceOnly = await filter.OnOutputAsync(new AgentFilterContext { Output = "SECRET_KEY hunter2xyz" });
-        Assert.Contains("hunter2xyz", spaceOnly.ProcessedContent);
+        Assert.DoesNotContain("hunter2xyz", spaceOnly.ProcessedContent);
 
-        // One colon anywhere in the answer flips the whole answer into redaction.
+        // ...and a colon elsewhere in the answer no longer changes that outcome.
         var withColon = await filter.OnOutputAsync(
             new AgentFilterContext { Output = "TOKEN: abc123. SECRET_KEY hunter2xyz" });
         Assert.DoesNotContain("hunter2xyz", withColon.ProcessedContent);
@@ -272,8 +285,9 @@ public sealed class StreamingGuardrailGatePropertyTests
     ///
     /// <para><paramref name="secrets"/> are the values planted in the document. Only
     /// the ones the full pass actually removes are policed mid-stream — a value the
-    /// product never redacts (see <see cref="CredentialsWithoutASeparatorAreNeverDetected"/>)
-    /// is not something the gate is allowed to withhold. Pass
+    /// product never redacts (a separator-less value shorter than 8 characters or
+    /// carrying no digit; see <c>CredentialGuardrailCorpusTests</c> for where that line
+    /// is drawn and why) is not something the gate is allowed to withhold. Pass
     /// <paramref name="requireAllScrubbed"/> for fixtures built so that every planted
     /// value MUST be redacted, which keeps those cases from silently going vacuous.</para>
     /// </summary>
