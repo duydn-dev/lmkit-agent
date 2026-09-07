@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -65,17 +64,17 @@ internal static class RateLimitTestHost
         IDictionary<string, string?>? configuration = null)
         => parent.WithWebHostBuilder(builder =>
         {
-            foreach (var (key, value) in configuration ?? new Dictionary<string, string?>())
-            {
-                // UseSetting, NOT ConfigureAppConfiguration. WebApplicationFactory relays
-                // HOST configuration to the entry point as command-line arguments, so
-                // UseSetting values are present in builder.Configuration while Program.cs's
-                // top-level statements run. ConfigureAppConfiguration is only merged during
-                // builder.Build(), i.e. AFTER the rate-limit policies and the forwarded-header
-                // validation have already read their settings — an override made that way is
-                // silently ignored (verified: it left the AI budget at its default of 10).
-                builder.UseSetting(key, value);
-            }
+            // The parent factory has already written its own defaults into the SAME host
+            // configuration layer, so these plainly overwrite them — for the settings
+            // Program.cs reads before builder.Build() (the rate-limit budget, the
+            // forwarded-header trust list) AND for the ones read afterwards. While the
+            // parent still layered its defaults through ConfigureAppConfiguration, only the
+            // first half of that was true: this host's budget of 2 governed the "ai-agent"
+            // policy while DistributedAiRateLimitMiddleware, constructed per request from
+            // IConfiguration, still read the parent's 10. See TestHostConfiguration.
+            TestHostConfiguration.Apply(
+                builder,
+                configuration ?? new Dictionary<string, string?>());
 
             builder.ConfigureServices(services =>
                 services.AddSingleton<IStartupFilter, TestPeerIpStartupFilter>());

@@ -57,6 +57,12 @@ public class TaskApprovalController : ApiControllerBase
         if (outcome.Outcome == ApproveTaskOutcome.Expired)
             return StatusCode(StatusCodes.Status410Gone, "Task approval has expired and was not executed.");
 
+        // 202 rather than 200: the decision is accepted and stored, but nothing ran here.
+        // A computer-use action is performed by the loop that is polling this row, in its
+        // own browser container — this endpoint only tells it yes.
+        if (outcome.Outcome == ApproveTaskOutcome.Recorded)
+            return Accepted(new { Success = true, Result = outcome.Result });
+
         if (outcome.Outcome == ApproveTaskOutcome.Failed)
         {
             return StatusCode(StatusCodes.Status500InternalServerError, new

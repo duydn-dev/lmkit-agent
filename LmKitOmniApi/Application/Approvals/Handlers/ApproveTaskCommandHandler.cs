@@ -2,6 +2,7 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Application.Approvals.Commands;
+using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Infrastructure.Security;
 
@@ -43,6 +44,15 @@ public class ApproveTaskCommandHandler : IRequestHandler<ApproveTaskCommand, App
         // say why, instead of letting it read as a lost race.
         if (task.Status == "Pending" && task.ExpiresAtUtc <= now)
             return new ApproveTaskResult { Outcome = ApproveTaskOutcome.Expired };
+
+        // A computer-use approval is a HITL marker, not a tool call: the action runs in the
+        // computer-use loop's own browser container and that loop is what polls this row.
+        // Sending it through ExecuteDirectActionAsync below could only fail (no role grants
+        // a "COMPUTER_USE" tool permission), the catch would write Failed, and the gate
+        // reads Failed as a REJECTION — so clicking "approve" used to reject the action.
+        // Record the decision instead, which is all the gate ever needed.
+        if (string.Equals(task.ActionName, TaskApproval.ComputerUseActionName, StringComparison.Ordinal))
+            return await RecordComputerUseApprovalAsync(request, now, cancellationToken);
 
         // Atomically claim the task. Two concurrent approval requests must never
         // execute the same side-effecting tool twice. The deadline is repeated inside the
@@ -110,6 +120,44 @@ public class ApproveTaskCommandHandler : IRequestHandler<ApproveTaskCommand, App
             request.TaskId);
 
         return new ApproveTaskResult { Outcome = ApproveTaskOutcome.Completed, Result = result };
+    }
+
+    /// <summary>
+    /// Records a YES on a computer-use approval and returns, executing nothing here.
+    ///
+    /// <para>The claim is the same atomic Pending→terminal transition every other
+    /// resolution path uses — including the deadline predicate, and the same
+    /// <c>ActionName</c> restriction <c>ResolveComputerUseApprovalCommandHandler</c>
+    /// applies — so this endpoint and the dedicated one cannot both win, and neither can
+    /// re-open a row the gate already timed out (that row is no longer Pending). No agent
+    /// run is reconciled: a computer-use session is its own hidden substrate and never has
+    /// an <c>AgentRun</c> parked on it.</para>
+    /// </summary>
+    private async Task<ApproveTaskResult> RecordComputerUseApprovalAsync(
+        ApproveTaskCommand request, DateTime now, CancellationToken cancellationToken)
+    {
+        var claimed = await _dbContext.TaskApprovals
+            .Where(t => t.Id == request.TaskId
+                && t.TenantId == request.TenantId
+                && t.UserId == request.UserId
+                && t.ActionName == TaskApproval.ComputerUseActionName
+                && t.Status == "Pending"
+                && t.ExpiresAtUtc > now)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(t => t.Status, "Approved")
+                .SetProperty(t => t.ResolvedAtUtc, DateTime.UtcNow),
+                cancellationToken);
+
+        if (claimed == 0)
+            return new ApproveTaskResult { Outcome = ApproveTaskOutcome.Conflict };
+
+        _logger.LogInformation(
+            "Recorded a computer-use approval for {TaskId}; the waiting loop performs the action.", request.TaskId);
+        return new ApproveTaskResult
+        {
+            Outcome = ApproveTaskOutcome.Recorded,
+            Result = "Đã ghi nhận phê duyệt. Phiên computer-use sẽ thực hiện hành động này."
+        };
     }
 
     /// <summary>

@@ -1,5 +1,6 @@
 using System.Reflection;
 using LmKitOmniApi.Application.Abstractions;
+using LmKitOmniApi.Application.Approvals;
 using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.AI;
 using LmKitOmniApi.Infrastructure.AI.Tools;
@@ -18,8 +19,16 @@ namespace LmKitOmniApi.Tests;
 /// knowledge base.
 ///
 /// <see cref="AgentOrchestrator.ResolveApprovedActionOptionsAsync"/> recovers that scope
-/// from the approval's own chat session (approval → session → bound custom agent), and
-/// these tests pin it against the SHIPPING whitelist gate the dispatcher applies.
+/// from TWO sources and executes under the intersection: the snapshot written onto the
+/// approval row when it was created (<c>TaskApproval.RequestOptionsJson</c>) and the live
+/// walk approval → session → bound custom agent. These tests pin the result against the
+/// SHIPPING whitelist gate the dispatcher applies.
+///
+/// <para>The snapshot exists because the walk alone was not enough: deleting a custom
+/// agent NULLs every session's binding to it, so a pending approval from that session
+/// resolved as unbound and ran with NO narrowing at all — more authority than the turn
+/// that requested it (known-issues #2). The intersection exists because either source can
+/// be stale in the widening direction, and the safe direction must be the default.</para>
 /// </summary>
 [Collection("DbSqlite")]
 public sealed class ApprovedActionScopeTests : IDisposable
@@ -63,7 +72,25 @@ public sealed class ApprovedActionScopeTests : IDisposable
         FullName = "Test user"
     };
 
-    private Guid SeedApproval(CustomAgent? agent, string action = "RAG")
+    /// <summary>
+    /// Seeds an approval the way <c>AgentOrchestrator.ExecuteActionWithResilienceAsync</c>
+    /// writes one: bound to a session, and carrying the snapshot of the requesting turn's
+    /// scope. The snapshot is produced by the SHIPPING serializer
+    /// (<see cref="ApprovalScopeSnapshot.Capture"/>) rather than hand-written JSON, so a
+    /// change to its format cannot make these tests pass against a payload production
+    /// never writes.
+    ///
+    /// <para><paramref name="snapshotScope"/> defaults to the agent's own scope, which is
+    /// what the chat path passes as the turn's options. Pass <c>null</c> explicitly for
+    /// <paramref name="captureSnapshot"/>=false to reproduce a row written before this
+    /// column existed.</para>
+    /// </summary>
+    private Guid SeedApproval(
+        CustomAgent? agent,
+        string action = "RAG",
+        bool captureSnapshot = true,
+        AgentRequestOptions? snapshotScope = null,
+        string? rawSnapshotJson = null)
     {
         if (agent is not null) _db.CustomAgents.Add(agent);
 
@@ -85,11 +112,29 @@ public sealed class ApprovedActionScopeTests : IDisposable
             ChatSessionId = sessionId,
             ActionName = action,
             ParametersJson = "tra cứu tài liệu nội bộ",
-            Status = "Pending"
+            Status = "Pending",
+            RequestOptionsJson = rawSnapshotJson
+                ?? (captureSnapshot
+                    ? ApprovalScopeSnapshot.Capture(snapshotScope ?? ScopeOf(agent))
+                    : null)
         });
 
         _db.SaveChanges();
         return approvalId;
+    }
+
+    /// <summary>The per-request options the chat path derives from a bound custom agent.</summary>
+    private static AgentRequestOptions? ScopeOf(CustomAgent? agent)
+    {
+        if (agent is null) return null;
+        var tools = LmKitOmniApi.Application.CustomAgents.CustomAgentRules.ParseToolsCsv(agent.AllowedToolsCsv);
+        return new AgentRequestOptions
+        {
+            AllowWebSearch = tools is null || tools.Contains("SearchWeb", StringComparer.OrdinalIgnoreCase),
+            AllowedTools = tools,
+            KnowledgeDocumentIds = LmKitOmniApi.Application.CustomAgents.CustomAgentRules
+                .ParseDocumentIdsCsv(agent.KnowledgeDocumentIdsCsv)
+        };
     }
 
     private CustomAgent RestrictedAgent(Guid? knowledgeDocumentId = null) => new()
@@ -176,30 +221,198 @@ public sealed class ApprovedActionScopeTests : IDisposable
     // ── 2. Fail-closed when the scope cannot be reconstructed ──
 
     /// <summary>
-    /// DOCUMENTED RESIDUAL GAP, pinned so it cannot change silently. Deleting a custom
-    /// agent NULLs every session's binding to it
-    /// (<c>ChatSession.CustomAgentId</c>, <c>DeleteBehavior.SetNull</c> in HermesDbContext),
-    /// so after a delete there is nothing left to reconstruct the requesting turn's scope
-    /// from and the approval executes unscoped — exactly the pre-fix behaviour. Closing
-    /// this last case requires snapshotting the scope onto the approval row itself
-    /// (a schema change); tracked in LmKitOmniApi/docs/known-issues.md.
+    /// THE SECURITY FIX (known-issues #2, now closed). Deleting a custom agent NULLs every
+    /// session's binding to it (<c>ChatSession.CustomAgentId</c>,
+    /// <c>DeleteBehavior.SetNull</c> in HermesDbContext), so the session walk reports
+    /// "unbound" — and unbound used to mean UNSCOPED. A tool call the user had restricted
+    /// at request time then executed with no narrowing at all: a RAG approval raised inside
+    /// a document-scoped agent queried the whole tenant knowledge base, and a whitelist
+    /// that excluded PYTHON stopped excluding it.
+    ///
+    /// <para>The scope is now snapshotted onto the approval row when it is created, and the
+    /// row survives the delete. This test asserts the exact scope the requesting turn ran
+    /// under, through the dispatcher's own whitelist gate — the inverse of what it pinned
+    /// before the fix.</para>
     /// </summary>
     [Fact]
-    public async Task ApprovedAction_FallsBackToUnscoped_WhenTheBoundAgentWasDeleted()
+    public async Task ApprovedAction_KeepsTheRequestingTurnsScope_WhenTheBoundAgentWasDeleted()
     {
-        var agent = RestrictedAgent();
+        var pinned = Guid.NewGuid();
+        var agent = RestrictedAgent(pinned);
         var approvalId = SeedApproval(agent);
 
         _db.CustomAgents.Remove(agent);
         _db.SaveChanges();
 
-        // The DB itself cleared the binding.
+        // The DB itself cleared the binding, so the session walk has nothing left to say.
         Assert.False(await _db.ChatSessions.AnyAsync(session => session.CustomAgentId != null));
 
         var options = await AgentOrchestrator.ResolveApprovedActionOptionsAsync(
             _db, _tenantId, _userId, approvalId, CancellationToken.None);
 
-        Assert.Null(options);
+        Assert.NotNull(options);
+        Assert.Equal(new[] { "QueryKnowledgeBase", "AnalyzeText" }, options!.AllowedTools!.ToArray());
+        Assert.Equal(new[] { pinned }, options.KnowledgeDocumentIds!.ToArray());
+        Assert.False(options.AllowWebSearch);
+
+        // The whole point, through the gate the approved execution actually passes:
+        Assert.True(DispatcherWouldAllow("RAG", options));
+        Assert.False(DispatcherWouldAllow("PYTHON", options));
+        Assert.False(DispatcherWouldAllow("MCP:anything", options));
+    }
+
+    /// <summary>
+    /// A row written before the snapshot column existed still behaves exactly as it did
+    /// then — the fallback is the session walk, which is right for every case but the
+    /// deleted-agent one, and no migration could have reconstructed that.
+    /// </summary>
+    [Fact]
+    public async Task ApprovedAction_FallsBackToTheSessionWalk_ForAPreSnapshotRow()
+    {
+        var agent = RestrictedAgent();
+        var approvalId = SeedApproval(agent, captureSnapshot: false);
+
+        Assert.Null(await _db.TaskApprovals.AsNoTracking()
+            .Where(t => t.Id == approvalId).Select(t => t.RequestOptionsJson).SingleAsync());
+
+        var options = await AgentOrchestrator.ResolveApprovedActionOptionsAsync(
+            _db, _tenantId, _userId, approvalId, CancellationToken.None);
+
+        Assert.Equal(new[] { "QueryKnowledgeBase", "AnalyzeText" }, options!.AllowedTools!.ToArray());
+    }
+
+    /// <summary>
+    /// And the pre-snapshot row whose agent was deleted keeps the OLD behaviour, unscoped,
+    /// because there is genuinely nothing left to recover. Stated rather than hidden: the
+    /// fix protects rows created from this deploy onward, not rows that were already
+    /// pending when it shipped.
+    /// </summary>
+    [Fact]
+    public async Task ApprovedAction_StaysUnscoped_ForAPreSnapshotRowWhoseAgentWasDeleted()
+    {
+        var agent = RestrictedAgent();
+        var approvalId = SeedApproval(agent, captureSnapshot: false);
+        _db.CustomAgents.Remove(agent);
+        _db.SaveChanges();
+
+        Assert.Null(await AgentOrchestrator.ResolveApprovedActionOptionsAsync(
+            _db, _tenantId, _userId, approvalId, CancellationToken.None));
+    }
+
+    /// <summary>
+    /// The snapshot never WIDENS either. An agent narrowed while the approval sat pending
+    /// is honoured at its narrower setting, exactly as before the snapshot existed — the
+    /// resolver takes the intersection of the two, not whichever it read first.
+    /// </summary>
+    [Fact]
+    public async Task ApprovedAction_UsesTheNarrowerOfSnapshotAndAgent_WhenTheAgentNarrowedWhilePending()
+    {
+        var agent = RestrictedAgent();
+        var approvalId = SeedApproval(agent); // snapshot: QueryKnowledgeBase + AnalyzeText
+
+        agent.AllowedToolsCsv = "AnalyzeText";
+        _db.SaveChanges();
+
+        var options = await AgentOrchestrator.ResolveApprovedActionOptionsAsync(
+            _db, _tenantId, _userId, approvalId, CancellationToken.None);
+
+        Assert.Equal(new[] { "AnalyzeText" }, options!.AllowedTools!.ToArray());
+        Assert.False(DispatcherWouldAllow("RAG", options));
+        Assert.True(DispatcherWouldAllow("NLP", options));
+    }
+
+    /// <summary>
+    /// The other direction of the same rule: an agent WIDENED while the approval sat
+    /// pending does not widen the approval. The requesting turn could not run PYTHON, so
+    /// neither can its approval.
+    /// </summary>
+    [Fact]
+    public async Task ApprovedAction_IsNotWidened_WhenTheAgentGainedToolsWhilePending()
+    {
+        var agent = RestrictedAgent();
+        var approvalId = SeedApproval(agent);
+
+        agent.AllowedToolsCsv = "QueryKnowledgeBase,AnalyzeText,RunPython,SearchWeb";
+        _db.SaveChanges();
+
+        var options = await AgentOrchestrator.ResolveApprovedActionOptionsAsync(
+            _db, _tenantId, _userId, approvalId, CancellationToken.None);
+
+        Assert.Equal(new[] { "QueryKnowledgeBase", "AnalyzeText" }, options!.AllowedTools!.ToArray());
+        Assert.False(options.AllowWebSearch);
+        Assert.False(DispatcherWouldAllow("PYTHON", options));
+        Assert.False(DispatcherWouldAllow("WEB_SEARCH", options));
+    }
+
+    /// <summary>
+    /// The document pin is intersected the same way — and when the two pins share NOTHING
+    /// the answer is deny-all, not "no documents". An empty document allowlist is read by
+    /// <c>RagPipelineService</c> as NO RESTRICTION, so writing the empty intersection would
+    /// silently widen retrieval from one pinned document to the whole tenant knowledge
+    /// base: the exact leak this whole mechanism exists to prevent.
+    /// </summary>
+    [Fact]
+    public async Task ApprovedAction_DeniesEverything_WhenTheAgentsPinnedDocumentsWereEntirelyReplaced()
+    {
+        var agent = RestrictedAgent(Guid.NewGuid());
+        var approvalId = SeedApproval(agent);
+
+        agent.KnowledgeDocumentIdsCsv = Guid.NewGuid().ToString();
+        _db.SaveChanges();
+
+        var options = await AgentOrchestrator.ResolveApprovedActionOptionsAsync(
+            _db, _tenantId, _userId, approvalId, CancellationToken.None);
+
+        Assert.NotNull(options?.AllowedTools);
+        Assert.Empty(options!.AllowedTools!);
+        Assert.False(DispatcherWouldAllow("RAG", options));
+    }
+
+    /// <summary>
+    /// A snapshot that is present but unreadable is NOT an absent snapshot: the requesting
+    /// turn was narrowed by something this code can no longer parse, so the approval is
+    /// refused rather than run wide open. This is why the column is stored in plain text —
+    /// encrypting it would put the data-protection keyring on this path, and a rotated key
+    /// would land every pending approval in the system here.
+    /// </summary>
+    [Fact]
+    public async Task ApprovedAction_DeniesEverything_WhenTheSnapshotCannotBeParsed()
+    {
+        var approvalId = SeedApproval(agent: null, rawSnapshotJson: "{ not json at all");
+
+        var options = await AgentOrchestrator.ResolveApprovedActionOptionsAsync(
+            _db, _tenantId, _userId, approvalId, CancellationToken.None);
+
+        Assert.NotNull(options?.AllowedTools);
+        Assert.Empty(options!.AllowedTools!);
+        Assert.False(options.AllowWebSearch);
+        Assert.False(DispatcherWouldAllow("RAG", options));
+    }
+
+    /// <summary>
+    /// The deny-all from an un-shared agent survives the intersection: a snapshot can never
+    /// re-open a scope the live walk has closed.
+    /// </summary>
+    [Fact]
+    public async Task ApprovedAction_StaysDenyAll_WhenAnUnsharedAgentMeetsAGenerousSnapshot()
+    {
+        var otherOwner = NewUser(Guid.NewGuid());
+        _db.Users.Add(otherOwner);
+        _db.SaveChanges();
+
+        var agent = RestrictedAgent();
+        agent.OwnerUserId = otherOwner.Id;
+        agent.IsSharedWithTenant = true;
+        var approvalId = SeedApproval(agent);
+
+        agent.IsSharedWithTenant = false;
+        _db.SaveChanges();
+
+        var options = await AgentOrchestrator.ResolveApprovedActionOptionsAsync(
+            _db, _tenantId, _userId, approvalId, CancellationToken.None);
+
+        Assert.Empty(options!.AllowedTools!);
+        Assert.False(options.AllowWebSearch);
     }
 
     [Fact]

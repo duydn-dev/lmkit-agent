@@ -21,13 +21,14 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
   },
+  // Keep these rules mirroring LmKitOmniClient/nginx.conf: a prefix proxied here but
+  // not there (or vice versa) is a route that works under `npm run dev` and 404s in
+  // production. /api is the only prefix the API serves; chat streaming is SSE over it,
+  // which needs no `ws: true` (a dead `/hubs` websocket proxy for a SignalR hub the API
+  // never registered used to live here and was removed).
   server: {
     proxy: {
       '/api': 'http://localhost:5032',
-      '/hubs': {
-        target: 'http://localhost:5032',
-        ws: true,
-      },
     },
   },
 })

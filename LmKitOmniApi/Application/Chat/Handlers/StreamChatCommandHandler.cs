@@ -145,7 +145,11 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         {
             if (msg.Role == "user") history.AddMessage(AuthorRole.User, msg.Content);
             else if (msg.Role == "assistant") history.AddMessage(AuthorRole.Assistant, msg.Content);
-            else if (msg.Role == "system") history.AddMessage(AuthorRole.User, msg.Content); // Inject summary as user context
+            // A "system" row is not a system prompt: it is the rolling conversation
+            // summary ITokenManagementService splices in at the head of the trimmed
+            // window when older turns had to be dropped. See AppendSummaryEndMarker
+            // for why it is replayed as a USER turn and not AuthorRole.System.
+            else if (msg.Role == "system") history.AddMessage(AuthorRole.User, AppendSummaryEndMarker(msg.Content));
         }
 
         // Save user message. Regenerate re-runs the already stored last user turn,
@@ -314,6 +318,33 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
             }
         }
     }
+
+    // ── Rolling-summary injection ─────────────────────────────────────────
+    // Closes the injected conversation summary so it cannot be read as part of the
+    // user turn that follows it.
+    //
+    // Why the summary is replayed as AuthorRole.User and NOT AuthorRole.System:
+    // LM-Kit renders MultiTurnConversation.SystemPrompt into the prompt only when the
+    // conversation is constructed on an EMPTY ChatHistory — the system block is
+    // materialized on the first Submit and thereafter lives in the history itself.
+    // Constructing on a NON-empty history instead does the reverse: it adopts
+    // Messages[0] as SystemPrompt when that message is a System one. AgentOrchestrator
+    // builds its MultiTurnConversation from exactly this history and assigns
+    // chat.SystemPrompt on the next line, so a System message here would be adopted by
+    // the constructor and then immediately overwritten by the orchestrator's real
+    // system prompt — silently dropping the summary. AuthorRole.User is the correct
+    // and only safe role for it.
+    //
+    // The cost of that (unavoidable) choice: ChatHistory.AddMessage MERGES consecutive
+    // same-role turns with a newline, and the summary is always followed by a user
+    // turn, so the model receives ONE user message containing summary + live turn.
+    // The summary already opens with its own "[Tóm tắt ...]" label; this adds the
+    // closing half so the boundary is explicit rather than a bare newline. It costs a
+    // handful of tokens and only on conversations long enough to have been trimmed.
+    private const string SummaryEndMarker =
+        "[Hết phần tóm tắt — nội dung bên dưới là tin nhắn của người dùng]";
+
+    private static string AppendSummaryEndMarker(string summary) => summary + "\n" + SummaryEndMarker;
 
     // ── Regenerate / edit-last history rewrite ────────────────────────────
     // Finds the session's last user turn and drops the trailing assistant replies

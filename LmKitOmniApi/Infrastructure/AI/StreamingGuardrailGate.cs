@@ -25,10 +25,15 @@ namespace LmKitOmniApi.Infrastructure.AI;
 /// <item>Email — every character of a match lies in
 /// <c>[A-Za-z0-9._%+@-]</c>, so a partial match at the live edge is contained in the
 /// maximal run of those characters ending at <c>L</c>; the gate holds that run.</item>
-/// <item>Credential — a partial match is at most: the trailing non-whitespace run
-/// (a candidate <c>\S+</c> value, or a half-typed keyword), the preceding
-/// <c>\s*[:=]?\s*</c> separator, and a keyword ending there (≤ 10 characters, and
-/// only when one actually does).</item>
+/// <item>Credential — both branches of
+/// <see cref="OutputGuardrailFilter.CredentialPatternText"/> (keyword +
+/// <c>\s*[:=]\s*</c> + <c>\S+</c>, and keyword + <c>\s+</c> + a value run) are
+/// contained in <c>keyword</c> + <c>\s*[:=]?\s*</c> + <c>\S+</c>, so a partial match
+/// is at most: the trailing non-whitespace run (a candidate value, or a half-typed
+/// keyword), the preceding separator, and a keyword ending there (≤ 10 characters, and
+/// only when one actually does). The walk-back is an over-approximation of the
+/// pattern on purpose — it stays valid as long as the pattern stays inside that
+/// shape.</item>
 /// </list>
 ///
 /// <para><b>Why the scans are not clamped.</b> The email local part and the
@@ -91,9 +96,12 @@ internal sealed class StreamingGuardrailGate
 
     /// <summary>
     /// Keyword-only prefix of <see cref="OutputGuardrailFilter.CredentialRedactionPattern"/>:
-    /// the full pattern's trailing "\s*[:=]?\s*\S+" may only complete long after the
+    /// the full pattern's trailing separator-and-value may only complete long after the
     /// keyword has left the hold window, so while the credential class is unlatched
-    /// the cap anchors on the keyword itself.
+    /// the cap anchors on the keyword itself. Deliberately WIDER than the shared
+    /// pattern's keyword clause (no <c>\b</c>) — capping earlier than necessary only
+    /// delays a release, whereas capping later than necessary would release text the
+    /// end-of-stream pass might still rewrite.
     /// </summary>
     private static readonly Regex CredentialHoldPattern = new(
         @"(?i)API[-_\s]?KEY|SECRET[-_\s]?KEY|PASSWORD|TOKEN|BEARER",
@@ -318,9 +326,9 @@ internal sealed class StreamingGuardrailGate
         // FULL raw. A match ending at or before the settled boundary has its trailing
         // \b decided by a character that can never change, so it survives into the
         // end-of-stream pass — whereas asking the detector about raw[..settled] alone
-        // would let an artificial end-of-string \b latch a match that a later digit
-        // dissolves. PromptGuardService's own PII patterns are supersets of these two,
-        // so a match here guarantees the full pass reports PIILeakage.
+        // would let an artificial end-of-string boundary latch a match that a later
+        // character dissolves. PromptGuardService compiles these very pattern texts, so
+        // a match here guarantees the full pass reports PIILeakage.
         if (!_piiClassLatched
             && (HasMatchEndingWithin(OutputGuardrailFilter.SsnRedactionPattern, raw, settledRawLength)
                 || HasMatchEndingWithin(OutputGuardrailFilter.EmailRedactionPattern, raw, settledRawLength)))
@@ -331,11 +339,12 @@ internal sealed class StreamingGuardrailGate
         if (_credentialClassLatched)
             return;
 
-        // Credential: the detector's patterns are narrower than the redaction pattern
-        // (':'/'=' mandatory there, optional here), so they are not reproduced locally
-        // — ask the detector, over the settled region only. Neither credential pattern
-        // ends in a boundary assertion and their trailing \S+ can only grow, so a match
-        // inside the settled region is still a match at end of stream.
+        // Credential: the detector now compiles the SAME pattern text as the redactor
+        // (OutputGuardrailFilter.CredentialPatternText), so asking it about the settled
+        // region is exactly asking "would the full pass redact here?". The pattern is
+        // monotone under appending — no end anchors, every assertion decided inside the
+        // matched span, trailing quantifiers that can only grow — so a match inside the
+        // settled region is still a match at end of stream.
         var due = settledRawLength - _lastAnalyzedStableLength;
         if (due < DetectionStrideChars && !(raw.Length < ShortAnswerChars && due >= ShortAnswerStrideChars))
             return;

@@ -39,6 +39,20 @@ public enum ApproveTaskOutcome
     /// <summary>The approved tool executed successfully — 200.</summary>
     Completed,
 
+    /// <summary>
+    /// The human's YES was recorded but nothing executed HERE — 202.
+    ///
+    /// <para>Used for a <c>COMPUTER_USE</c> approval. The click / type / navigate it
+    /// describes is performed by the computer-use loop, inside its own browser container,
+    /// against an observation only that loop holds; this endpoint cannot replay it and the
+    /// loop is the thing waiting for the answer. Routing it through the tool dispatcher
+    /// (which is what "approve" used to do) could only fail — no role grants a
+    /// <c>COMPUTER_USE</c> tool permission — and the gate reads that failure as a
+    /// REJECTION, so clicking "approve" used to reject the action. Recording the decision
+    /// on the row is the whole job: the waiting gate polls exactly this status.</para>
+    /// </summary>
+    Recorded,
+
     /// <summary>The approved tool threw; the task was marked Failed — 500.</summary>
     Failed
 }

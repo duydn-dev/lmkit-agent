@@ -1,4 +1,5 @@
 using LmKitOmniApi.Application.ComputerUse.Commands;
+using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.Data;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -29,7 +30,7 @@ public sealed class ResolveComputerUseApprovalCommandHandler
             .AnyAsync(t => t.Id == request.ApprovalId
                 && t.TenantId == request.TenantId
                 && t.UserId == request.UserId
-                && t.ActionName == "COMPUTER_USE", cancellationToken);
+                && t.ActionName == TaskApproval.ComputerUseActionName, cancellationToken);
         if (!exists) return ResolveComputerUseApprovalOutcome.NotFound;
 
         var newStatus = request.Approve ? "Approved" : "Rejected";
@@ -41,7 +42,7 @@ public sealed class ResolveComputerUseApprovalCommandHandler
             .Where(t => t.Id == request.ApprovalId
                 && t.TenantId == request.TenantId
                 && t.UserId == request.UserId
-                && t.ActionName == "COMPUTER_USE"
+                && t.ActionName == TaskApproval.ComputerUseActionName
                 && t.Status == "Pending")
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(t => t.Status, newStatus)

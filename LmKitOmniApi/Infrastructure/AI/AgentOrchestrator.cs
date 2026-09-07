@@ -348,10 +348,16 @@ public class AgentOrchestrator : IAgentOrchestrator
         yield return "[THINKING]: ✍️ Đang tổng hợp và tạo câu trả lời...\n";
 
         var model = await _modelManager.GetChatModelAsync(ct: cancellationToken);
-        var chat = new MultiTurnConversation(model, history);
+        // MUST go through the factory: assigning chat.SystemPrompt after constructing on a
+        // NON-EMPTY history is silently dropped by LM-Kit (it renders the system block only
+        // when MessageCount == 0, and the getter still returns what you assigned). Every turn
+        // after the first was therefore generated with no persona, no project or custom
+        // instructions, no memory context, and no fullContext — i.e. without this turn's own
+        // ReAct/web-search result. See ChatConversationFactory.
+        var chat = ChatConversationFactory.Create(
+            model, history, BuildSystemPrompt(fullContext, memoryContext, options?.PersonaPrompt));
         chat.MaximumCompletionTokens = DefaultMaximumCompletionTokens;
         _defaultToolCatalog.RegisterSafeDefaults(chat);
-        chat.SystemPrompt = BuildSystemPrompt(fullContext, memoryContext, options?.PersonaPrompt);
 
         // Streaming LLM response — TRUE token streaming through a guardrail gate.
         // UserVisible tokens are forwarded to the client as they are generated,
@@ -876,6 +882,12 @@ public class AgentOrchestrator : IAgentOrchestrator
                     ChatSessionId = sessionId,
                     ActionName = action, // Store original action (e.g. MCP)
                     ParametersJson = _approvalPayloads.Protect(query),
+                    // The narrowing half of THIS turn's scope, captured now. Recovering it
+                    // later by walking session → bound custom agent is not enough: deleting
+                    // the agent NULLs that binding, and the approval then executed with no
+                    // narrowing at all — more authority than the turn that asked for it.
+                    // Null when the turn was genuinely unscoped (see ApprovalScopeSnapshot).
+                    RequestOptionsJson = LmKitOmniApi.Application.Approvals.ApprovalScopeSnapshot.Capture(options),
                     Status = "Pending",
                     CreatedAtUtc = requestedAt,
                     // The payload above is a snapshot of THIS moment; past the deadline it
@@ -1035,34 +1047,46 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// Recovers the per-request execution scope that applied to the turn which REQUESTED
     /// an approval, so that approving it cannot grant MORE authority than that turn had.
     ///
-    /// Nothing extra needs persisting: the approval row already stores its
-    /// <c>ChatSessionId</c>, the session stores its bound <c>CustomAgentId</c>, and the
-    /// custom agent is the single source of every narrowing field
-    /// (<see cref="AgentRequestOptions.AllowedTools"/>,
-    /// <see cref="AgentRequestOptions.KnowledgeDocumentIds"/>,
-    /// <see cref="AgentRequestOptions.AllowWebSearch"/>). Reading it at EXECUTION time is
-    /// deliberately stricter than snapshotting it at request time: an agent whose
-    /// whitelist was narrowed while the approval sat pending is honoured at its
-    /// narrower setting, mirroring the permission re-check above it.
+    /// <para>Two independent sources, and the result is the INTERSECTION of both
+    /// (<c>ApprovalScopeSnapshot.Narrow</c>), which is by construction ≤ each of them:</para>
+    /// <list type="number">
+    /// <item><b>The snapshot</b> stored on the approval row itself
+    /// (<c>TaskApproval.RequestOptionsJson</c>, written at creation). This is literally
+    /// what the requesting turn had, and it is the only source that survives the agent
+    /// being DELETED — a delete NULLs every session's binding
+    /// (<c>ChatSession.CustomAgentId</c>, <c>DeleteBehavior.SetNull</c>), which used to
+    /// leave the walk below reporting "unbound" and the approval executing with no
+    /// narrowing at all.</item>
+    /// <item><b>The live walk</b> approval → <c>ChatSessionId</c> → session → bound
+    /// <c>CustomAgentId</c> → custom agent. Read at EXECUTION time on purpose, so an agent
+    /// whose whitelist was narrowed while the approval sat pending is honoured at its
+    /// narrower setting, mirroring the permission re-check in
+    /// <see cref="ExecuteDirectActionAsync"/>.</item>
+    /// </list>
+    ///
+    /// <para><b>Why intersect rather than let one win.</b> Either source can be stale in
+    /// the direction that would widen: the snapshot does not know the agent was narrowed
+    /// since, and the walk does not know the agent is gone. Intersecting makes the safe
+    /// direction the default on every axis without having to decide which staleness is
+    /// more likely — the execution ends up with what BOTH still permit.</para>
     ///
     /// Outcomes:
     /// <list type="bullet">
-    /// <item>no approval id, or a session with no bound agent → <c>null</c> (unscoped —
-    /// byte-identical to the pre-fix behavior, and correct: that turn was unscoped too);</item>
-    /// <item>bound agent still visible → its scope, a pure narrowing;</item>
+    /// <item>no approval id, no snapshot and a session with no bound agent → <c>null</c>
+    /// (unscoped — byte-identical to the pre-snapshot behavior, and correct: that turn
+    /// was unscoped too);</item>
+    /// <item>bound agent still visible → snapshot ∩ its scope, a pure narrowing;</item>
+    /// <item>bound agent DELETED → the snapshot alone, i.e. exactly the narrowing the
+    /// requesting turn ran under;</item>
     /// <item>bound agent still present but no longer VISIBLE to this caller (un-shared
-    /// since) → a DENY-ALL whitelist. The requesting turn WAS scoped, that scope is
-    /// unreadable, and running unscoped would widen authority — so the action is refused
-    /// instead. The chat path may drop an invisible agent and continue, but chat re-plans
-    /// under the unscoped tool set; an approval cannot re-plan, it only executes.</item>
+    /// since) → a DENY-ALL whitelist, which survives the intersection. The requesting turn
+    /// WAS scoped, that scope is unreadable, and running unscoped would widen authority —
+    /// so the action is refused instead. The chat path may drop an invisible agent and
+    /// continue, but chat re-plans under the unscoped tool set; an approval cannot
+    /// re-plan, it only executes;</item>
+    /// <item>a snapshot that is present but unparseable → DENY-ALL for the same reason:
+    /// corruption must never read as "unscoped".</item>
     /// </list>
-    ///
-    /// One residual gap, forced by the schema: DELETING a custom agent NULLs every
-    /// session's binding to it (<c>ChatSession.CustomAgentId</c>,
-    /// <c>DeleteBehavior.SetNull</c>), so a pending approval from that session then
-    /// resolves as unbound and executes unscoped. Closing that case needs the scope
-    /// snapshotted onto the approval row itself (a schema change) — tracked in
-    /// LmKitOmniApi/docs/known-issues.md.
     ///
     /// Internal (not private) so the approval-scoping contract is directly testable
     /// without constructing the full orchestrator dependency graph; static and
@@ -1077,15 +1101,39 @@ public class AgentOrchestrator : IAgentOrchestrator
     {
         if (approvalId is not Guid id) return null;
 
-        var chatSessionId = await dbContext.TaskApprovals
+        var row = await dbContext.TaskApprovals
             .AsNoTracking()
             .Where(approval => approval.Id == id
                 && approval.TenantId == tenantId
                 && approval.UserId == userId)
-            .Select(approval => (Guid?)approval.ChatSessionId)
+            .Select(approval => new { approval.ChatSessionId, approval.RequestOptionsJson })
             .FirstOrDefaultAsync(ct);
-        if (chatSessionId is not Guid sessionId) return null;
+        if (row is null) return null;
 
+        // A stored scope that cannot be read is NOT an absent scope: the requesting turn
+        // was narrowed by something this code can no longer see, so refuse rather than run
+        // wide open.
+        if (!LmKitOmniApi.Application.Approvals.ApprovalScopeSnapshot.TryRead(row.RequestOptionsJson, out var snapshot))
+            return LmKitOmniApi.Application.Approvals.ApprovalScopeSnapshot.DenyAll;
+
+        return LmKitOmniApi.Application.Approvals.ApprovalScopeSnapshot.Narrow(
+            snapshot,
+            await ResolveBoundAgentScopeAsync(dbContext, tenantId, userId, row.ChatSessionId, ct));
+    }
+
+    /// <summary>
+    /// The live half of <see cref="ResolveApprovedActionOptionsAsync"/>: the scope the
+    /// session's bound custom agent imposes RIGHT NOW. Null when the session has no
+    /// binding left — which is also what a deleted agent looks like, and precisely why it
+    /// is no longer the only source.
+    /// </summary>
+    private static async Task<AgentRequestOptions?> ResolveBoundAgentScopeAsync(
+        LmKitOmniApi.Infrastructure.Data.HermesDbContext dbContext,
+        Guid tenantId,
+        Guid userId,
+        Guid sessionId,
+        CancellationToken ct)
+    {
         var boundAgentId = await dbContext.ChatSessions
             .AsNoTracking()
             .Where(session => session.Id == sessionId && session.TenantId == tenantId)
@@ -1101,14 +1149,7 @@ public class AgentOrchestrator : IAgentOrchestrator
                 && candidate.TenantId == tenantId
                 && (candidate.OwnerUserId == userId || candidate.IsSharedWithTenant), ct);
 
-        if (agent is null)
-        {
-            return new AgentRequestOptions
-            {
-                AllowWebSearch = false,
-                AllowedTools = Array.Empty<string>()
-            };
-        }
+        if (agent is null) return LmKitOmniApi.Application.Approvals.ApprovalScopeSnapshot.DenyAll;
 
         var allowedTools = LmKitOmniApi.Application.CustomAgents.CustomAgentRules.ParseToolsCsv(agent.AllowedToolsCsv);
         return new AgentRequestOptions
