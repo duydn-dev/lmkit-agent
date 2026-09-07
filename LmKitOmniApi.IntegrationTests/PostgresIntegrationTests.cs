@@ -8,7 +8,7 @@ namespace LmKitOmniApi.IntegrationTests;
 public sealed class PostgresFixture : DatabaseContainerFixture
 {
     protected override IContainer Build() =>
-        new PostgreSqlBuilder().WithImage("postgres:16-alpine").Build();
+        new PostgreSqlBuilder("postgres:16-alpine").Build();
 
     protected override async Task SeedAsync(string connectionString, CancellationToken ct)
     {

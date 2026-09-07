@@ -8,7 +8,7 @@ namespace LmKitOmniApi.IntegrationTests;
 public sealed class MySqlFixture : DatabaseContainerFixture
 {
     protected override IContainer Build() =>
-        new MySqlBuilder().WithImage("mysql:8.0").Build();
+        new MySqlBuilder("mysql:8.0").Build();
 
     protected override async Task SeedAsync(string connectionString, CancellationToken ct)
     {

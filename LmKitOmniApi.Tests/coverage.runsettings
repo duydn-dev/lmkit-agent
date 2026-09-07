@@ -9,6 +9,12 @@
     so spelling them made this file unparseable: dotnet test refused it with "Settings file
     provided does not conform to required format", which failed the whole backend CI job
     before a single test ran.
+
+    THRESHOLDS ARE NOT SET HERE. The coverlet COLLECTOR (as opposed to its MSBuild and console
+    front ends) has no threshold option, so anything written here would be ignored in silence.
+    The floor is enforced by the "Enforce coverage floor" step in .github/workflows/ci.yml,
+    which reads the cobertura report this collector writes. Widening an Exclude below raises
+    the measured percentage without testing anything, so change one and the other together.
   -->
   <DataCollectionRunSettings>
     <DataCollectors>
