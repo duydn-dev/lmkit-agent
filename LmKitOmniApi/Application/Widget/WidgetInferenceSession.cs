@@ -1,5 +1,6 @@
 using LMKit.TextGeneration;
 using LMKit.TextGeneration.Chat;
+using LmKitOmniApi.Infrastructure.AI;
 using LmKitOmniApi.Services;
 
 namespace LmKitOmniApi.Application.Widget;
@@ -88,11 +89,12 @@ public sealed class LmKitWidgetInferenceSessionFactory(LmModelManager modelManag
         public LmKitWidgetInferenceSession(LMKit.Model.LM model, ChatHistory history, IAsyncDisposable lease)
         {
             _lease = lease;
-            _chat = new MultiTurnConversation(model, history)
-            {
-                SystemPrompt = WidgetChatEngine.SystemPrompt,
-                MaximumCompletionTokens = WidgetChatEngine.MaxCompletionTokens
-            };
+            // Built through ChatConversationFactory, NOT `new MultiTurnConversation(model, history)
+            // { SystemPrompt = ... }`. On a returning widget turn `history` already holds the prior
+            // User/Assistant turns, and LM-Kit silently ignores a SystemPrompt assigned on a
+            // non-empty history — which dropped the widget persona from the second turn onward.
+            _chat = ChatConversationFactory.Create(model, history, WidgetChatEngine.SystemPrompt);
+            _chat.MaximumCompletionTokens = WidgetChatEngine.MaxCompletionTokens;
             _chat.AfterTextCompletion += ForwardSegment;
         }
 
