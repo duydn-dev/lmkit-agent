@@ -90,3 +90,6 @@ qdrantdata/
 *freebuff/
 # TS compile output (tsc watch artifacts) — sources are the .ts/.vue files
 LmKitOmniClient/src/**/*.js
+
+# Coverage output written by dotnet test
+TestResults/
