@@ -279,30 +279,20 @@ public class ToolSandboxService
     }
 
     /// <summary>
-    /// Authoritative private/loopback/link-local/metadata address classifier.
-    /// Public so the MCP HttpClient's socket-level ConnectCallback (Program.cs) can
-    /// re-vet resolved addresses at connect time with the SAME rules used during
-    /// URL validation, closing the DNS-rebinding TOCTOU window.
+    /// Private/loopback/link-local/metadata address classifier.
+    /// Public so the MCP HttpClient's socket-level ConnectCallback (see
+    /// <see cref="Infrastructure.Security.SsrfSafeConnect"/>) can re-vet resolved addresses
+    /// at connect time with the SAME rules used during URL validation, closing the
+    /// DNS-rebinding TOCTOU window.
+    ///
+    /// This is a thin forwarder: the ranges live in the single authoritative
+    /// <see cref="Infrastructure.Security.PrivateNetworkClassifier"/>. It used to carry its
+    /// own copy that missed IPv6 ULA (fc00::/7 — what Docker IPv6 networks hand out), the
+    /// unspecified address (::, which reaches the local host), CGNAT, multicast and reserved
+    /// space, while a near-duplicate in LmModelManager blocked a different subset.
     /// </summary>
     public static bool IsPrivateOrLocalAddress(IPAddress address)
-    {
-        if (IPAddress.IsLoopback(address)) return true;
-        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
-
-        if (address.AddressFamily == AddressFamily.InterNetwork)
-        {
-            var bytes = address.GetAddressBytes();
-            return bytes[0] == 10
-                || bytes[0] == 127
-                || (bytes[0] == 169 && bytes[1] == 254)
-                || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
-                || (bytes[0] == 192 && bytes[1] == 168)
-                || bytes[0] == 0;
-        }
-
-        return address.AddressFamily == AddressFamily.InterNetworkV6
-            && (address.IsIPv6LinkLocal || address.IsIPv6SiteLocal || address.Equals(IPAddress.IPv6Loopback));
-    }
+        => Infrastructure.Security.PrivateNetworkClassifier.IsPrivateOrLocal(address);
 
     /// <summary>
     /// Reset resource counters for a new request.

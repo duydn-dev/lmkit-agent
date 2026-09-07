@@ -1,4 +1,5 @@
 using System.Net;
+using LmKitOmniApi.Infrastructure.Security;
 using Microsoft.Extensions.Options;
 
 namespace LmKitOmniApi.Infrastructure.AI.Security;
@@ -14,7 +15,7 @@ public sealed record DbEgressResult(bool IsAllowed, string? Reason)
 /// are HTTP-only (<see cref="ToolSandboxService.ValidateUrlAsync"/>); raw DB TCP
 /// needs its own check. This resolves the target host and refuses if ANY resolved
 /// address is internal/loopback/link-local (reusing
-/// <see cref="ToolSandboxService.IsPrivateOrLocalAddress"/>), so a connection can
+/// <see cref="PrivateNetworkClassifier"/>), so a connection can
 /// never be pointed at the metadata endpoint, RFC1918 hosts, or the app's own
 /// database. An optional operator allowlist further restricts permitted hosts.
 /// </summary>
@@ -59,7 +60,7 @@ public sealed class DbEgressValidator
 
         foreach (var address in addresses)
         {
-            if (ToolSandboxService.IsPrivateOrLocalAddress(address))
+            if (PrivateNetworkClassifier.IsPrivateOrLocal(address))
                 return DbEgressResult.Deny($"Địa chỉ nội bộ bị chặn ({address}).");
         }
 

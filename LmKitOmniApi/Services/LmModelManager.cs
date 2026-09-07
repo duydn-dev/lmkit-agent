@@ -37,6 +37,12 @@ public class LmModelManager : IDisposable
     // files under the models directory and editing appsettings — no code changes.
     private readonly IReadOnlyDictionary<string, RegisteredModel> _registeredModels;
 
+    // One loaded LM per RESOLVED model file, shared across roles. appsettings ships
+    // DefaultEmbedding and DefaultReranker both pointing at "bge-m3", which used to
+    // materialize the same weights twice (two full copies in RAM/VRAM) because each role
+    // kept its own field and loaded independently.
+    private readonly SharedInstanceCache<LM> _sharedModels = new();
+
     public string DefaultChatModelId { get; set; }
     public string DefaultVisionModelId { get; set; }
     public string DefaultEmbeddingModelId { get; set; }
@@ -88,6 +94,74 @@ public class LmModelManager : IDisposable
         _speechInferenceGate = new SemaphoreSlim(speechLimit, speechLimit);
         _rerankerInferenceGate = new SemaphoreSlim(rerankerLimit, rerankerLimit);
         _segmentationInferenceGate = new SemaphoreSlim(segmentationLimit, segmentationLimit);
+
+        LogDefaultModelAvailability();
+    }
+
+    /// <summary>
+    /// Startup audit: a registered default whose weights file is absent CANNOT serve a
+    /// single request, so say so loudly at boot instead of letting the first user message
+    /// discover it. The chat model is escalated to Critical because it is the one every
+    /// conversation needs; <see cref="Infrastructure.Health.LmKitModelHealthCheck"/> turns
+    /// the same fact into an unhealthy <c>/health/ready</c>.
+    /// </summary>
+    private void LogDefaultModelAvailability()
+    {
+        var chatProblem = DescribeDefaultModelProblem("AiModels:DefaultChat", DefaultChatModelId);
+        if (chatProblem is not null)
+            _logger.LogCritical("{Problem}", chatProblem);
+
+        foreach (var (configKey, modelId) in new[]
+        {
+            ("AiModels:DefaultVision", DefaultVisionModelId),
+            ("AiModels:DefaultEmbedding", DefaultEmbeddingModelId),
+            ("AiModels:DefaultSpeech", DefaultSpeechModelId),
+            ("AiModels:DefaultReranker", DefaultRerankerModelId),
+            ("AiModels:DefaultSegmentation", DefaultSegmentationModelId)
+        })
+        {
+            var problem = DescribeDefaultModelProblem(configKey, modelId);
+            if (problem is not null) _logger.LogError("{Problem}", problem);
+        }
+    }
+
+    /// <summary>
+    /// Null when the configured chat model is usable (or cannot be judged without a load);
+    /// otherwise an operator-actionable sentence naming the config key and the missing file.
+    /// </summary>
+    public string? DescribeDefaultChatModelProblem()
+    {
+        if (LastChatModelLoadError is { Length: > 0 } loadError)
+            return $"The chat model configured by AiModels:DefaultChat ('{DefaultChatModelId}') failed to load: {loadError}";
+
+        return DescribeDefaultModelProblem("AiModels:DefaultChat", DefaultChatModelId);
+    }
+
+    /// <summary>
+    /// Static resolvability check for one configured default. Only entries declared under
+    /// <c>AiModels:Models</c> can be judged from disk; a bare LM-Kit catalog id or an https
+    /// URL resolves at load time, so those return null rather than a false alarm.
+    /// </summary>
+    private string? DescribeDefaultModelProblem(string configKey, string modelId)
+    {
+        var registered = ResolveRegisteredModel(modelId);
+        if (registered is null) return null;
+
+        if (!File.Exists(registered.ResolvedModelPath))
+        {
+            return $"Model '{registered.Key}' (configured by {configKey}) has no weights file at " +
+                $"'{registered.ResolvedModelPath}'. Place the file there, or point " +
+                $"AiModels:Models:{registered.Key}:Path / {configKey} at a model that exists.";
+        }
+
+        if (registered.ResolvedMmprojPath is not null && !File.Exists(registered.ResolvedMmprojPath))
+        {
+            return $"Model '{registered.Key}' (configured by {configKey}) is missing its multimodal " +
+                $"projector at '{registered.ResolvedMmprojPath}'. Place the file there, or clear " +
+                $"AiModels:Models:{registered.Key}:Mmproj.";
+        }
+
+        return null;
     }
 
     /// <summary>Default folder (relative to the working directory) holding local model files.</summary>
@@ -187,11 +261,26 @@ public class LmModelManager : IDisposable
             throw new InvalidOperationException($"SemaphoreLimits:{name} must be greater than zero.");
         return value;
     }
+    /// <summary>
+    /// Cache key for one loaded LM. Two roles that resolve to the SAME file (appsettings
+    /// points DefaultEmbedding and DefaultReranker at "bge-m3") must produce the same key so
+    /// they share one instance; a model paired with a projector must NOT alias the bare file.
+    /// </summary>
+    internal static string BuildSharedModelKey(RegisteredModel registered) =>
+        registered.ResolvedMmprojPath is null
+            ? registered.ResolvedModelPath
+            : $"{registered.ResolvedModelPath}|{registered.ResolvedMmprojPath}";
+
     private async Task<LM> LoadModelWithProgressAsync(string id, CancellationToken ct = default)
     {
         var registered = ResolveRegisteredModel(id);
         if (registered is not null)
-            return await LoadRegisteredModelAsync(registered, ct);
+        {
+            return await _sharedModels.GetOrLoadAsync(
+                BuildSharedModelKey(registered),
+                token => LoadRegisteredModelAsync(registered, token),
+                ct);
+        }
 
         if (id.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || id.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
@@ -275,10 +364,17 @@ public class LmModelManager : IDisposable
             id = localPath; // Gán lại ID bằng đường dẫn local
         }
 
-        _logger.LogInformation("Loading model {ModelId}", id);
-        var model = await Task.Run(() => LM.LoadFromModelID(id), ct);
-        _logger.LogInformation("Model loaded successfully");
-        return model;
+        var resolvedId = id;
+        return await _sharedModels.GetOrLoadAsync(
+            resolvedId,
+            async token =>
+            {
+                _logger.LogInformation("Loading model {ModelId}", resolvedId);
+                var model = await Task.Run(() => LM.LoadFromModelID(resolvedId), token);
+                _logger.LogInformation("Model loaded successfully");
+                return model;
+            },
+            ct);
     }
 
     private static async Task<HttpResponseMessage> SendWithValidatedRedirectsAsync(
@@ -326,25 +422,15 @@ public class LmModelManager : IDisposable
         || host.Equals("hf.co", StringComparison.OrdinalIgnoreCase)
         || host.EndsWith(".hf.co", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Forwards to the single authoritative
+    /// <see cref="Infrastructure.Security.PrivateNetworkClassifier"/>. This used to be a
+    /// near-duplicate of the copy in ToolSandboxService — the two drifted apart (this one
+    /// blocked <c>::</c>, the shared one did not; neither blocked IPv6 ULA), which is exactly
+    /// the failure mode a second copy invites.
+    /// </summary>
     internal static bool IsPrivateOrLocalAddress(IPAddress address)
-    {
-        if (IPAddress.IsLoopback(address)) return true;
-        if (address.AddressFamily == AddressFamily.InterNetwork)
-        {
-            var bytes = address.GetAddressBytes();
-            return bytes[0] == 10
-                || bytes[0] == 127
-                || bytes[0] == 0
-                || (bytes[0] == 169 && bytes[1] == 254)
-                || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
-                || (bytes[0] == 192 && bytes[1] == 168);
-        }
-
-        return address.IsIPv6LinkLocal
-            || address.IsIPv6SiteLocal
-            || address.Equals(IPAddress.IPv6Loopback)
-            || address.Equals(IPAddress.IPv6Any);
-    }
+        => Infrastructure.Security.PrivateNetworkClassifier.IsPrivateOrLocal(address);
 
     public async Task<LM> GetChatModelAsync(string? modelId = null, CancellationToken ct = default)
     {
@@ -362,7 +448,13 @@ public class LmModelManager : IDisposable
                 }
                 catch (Exception ex)
                 {
-                    LastChatModelLoadError = ex.GetType().Name;
+                    // Keep the message, not just the type name: "FileNotFoundException" alone
+                    // tells an operator nothing, while the message names the path that is missing.
+                    LastChatModelLoadError = $"{ex.GetType().Name}: {ex.Message}";
+                    _logger.LogCritical(
+                        ex,
+                        "The chat model configured by AiModels:DefaultChat ('{ModelId}') failed to load; chat requests cannot be served.",
+                        id);
                     throw;
                 }
             }
@@ -497,12 +589,18 @@ public class LmModelManager : IDisposable
 
     public void Dispose()
     {
-        _chatModel?.Dispose();
-        _visionModel?.Dispose();
-        _embeddingModel?.Dispose();
-        _speechModel?.Dispose();
-        _rerankerModel?.Dispose();
-        _segmentationModel?.Dispose(); // L2 Fix: was missing, causing resource leak
+        // Roles can now ALIAS one another (embedding + reranker share one LM when they
+        // resolve to the same file), so dispose reference-distinct instances exactly once.
+        var disposed = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        foreach (var model in new[]
+        {
+            _chatModel, _visionModel, _embeddingModel,
+            _speechModel, _rerankerModel, _segmentationModel
+        }.Concat(_sharedModels.LoadedValues))
+        {
+            if (model is not null && disposed.Add(model)) model.Dispose();
+        }
+
         _chatLock.Dispose();
         _visionLock.Dispose();
         _embeddingLock.Dispose();
@@ -517,6 +615,9 @@ public class LmModelManager : IDisposable
         _segmentationInferenceGate.Dispose();
     }
 
+    /// <summary>Test seam: how many distinct models are actually held in memory.</summary>
+    internal int LoadedModelCount => _sharedModels.LoadedValues.Count;
+
     private sealed class SemaphoreLease : IAsyncDisposable
     {
         private SemaphoreSlim? _semaphore;
@@ -526,6 +627,66 @@ public class LmModelManager : IDisposable
         {
             Interlocked.Exchange(ref _semaphore, null)?.Release();
             return ValueTask.CompletedTask;
+        }
+    }
+}
+
+/// <summary>
+/// Keyed, load-once cache of expensive singletons. Callers asking for the same key get the
+/// SAME instance and, when they arrive concurrently, wait on the SAME in-flight load instead
+/// of starting a second one. A failed load is evicted so the next caller may retry.
+/// </summary>
+internal sealed class SharedInstanceCache<T> where T : class
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<string, Task<T>> _entries = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Instances that finished loading successfully (ownership stays with the cache).</summary>
+    public IReadOnlyCollection<T> LoadedValues
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _entries.Values
+                    .Where(entry => entry.IsCompletedSuccessfully)
+                    .Select(entry => entry.Result)
+                    .ToArray();
+            }
+        }
+    }
+
+    public async Task<T> GetOrLoadAsync(string key, Func<CancellationToken, Task<T>> loader, CancellationToken ct)
+    {
+        Task<T> load;
+        lock (_gate)
+        {
+            if (!_entries.TryGetValue(key, out load!))
+            {
+                // Started inside the lock but NOT awaited there: the lock only guards the
+                // dictionary, so a slow load never blocks a lookup for a different key.
+                load = loader(ct);
+                _entries[key] = load;
+            }
+        }
+
+        try
+        {
+            return await load;
+        }
+        catch
+        {
+            lock (_gate)
+            {
+                if (_entries.TryGetValue(key, out var current)
+                    && ReferenceEquals(current, load)
+                    && !current.IsCompletedSuccessfully)
+                {
+                    _entries.Remove(key);
+                }
+            }
+
+            throw;
         }
     }
 }

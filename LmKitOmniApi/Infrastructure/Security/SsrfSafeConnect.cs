@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Sockets;
-using LmKitOmniApi.Infrastructure.AI.Security;
 
 namespace LmKitOmniApi.Infrastructure.Security;
 
@@ -13,7 +12,7 @@ namespace LmKitOmniApi.Infrastructure.Security;
 /// so a malicious resolver can answer with a public IP during validation and rebind
 /// to 169.254.169.254 / RFC1918 space for the connection. This callback re-resolves,
 /// re-vets EVERY resolved address with the authoritative
-/// <see cref="ToolSandboxService.IsPrivateOrLocalAddress"/> classifier, and opens a
+/// <see cref="PrivateNetworkClassifier"/>, and opens a
 /// socket only to a vetted PUBLIC IP. TLS still validates against the original
 /// hostname via SNI. When nothing resolves to an allowed public address, or no
 /// vetted address accepts a connection, an <see cref="HttpRequestException"/> is
@@ -35,7 +34,7 @@ public static class SsrfSafeConnect
                 ? new[] { literal }
                 : await Dns.GetHostAddressesAsync(host, ct);
             var vetted = addresses
-                .Where(address => !ToolSandboxService.IsPrivateOrLocalAddress(address))
+                .Where(address => !PrivateNetworkClassifier.IsPrivateOrLocal(address))
                 .ToArray();
             if (vetted.Length == 0)
                 throw new HttpRequestException(
