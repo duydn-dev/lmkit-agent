@@ -17,9 +17,8 @@ namespace LmKitOmniApi.Controllers;
 /// the model would DECIDE, so it is a pure diagnostic.
 ///
 /// <b>Admin-only</b> and <b>OFF BY DEFAULT</b>: when the harness is disabled (the default),
-/// this returns <c>501 Not Implemented</c> and nothing runs. Wiring is documented in
-/// <c>GROUNDING-EVAL-INTEGRATION.md</c> (no <c>Program.cs</c>/<c>appsettings.json</c> edits
-/// are shipped here).
+/// this returns <c>501 Not Implemented</c> and nothing runs. The DI and config wiring is in
+/// <c>Program.cs</c> and <c>appsettings.json</c> (the <c>GroundingEval</c> section).
 /// </summary>
 [ApiController]
 [Route("api/computer-use/grounding-eval")]

@@ -1061,8 +1061,8 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// session's binding to it (<c>ChatSession.CustomAgentId</c>,
     /// <c>DeleteBehavior.SetNull</c>), so a pending approval from that session then
     /// resolves as unbound and executes unscoped. Closing that case needs the scope
-    /// snapshotted onto the approval row itself (a schema change) — see
-    /// CORE-FIX-INTEGRATION.md.
+    /// snapshotted onto the approval row itself (a schema change) — tracked in
+    /// LmKitOmniApi/docs/known-issues.md.
     ///
     /// Internal (not private) so the approval-scoping contract is directly testable
     /// without constructing the full orchestrator dependency graph; static and

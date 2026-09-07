@@ -182,7 +182,7 @@ public sealed class ApprovedActionScopeTests : IDisposable
     /// so after a delete there is nothing left to reconstruct the requesting turn's scope
     /// from and the approval executes unscoped — exactly the pre-fix behaviour. Closing
     /// this last case requires snapshotting the scope onto the approval row itself
-    /// (a schema change); see CORE-FIX-INTEGRATION.md.
+    /// (a schema change); tracked in LmKitOmniApi/docs/known-issues.md.
     /// </summary>
     [Fact]
     public async Task ApprovedAction_FallsBackToUnscoped_WhenTheBoundAgentWasDeleted()

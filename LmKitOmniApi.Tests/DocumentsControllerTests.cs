@@ -29,8 +29,7 @@ namespace LmKitOmniApi.Tests;
 /// the end-to-end write path: a produced (filled/redacted) file lands in the caller's
 /// isolated upload root and is downloadable via /api/files/{id}.
 ///
-/// The services are registered in the TEST host (the production Program.cs wiring is
-/// the coordinator's job — see PDF-INTEGRATION.md), so these tests do not depend on
+/// The services are registered in the TEST host, so these tests do not depend on
 /// the agent tool-graph.
 /// </summary>
 public sealed class DocumentsControllerTests
@@ -306,9 +305,8 @@ public sealed class DocumentsControllerTests
 /// <summary>
 /// Test host for the documents controller. Mirrors <c>LmKitApiFactory</c>'s hardening
 /// (in-memory SQLite, no background workers, fake MCP client, disabled HTTPS/redis)
-/// and additionally registers the document services + options in the TEST host — the
-/// production Program.cs wiring is documented in PDF-INTEGRATION.md for the
-/// coordinator, so these tests never depend on it.
+/// and additionally registers the document services + options in the TEST host, so
+/// these tests never depend on the production <c>Program.cs</c> wiring.
 /// </summary>
 public abstract class DocumentsApiFactoryBase : WebApplicationFactory<Program>
 {
@@ -373,7 +371,7 @@ public abstract class DocumentsApiFactoryBase : WebApplicationFactory<Program>
             services.RemoveAll<IMcpProtocolClient>();
             services.AddSingleton<IMcpProtocolClient, TestMcpProtocolClient>();
 
-            // ── Document tools registration (mirrors the Program.cs snippet in PDF-INTEGRATION.md) ──
+            // ── Document tools registration (mirrors the production Program.cs wiring) ──
             services.Configure<DocumentToolsOptions>(o =>
             {
                 o.Enabled = DocumentToolsEnabled;

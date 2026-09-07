@@ -17,9 +17,8 @@ namespace LmKitOmniApi.Controllers;
 ///
 /// Tenant-scoped and role-gated to Admin/User (never Guest). OFF BY DEFAULT: when the
 /// tool is not enabled the stream endpoint returns 501 and nothing can launch. This
-/// controller and its services work end-to-end without touching Program.cs / appsettings /
-/// the orchestrator (the required DI + config wiring is documented in
-/// COMPUTER-USE-INTEGRATION.md).
+/// controller's DI and config wiring is in <c>Program.cs</c> and <c>appsettings.json</c>
+/// (the <c>ComputerUse</c> section).
 /// </summary>
 [ApiController]
 [Route("api/agent/computer-use")]

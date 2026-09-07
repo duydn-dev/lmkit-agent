@@ -12,10 +12,9 @@ namespace LmKitOmniApi.Controllers;
 /// registers the produced adapter through the existing LoRA hot-swap feature.
 ///
 /// Tenant-scoped from the JWT claims (never the body). OFF BY DEFAULT — every endpoint
-/// returns <b>501</b> while <c>GroundingTraining:Enabled</c> is false. This controller and
-/// its services compile and are unit-tested WITHOUT touching Program.cs / appsettings.json /
-/// ComputerUseAgent.cs / AgentOrchestrator.cs (the DI + config + recorder-hook wiring is
-/// documented in TRAINING-INTEGRATION.md).
+/// returns <b>501</b> while <c>GroundingTraining:Enabled</c> is false. The DI, config and
+/// recorder-hook wiring is in <c>Program.cs</c>, <c>appsettings.json</c> (the
+/// <c>GroundingTraining</c> section) and <c>ComputerUseAgent</c>.
 /// </summary>
 [ApiController]
 [Route("api/computer-use/grounding-training")]

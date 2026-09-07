@@ -402,6 +402,9 @@ builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DataRetent
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ModelWarmupWorker>();
 // Tier 2: user-defined recurring prompts delivered as notifications.
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ScheduledTaskWorker>();
+// Expires unanswered HITL approvals so a run parked on one reaches a terminal state
+// instead of hanging forever, and a weeks-old gated tool call can never be executed.
+LmKitOmniApi.Application.Approvals.ApprovalExpiryServiceCollectionExtensions.AddApprovalExpiry(builder.Services, builder.Configuration);
 
 // ============================================================
 // 🔄 Multi-Agent System (Phase 3)

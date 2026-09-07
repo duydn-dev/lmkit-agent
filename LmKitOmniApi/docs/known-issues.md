@@ -217,34 +217,7 @@ decision, so it is recorded rather than changed.
 
 ---
 
-## 10. Stale cross-references to deleted `*-INTEGRATION.md` files
-
-Source comments point at handoff files that no longer exist:
-
-| File | Refers to |
-| --- | --- |
-| `LmKitOmniApi/Controllers/ComputerUseController.cs:22` | `COMPUTER-USE-INTEGRATION.md` |
-| `LmKitOmniApi/Controllers/GroundingEvalController.cs:21` | `GROUNDING-EVAL-INTEGRATION.md` |
-| `LmKitOmniApi/Controllers/GroundingTrainingController.cs:18` | `TRAINING-INTEGRATION.md` |
-| `LmKitOmniApi/Controllers/WidgetPublicController.cs:38` | `WIDGET-FIX-INTEGRATION.md` |
-| `LmKitOmniApi/Application/AgentRuns/AgentRunStatuses.cs:21` | `AGENTRUN-FIX-INTEGRATION.md` |
-| `LmKitOmniApi/Infrastructure/AI/AgentOrchestrator.cs:1056` | `CORE-FIX-INTEGRATION.md` |
-| `LmKitOmniApi/Infrastructure/AI/Voice/VoiceOptions.cs:89` | `VOICE-CU-FIX-INTEGRATION.md` |
-| `LmKitOmniApi/Infrastructure/AI/Voice/VoiceRoomAgentHostedService.cs:30` | `VOICE-CU-FIX-INTEGRATION.md` |
-| `LmKitOmniApi/Infrastructure/AI/Voice/VoiceRoomNaming.cs:23` | `VOICE-CU-FIX-INTEGRATION.md` |
-| `LmKitOmniApi.Tests/ApprovedActionScopeTests.cs:185` | `CORE-FIX-INTEGRATION.md` |
-| `LmKitOmniApi.Tests/DocumentsControllerTests.cs:33,310,376` | `PDF-INTEGRATION.md` |
-| `LmKitOmniApi.Tests/StreamingGuardrailGateTests.cs:232` | `AGENTRUN-FIX-INTEGRATION.md` |
-
-Several of those controller comments also claim the feature "works without touching
-`Program.cs` / `appsettings.json`" — the wiring has since landed in both files, so the caveat is
-stale as well.
-
-**Fix:** point the comments at this file (or at `ai-agent-capabilities.md`), or delete them.
-
----
-
-## 11. `/hubs` is proxied but no SignalR hub exists
+## 10. `/hubs` is proxied but no SignalR hub exists
 
 `LmKitOmniClient/vite.config.ts:27` and `LmKitOmniClient/nginx.conf:62` both proxy `/hubs/` to
 the API, but the API registers no hub: `AddSignalR` and `MapHub` appear nowhere in

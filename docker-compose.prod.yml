@@ -26,6 +26,17 @@ x-api-environment: &api-env
   - Voice__LiveKitUrl=${LIVEKIT_URL:-ws://livekit:7880}
   - Voice__LiveKitApiKey=${LIVEKIT_API_KEY:-}
   - Voice__LiveKitApiSecret=${LIVEKIT_API_SECRET:-}
+  # VoiceRoomAgentHostedService refuses to start without these two, so a compose
+  # deployment could not configure the live voice agent without editing this file.
+  - Voice__AgentTenantId=${VOICE_AGENT_TENANT_ID:-}
+  - Voice__AgentUserId=${VOICE_AGENT_USER_ID:-}
+  # Without this, every per-IP rate limit sees nginx's address instead of the caller's,
+  # so all users share one bucket and the audit log records the proxy. The trust list is
+  # the compose bridge subnet declared under `networks:` below — only containers in this
+  # stack can reach the API, so only they can set X-Forwarded-For. Never widen this to a
+  # network that carries untrusted peers: a spoofable header defeats the limit entirely.
+  - ForwardedHeaders__Enabled=${FORWARDED_HEADERS_ENABLED:-true}
+  - ForwardedHeaders__KnownNetworks__0=${FORWARDED_HEADERS_NETWORK:-172.29.83.0/24}
   - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
   - DataProtection__KeyPath=/var/lib/lmkit/keys
 
@@ -206,3 +217,15 @@ volumes:
   dataprotectionkeys:
   models:
   uploads:
+
+# Compose would otherwise create the default network with a daemon-assigned subnet,
+# which is not knowable in advance — and ForwardedHeaders__KnownNetworks needs a
+# literal CIDR, because trusting X-Forwarded-For from an unknown peer is a spoofing
+# hole. Pinning the subnet here is what makes the api service's trust list correct.
+# Override with FORWARDED_HEADERS_NETWORK (both values must match) if this range
+# collides with something on the host.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${FORWARDED_HEADERS_NETWORK:-172.29.83.0/24}
