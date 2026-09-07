@@ -55,13 +55,30 @@ public sealed class LmKitDefaultToolCatalog
         BuiltInTools.StatsAnalysis,
     ];
 
+    /// <summary>
+    /// Registers the safe defaults on an already-built conversation.
+    ///
+    /// <para>
+    /// <b>Prefer passing <see cref="GetSafeDefaultTools"/> to <c>ChatConversationFactory.Create</c>.</b>
+    /// Registering after construction advertises the tools to the model on the FIRST turn only:
+    /// LM-Kit renders the tool catalog into the prompt inside the same
+    /// <c>history.MessageCount == 0</c> branch that renders the system prompt, so on a rebuilt
+    /// (non-empty) history the catalog has to be seeded into the history itself — which the
+    /// factory can only do if it knows the tools before it builds it.
+    /// </para>
+    /// <para>
+    /// Idempotent: <c>overwrite: true</c> so calling this after the factory has already
+    /// registered the same tools replaces them with themselves rather than throwing
+    /// <see cref="InvalidOperationException"/> on the duplicate name.
+    /// </para>
+    /// </summary>
     public void RegisterSafeDefaults(MultiTurnConversation conversation)
     {
         ArgumentNullException.ThrowIfNull(conversation);
 
         foreach (var tool in GetSafeDefaultTools())
         {
-            conversation.Tools.Register(tool);
+            conversation.Tools.Register(tool, overwrite: true);
         }
     }
 }

@@ -52,6 +52,46 @@ namespace LmKitOmniApi.Infrastructure.AI;
 /// still delivered in full, by the caller's end-of-stream flush. A stall is the
 /// deliberate trade against a truncated answer. Ordinary prose holds 11–20
 /// characters.</para>
+///
+/// <para><b>Emission boundary.</b> Settled is necessary but not sufficient: a class
+/// whose redaction has not been applied to the view yet must not have its spans
+/// released. Writing <c>S</c> for the settled boundary above, the gate emits the image
+/// of <c>E = min(S, C)</c>, where <c>C</c> is the START index of the first
+/// <see cref="OutputGuardrailFilter.CredentialRedactionPattern"/> match in <c>raw</c>
+/// while the credential class is unlatched, and <c>C = L</c> once it is latched.
+/// <c>E</c> is a boundary, not a post-hoc cap on the emitted length, so the whole view
+/// construction runs against it and <c>view.Length - unsettled</c> stays its exact
+/// image.</para>
+///
+/// <para><b>Why that is sound.</b> (i) By the hold rule no match of any pattern can
+/// BEGIN at an index below <c>S</c> in any continuation of the stream, so the set of
+/// matches beginning below <c>S</c> is fixed the moment it is observed — a credential
+/// span the gate cannot see now is one it will never need to have seen. (ii)
+/// <c>Regex.Replace</c> leaves every character before its first match index untouched,
+/// so <c>raw[0..C)</c> survives the credential transform verbatim. (iii) The order the
+/// gate applies transforms in — credential, then SSN, then email — is the order the
+/// full pass applies them (<c>PromptGuardService.LeakagePatterns</c> lists
+/// SystemPrompt, Credential, SSN, Email, and <c>RedactForDetectedThreats</c> replays
+/// detection order), so each class's cap is computed on the text as it stands BEFORE
+/// that class's own redaction: the credential boundary on <c>raw</c>, nothing having
+/// preceded it, and the SSN/email caps on the credential-redacted view. That ordering
+/// is load-bearing rather than cosmetic — <c>TOKEN 123-45-6789</c> is a credential span
+/// in <c>raw</c> but not in a view where the SSN has already become
+/// <c>[SSN REDACTED]</c>, so a credential boundary measured on the view would release
+/// text the full pass then rewrites.</para>
+///
+/// <para><b>What this replaced, and why it mattered.</b> The unlatched credential cap
+/// used to anchor on a KEYWORD-only pattern (any of API_KEY / SECRET_KEY / PASSWORD /
+/// TOKEN / BEARER, no separator, no value), which is insensitive to (iii) but far too
+/// wide: the cap is recomputed from <c>_emitted.Length</c> on every attempt, so an
+/// unlatched keyword pinned emission at that word for the REST of the answer. An answer
+/// that merely discusses passwords or tokens — where no credential span exists and the
+/// class never latches — therefore stopped streaming at the word and arrived in one
+/// lump on the end-of-stream flush, undoing for a whole class of answers the very thing
+/// the rebuilt hold rule bought (first chunk at raw character 16 instead of 544).
+/// Anchoring on the real pattern keeps every stall the guardrail needs and drops the
+/// ones it does not: emission now pauses only in front of text the end-of-stream pass
+/// would actually rewrite.</para>
 /// </summary>
 internal sealed class StreamingGuardrailGate
 {
@@ -94,20 +134,7 @@ internal sealed class StreamingGuardrailGate
     /// </summary>
     private const int DetectionStrideChars = 256;
 
-    /// <summary>
-    /// Keyword-only prefix of <see cref="OutputGuardrailFilter.CredentialRedactionPattern"/>:
-    /// the full pattern's trailing separator-and-value may only complete long after the
-    /// keyword has left the hold window, so while the credential class is unlatched
-    /// the cap anchors on the keyword itself. Deliberately WIDER than the shared
-    /// pattern's keyword clause (no <c>\b</c>) — capping earlier than necessary only
-    /// delays a release, whereas capping later than necessary would release text the
-    /// end-of-stream pass might still rewrite.
-    /// </summary>
-    private static readonly Regex CredentialHoldPattern = new(
-        @"(?i)API[-_\s]?KEY|SECRET[-_\s]?KEY|PASSWORD|TOKEN|BEARER",
-        RegexOptions.Compiled);
-
-    /// <summary>Same keyword set, anchored, for "does a keyword end exactly here?".</summary>
+    /// <summary>Credential keyword set, anchored, for "does a keyword end exactly here?".</summary>
     private static readonly Regex CredentialKeywordAnchored = new(
         @"\A(?i:API[-_\s]?KEY|SECRET[-_\s]?KEY|PASSWORD|TOKEN|BEARER)\z",
         RegexOptions.Compiled);
@@ -159,17 +186,47 @@ internal sealed class StreamingGuardrailGate
         // 2. Latch threat classes from the settled region only — a match that lies
         //    there cannot be altered or dissolved by later appends, so a latched
         //    class is also detected by the end-of-stream full pass.
+        //
+        //    This runs against the FULL settled region, deliberately before step 2b
+        //    narrows the emission boundary: the credential span step 2b stops in front
+        //    of is exactly the one the detector has to see in order to latch the class
+        //    and let emission move past it. Narrowing first would starve the detector
+        //    of its own trigger and pin the stream there for good.
         await LatchThreatClassesAsync(raw, settledRawLength, ct);
+
+        // 2b. Emission boundary. While the credential class is unlatched no credential
+        //    redaction has been applied to the view, so nothing from the first
+        //    credential-shaped span onwards may be released — the end-of-stream pass
+        //    rewrites from exactly that index, and `Regex.Replace` leaves everything
+        //    before it untouched.
+        //
+        //    Measured on `raw`, not on the view: credential is the FIRST transform in
+        //    the pipeline, so its input is the unredacted text. A PII substitution
+        //    inside a credential value ("TOKEN 123-45-6789" → "TOKEN [SSN REDACTED]")
+        //    hides the span from a view-based scan while the full pass — which redacts
+        //    credentials first — still rewrites it.
+        //
+        //    Pulling the BOUNDARY back rather than capping `safeLength` afterwards is
+        //    what lets a raw index be used at all: everything downstream keeps working
+        //    in view coordinates, with `view.Length - unsettled` still the exact image
+        //    of the boundary after any chain of replacements.
+        var emitRawLength = settledRawLength;
+        if (!_credentialClassLatched)
+        {
+            var pendingCredential = OutputGuardrailFilter.CredentialRedactionPattern.Match(raw);
+            if (pendingCredential.Success && pendingCredential.Index < emitRawLength)
+                emitRawLength = pendingCredential.Index;
+        }
 
         // 3. Conditionally redacted view — the same class transforms, in the same
         //    order, that OutputGuardrailFilter applies to the full text. Only
-        //    matches lying wholly inside the settled region are replaced; anything
+        //    matches lying wholly inside the emission boundary are replaced; anything
         //    reaching into the unsettled tail is left verbatim, which keeps the last
         //    `unsettled` characters of the view byte-identical to the raw tail and
         //    therefore keeps `view.Length - unsettled` the exact image of the
-        //    settled boundary.
+        //    boundary.
         var view = raw;
-        var unsettled = hold;
+        var unsettled = raw.Length - emitRawLength;
         if (_credentialClassLatched)
             view = ReplaceSettled(view, OutputGuardrailFilter.CredentialRedactionPattern, CredentialReplacement, ref unsettled);
         if (_piiClassLatched)
@@ -178,17 +235,17 @@ internal sealed class StreamingGuardrailGate
             view = ReplaceSettled(view, OutputGuardrailFilter.EmailRedactionPattern, _ => "[EMAIL REDACTED]", ref unsettled);
         }
 
-        // 4. Emission cap: the settled boundary, plus the full pass's truncation cap
-        //    (the caller releases the truncation marker itself).
+        // 4. Emission cap: the boundary from step 2b, plus the full pass's truncation
+        //    cap (the caller releases the truncation marker itself).
         var safeLength = Math.Min(view.Length - unsettled, OutputGuardrailFilter.MaxOutputLength);
         if (safeLength <= _emitted.Length)
             return string.Empty;
 
-        // 5. While a class is still unlatched its redaction has NOT been applied to
-        //    the view, so emission must stop before any span the end-of-stream pass
-        //    could rewrite once the class is detected.
-        if (!_credentialClassLatched)
-            safeLength = CapBeforeEarliestMatch(view, CredentialHoldPattern, safeLength);
+        // 5. The PII half of the same rule as step 2b, and it belongs HERE rather than
+        //    on the boundary: SSN and email are redacted AFTER credentials, so their
+        //    input is the credential-redacted view, which is what `view` already holds.
+        //    Unlike credentials these latch positionally and without a stride, so this
+        //    only ever bites on a match that straddles the boundary.
         if (!_piiClassLatched)
         {
             safeLength = CapBeforeEarliestMatch(view, OutputGuardrailFilter.SsnRedactionPattern, safeLength);

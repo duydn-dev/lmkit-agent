@@ -62,7 +62,14 @@ internal static class RateLimitTestHost
     public static WebApplicationFactory<Program> Create(
         LmKitApiFactory parent,
         IDictionary<string, string?>? configuration = null)
-        => parent.WithWebHostBuilder(builder =>
+    {
+        ArgumentNullException.ThrowIfNull(parent);
+        // Read OUTSIDE the callback, and minted once per derived factory: the callback runs
+        // when the derived host is built, and a fresh GUID computed in there would tie the
+        // key ring to build timing rather than to this factory.
+        var parentKeyPath = parent.DataProtectionKeyPath;
+
+        return parent.WithWebHostBuilder(builder =>
         {
             // The parent factory has already written its own defaults into the SAME host
             // configuration layer, so these plainly overwrite them — for the settings
@@ -72,13 +79,22 @@ internal static class RateLimitTestHost
             // first half of that was true: this host's budget of 2 governed the "ai-agent"
             // policy while DistributedAiRateLimitMiddleware, constructed per request from
             // IConfiguration, still read the parent's 10. See TestHostConfiguration.
-            TestHostConfiguration.Apply(
+            //
+            // ApplyDerived, not Apply: inheriting the parent's settings is the point of a
+            // derived host for everything EXCEPT the data-protection key path. The parent is
+            // a long-lived class fixture whose host is still up while this one serves
+            // requests, so inheriting that path would put two live hosts back on a single key
+            // ring — the exact configuration that produced "Fixture login failed:
+            // InternalServerError" at MaxParallelThreads=32.
+            TestHostConfiguration.ApplyDerived(
                 builder,
+                parentKeyPath,
                 configuration ?? new Dictionary<string, string?>());
 
             builder.ConfigureServices(services =>
                 services.AddSingleton<IStartupFilter, TestPeerIpStartupFilter>());
         });
+    }
 
     /// <summary>
     /// One call against an <c>ai-agent</c>-limited endpoint. The body is deliberately

@@ -417,12 +417,20 @@ public class SpeechController : ApiControllerBase
     /// Credentials come from <see cref="VoiceLiveKitCredentials"/> — the single source that
     /// accepts either <c>Voice:LiveKit*</c> or the shared <c>LiveKit:*</c> block, so
     /// configuring one no longer leaves the other half of the feature dead.
+    ///
+    /// CONSENT: <c>agent=true</c> (default FALSE) is the caller's explicit opt-in to a
+    /// server-side agent joining this room. Without it nothing is recorded and the multi-room
+    /// dispatcher will never join — a room existing is not consent to being listened to. The
+    /// grant is derived from the AUTHENTICATED identity, so a caller can only ever invite an
+    /// agent into their own room, and it expires with the token minted here.
     /// </summary>
     [HttpGet("token")]
     public IActionResult GetLiveKitToken(
         [FromServices] IConfiguration config,
         [FromServices] IOptions<VoiceOptions> voiceOptions,
-        [FromQuery] string room = VoiceRoomNaming.DefaultLabel)
+        [FromQuery] string room = VoiceRoomNaming.DefaultLabel,
+        [FromQuery] bool agent = false,
+        [FromQuery] string? voice = null)
     {
         if (!TryGetIdentity(out var tenantId, out var userId))
             return Unauthorized();
@@ -460,9 +468,90 @@ public class SpeechController : ApiControllerBase
         var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(header, payload);
         var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
 
+        var (agentJoining, agentReason) = agent
+            ? RecordAgentConsent(voiceOptions.Value, tenantId, userId, room, voice, scopedRoom)
+            : (false, null);
+
         // `room` is echoed back so an operator can see exactly which room the caller was put
         // in (and point Voice:AgentTenantId/AgentUserId at it) without decoding the JWT.
-        return Ok(new { token = tokenHandler.WriteToken(token), room = scopedRoom });
+        // `agent` reports whether an agent will actually join — never just whether one was
+        // asked for, so a client cannot show "AI listening" for a room nobody will serve.
+        return Ok(new
+        {
+            token = tokenHandler.WriteToken(token),
+            room = scopedRoom,
+            agent = agentJoining,
+            agentUnavailableReason = agentReason
+        });
+    }
+
+    /// <summary>
+    /// Records the caller's opt-in, or explains why no agent will join. Never fails the token:
+    /// a caller who cannot have an agent still gets a working voice room.
+    /// </summary>
+    private (bool Granted, string? Reason) RecordAgentConsent(
+        VoiceOptions options,
+        Guid tenantId,
+        Guid userId,
+        string roomLabel,
+        string? voice,
+        string scopedRoom)
+    {
+        if (!options.DispatcherActive)
+        {
+            return (false, options.LiveAgentEnabled
+                ? "The multi-room voice agent is disabled on this server (Voice:DispatcherEnabled)."
+                : "The live voice agent is disabled on this server (Voice:LiveAgentEnabled).");
+        }
+
+        // Resolved optionally: if the registry was never registered the token endpoint must keep
+        // working exactly as it does today rather than 500-ing on a missing dependency.
+        var registry = HttpContext.RequestServices.GetService<IVoiceAgentConsentRegistry>();
+        if (registry is null)
+        {
+            _logger.LogWarning(
+                "A caller asked for a voice agent but no {Registry} is registered; no agent can join.",
+                nameof(IVoiceAgentConsentRegistry));
+            return (false, "The voice agent consent registry is not configured on this server.");
+        }
+
+        if (!registry.TryGrant(tenantId, userId, roomLabel, voice, DateTimeOffset.UtcNow, out var grant, out var error))
+            return (false, error ?? "The voice agent could not be requested for this room.");
+
+        // The grant's room is derived independently of the token's; if they ever disagree the
+        // agent would join a room the caller is not in, so refuse instead of guessing.
+        if (grant is null || !string.Equals(grant.Room, scopedRoom, StringComparison.Ordinal))
+        {
+            _logger.LogError(
+                "Voice agent consent produced room '{GrantRoom}' but the caller's token is for '{TokenRoom}'; revoking.",
+                grant?.Room, scopedRoom);
+            registry.Revoke(tenantId, userId, roomLabel);
+            return (false, "The voice agent could not be requested for this room.");
+        }
+
+        return (true, null);
+    }
+
+    /// <summary>
+    /// Withdraws the caller's voice-agent consent for one room: DELETE
+    /// <c>/api/speech/agent-session?room=omni-room</c>. The dispatcher notices on its next tick
+    /// and the agent leaves. Idempotent — 204 whether or not a grant existed — and scoped to the
+    /// caller's own room, so nobody can evict anybody else's agent.
+    ///
+    /// Not required for correctness: a grant also lapses on its TTL, and an idle room is
+    /// reclaimed by <c>Voice:RoomIdleTimeoutSeconds</c>. This just makes hanging up immediate.
+    /// </summary>
+    [HttpDelete("agent-session")]
+    public IActionResult RevokeAgentSession([FromQuery] string room = VoiceRoomNaming.DefaultLabel)
+    {
+        if (!TryGetIdentity(out var tenantId, out var userId))
+            return Unauthorized();
+
+        if (!VoiceRoomNaming.TryScopedRoom(tenantId, userId, room, out _, out var roomError))
+            return BadRequest(roomError);
+
+        HttpContext.RequestServices.GetService<IVoiceAgentConsentRegistry>()?.Revoke(tenantId, userId, room);
+        return NoContent();
     }
 
     private PathValidationResult ValidateOwnedPath(string path)

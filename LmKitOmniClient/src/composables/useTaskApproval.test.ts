@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  approvalChatSessionFromRow,
   approvalContinuationPrompt,
   approvalFailureMessage,
   approvalIdFromMarkerText,
   fetchPendingApproval,
-  findApprovalChatSession,
   isApprovalId,
   isSettledStatus,
+  resolveApprovalChatSession,
   streamApprovedContinuation,
   submitApprovalDecision
 } from './useTaskApproval';
@@ -228,37 +229,78 @@ describe('submitApprovalDecision', () => {
   });
 });
 
-// --- Finding the conversation an approval came from -------------------------
+// --- The session the pending row itself names -------------------------------
 
-describe('findApprovalChatSession', () => {
-  it('searches session content for the approval id', async () => {
-    const { calls } = installFetch(() => json([{ id: SESSION_ID, title: 'Báo cáo doanh thu' }]));
-
-    const session = await findApprovalChatSession(APPROVAL_ID);
-
-    expect(session).toEqual({ id: SESSION_ID, title: 'Báo cáo doanh thu' });
-    expect(calls[0].url).toBe(`/api/chat/sessions/search?q=${APPROVAL_ID}`);
+describe('approvalChatSessionFromRow', () => {
+  it('reads the session straight off a row that carries one', () => {
+    expect(approvalChatSessionFromRow({
+      id: APPROVAL_ID,
+      chatSessionId: SESSION_ID,
+      isChatSession: true,
+      chatSessionTitle: 'Báo cáo doanh thu'
+    })).toEqual({ id: SESSION_ID, title: 'Báo cáo doanh thu' });
   });
 
-  it('never searches with a blank term, which would return every session', async () => {
-    // SECURITY: an empty q lists all sessions, and the caller posts an approval
-    // result into whatever comes back first.
-    const { fetchMock } = installFetch(() => json([{ id: SESSION_ID, title: 'Bất kỳ' }]));
+  it('tolerates a session with no title', () => {
+    expect(approvalChatSessionFromRow({
+      id: APPROVAL_ID, chatSessionId: SESSION_ID, isChatSession: true
+    })).toEqual({ id: SESSION_ID, title: '' });
+  });
 
-    for (const value of ['', '   ', 'not-a-guid']) {
-      expect(await findApprovalChatSession(value)).toBeNull();
+  it('says "no conversation" for an agent-run or temporary-chat approval', () => {
+    // isChatSession:false is the API stating the two cases the content search used
+    // to express by finding nothing: a hidden IsAgentRun substrate and an
+    // IsEphemeral chat. Both carry a real ChatSessionId, which is exactly why the
+    // raw id alone cannot be trusted.
+    expect(approvalChatSessionFromRow({
+      id: APPROVAL_ID, chatSessionId: SESSION_ID, isChatSession: false
+    })).toBeNull();
+  });
+
+  it('says "server did not tell me" when the fields are absent', () => {
+    expect(approvalChatSessionFromRow({ id: APPROVAL_ID })).toBeUndefined();
+  });
+
+  it('refuses a row that claims a chat session but names no usable id', () => {
+    // Half a truth is not a session to post an approval result into.
+    for (const chatSessionId of [
+      undefined, '', '   ', 'not-a-guid', '00000000-0000-0000-0000-000000000000'
+    ]) {
+      expect(approvalChatSessionFromRow({ id: APPROVAL_ID, chatSessionId, isChatSession: true }))
+        .toBeUndefined();
     }
+  });
+});
+
+describe('resolveApprovalChatSession', () => {
+  it('uses the row and never touches the network', async () => {
+    const { fetchMock } = installFetch(() => json([{ id: 'zzz', title: 'wrong session' }]));
+
+    const session = await resolveApprovalChatSession({
+      id: APPROVAL_ID, chatSessionId: SESSION_ID, isChatSession: true, chatSessionTitle: 'Đúng'
+    });
+
+    expect(session).toEqual({ id: SESSION_ID, title: 'Đúng' });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('returns null when nothing matches (agent-run or temporary chat)', async () => {
-    installFetch(() => json([]));
-    expect(await findApprovalChatSession(APPROVAL_ID)).toBeNull();
+  it('does not search for an approval the row says has no conversation', async () => {
+    const { fetchMock } = installFetch(() => json([{ id: SESSION_ID, title: 'bất kỳ' }]));
+
+    expect(await resolveApprovalChatSession({
+      id: APPROVAL_ID, chatSessionId: SESSION_ID, isChatSession: false
+    })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('returns null instead of throwing when the search fails', async () => {
-    installFetch(() => Promise.reject(new Error('offline')));
-    expect(await findApprovalChatSession(APPROVAL_ID)).toBeNull();
+  it('answers null — and searches for nothing — when the row says nothing usable', async () => {
+    // The content-search fallback is gone. A row without the fields now means "no
+    // conversation to write into", which the caller reports honestly, rather than a
+    // speculative lookup that could land an approved tool result in the wrong session.
+    const { fetchMock } = installFetch(() => json([{ id: SESSION_ID, title: 'Bất kỳ' }]));
+
+    expect(await resolveApprovalChatSession({ id: APPROVAL_ID })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

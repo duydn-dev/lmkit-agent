@@ -247,6 +247,16 @@ public class HermesDbContext : DbContext
             .HasOne<ChatSession>().WithMany().HasForeignKey(r => r.ChatSessionId).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<AgentRun>()
             .HasIndex(r => new { r.TenantId, r.UserId, r.CreatedAtUtc });
+        // The resume worker's only selection query: WHERE ResumeState = 'Pending' OR
+        // (ResumeState = 'Claimed' AND ResumeLeaseUntilUtc <= now). ResumeState first
+        // (equality) then the lease (range) is the column order that lets one index serve
+        // both branches, and because the column is NULL for every run that is not mid-
+        // continuation — which is almost all of them — the index stays tiny no matter how
+        // many runs the deployment accumulates. Same reasoning as
+        // IX_task_approvals_Status_ExpiresAtUtc: a poll must be a bounded index scan, not
+        // a table scan every few seconds.
+        modelBuilder.Entity<AgentRun>()
+            .HasIndex(r => new { r.ResumeState, r.ResumeLeaseUntilUtc });
         modelBuilder.Entity<AgentRunStep>()
             .HasOne(s => s.AgentRun).WithMany(r => r.Steps).HasForeignKey(s => s.AgentRunId).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<AgentRunStep>()

@@ -1,6 +1,5 @@
 using System.Runtime.CompilerServices;
 using System.Text;
-using System.Text.RegularExpressions;
 using LmKitOmniApi.Application.AgentRuns.Commands;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Domain.Entities;
@@ -22,11 +21,6 @@ namespace LmKitOmniApi.Application.AgentRuns.Handlers;
 /// </summary>
 public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamAgentRunCommand, string>
 {
-    // Strips the orchestrator's status/step markers so the stored Result is clean prose.
-    private static readonly Regex MarkerRegex = new(
-        @"\[(?:THINKING|REASONING|WEB_SEARCH|Agent invoked|STEP|FILE|HITL_APPROVAL_REQUIRED|AGENT_RUN|RESEARCH_SAVED)[:\]][^\n\r]*?(?:\][\n\r]*|(?=\[)|$)",
-        RegexOptions.Compiled);
-
     private readonly IAgentOrchestrator _orchestrator;
     private readonly HermesDbContext _dbContext;
     private readonly LmModelManager _modelManager;
@@ -92,7 +86,7 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
                 cancellationToken, steps))
             {
                 contentBuilder.Append(text);
-                if (text.StartsWith("[HITL_APPROVAL_REQUIRED:", StringComparison.Ordinal)) awaitingApproval = true;
+                if (text.StartsWith(AgentRunMarkers.ApprovalRequired, StringComparison.Ordinal)) awaitingApproval = true;
                 yield return text;
             }
             completed = true;
@@ -121,12 +115,13 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
             });
         }
 
-        var result = MarkerRegex.Replace(rawContent, string.Empty).Trim();
+        var result = AgentRunMarkers.StripMarkers(rawContent);
         run.Result = string.IsNullOrWhiteSpace(result) ? null : result;
         // AwaitingApproval is the one non-terminal outcome: CompletedAtUtc stays null
         // until the human resolves the gating approval, at which point
-        // AgentRunApprovalReconciler moves the run to a terminal status. Without that
-        // reconciliation this state was permanent — see AgentRunStatuses.
+        // AgentRunApprovalReconciler either hands the run back to the ReAct loop
+        // (AgentRunResumeService) or closes it. Without that reconciliation this state
+        // was permanent — see AgentRunStatuses.
         run.Status = awaitingApproval ? AgentRunStatuses.AwaitingApproval
             : completed ? AgentRunStatuses.Completed
             : AgentRunStatuses.Failed;

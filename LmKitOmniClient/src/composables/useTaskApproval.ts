@@ -11,7 +11,7 @@ import { ChatSseParser } from '@/utils/chatSse';
  * identical wherever the user happens to be standing.
  *
  * It also owns the two pieces the Approvals page needs to put an approved result
- * back into the conversation it came from ({@link findApprovalChatSession} and
+ * back into the conversation it came from ({@link resolveApprovalChatSession} and
  * {@link streamApprovedContinuation}); see the note on that pair below.
  */
 
@@ -20,10 +20,10 @@ export type ApprovalDecision = 'approve' | 'reject';
 /**
  * Canonical GUID shape, as `System.Text.Json` serializes `TaskApproval.Id`.
  *
- * SECURITY / CORRECTNESS: {@link findApprovalChatSession} feeds the id straight into
- * the session content search, and that endpoint treats an EMPTY term as "list every
- * session". A blank or malformed id must therefore never reach it — it would return
- * an unrelated session that the caller would then post an approval result into.
+ * Used to gate the id before it is trusted as a session reference. The content-search
+ * fallback that once consumed it is gone, but the shape check is still load-bearing:
+ * {@link approvalChatSessionFromRow} refuses a row whose id is blank or malformed
+ * rather than half-trusting a row that contradicts itself.
  */
 const APPROVAL_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -248,39 +248,74 @@ export interface ApprovalChatSession {
   title: string;
 }
 
+/** All-zero GUID, which is how `System.Text.Json` serializes an unset `Guid`. */
+const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+
 /**
- * Finds the chat session an approval was raised in, by searching message content
- * for the `[HITL_APPROVAL_REQUIRED:{id}]` marker the orchestrator emitted and the
- * chat handler persisted with the assistant turn.
- *
- * This is a lookup the API does not offer directly: `GET /api/taskapproval/pending`
- * projects `ActionName`/`Details`/`CreatedAtUtc` and deliberately not the row's
- * `ChatSessionId`. The content search is exact enough to stand in — the term is a
- * GUID, so a match is the session that raised this very approval.
- *
- * Returns null (not an error) for the two cases where there is legitimately nothing
- * to continue: the search endpoint excludes agent-run sessions — those resolve
- * themselves through the reconciler and are surfaced on the agent-run page — and
- * temporary chats, which persist no messages to match against.
+ * The three fields `GET /api/taskapproval/pending` carries about the conversation an
+ * approval belongs to. All optional: a server that predates them simply omits them,
+ * and {@link resolveApprovalChatSession} falls back to the content search.
  */
-export async function findApprovalChatSession(approvalId: string): Promise<ApprovalChatSession | null> {
-  if (!isApprovalId(approvalId)) return null;
-  try {
-    const response = await http.get(ApiFactory.CHAT.SEARCH_SESSIONS(approvalId.trim()));
-    if (!response.ok) return null;
-    const data = await response.json().catch(() => []) as Array<{ id?: unknown; title?: unknown }>;
-    if (!Array.isArray(data)) return null;
-    const match = data.find((item) => typeof item?.id === 'string' && item.id);
-    if (!match) return null;
-    return {
-      id: match.id as string,
-      title: typeof match.title === 'string' ? match.title : ''
-    };
-  } catch {
-    // A failed lookup is reported by the caller as "chưa ghi được vào cuộc trò
-    // chuyện", never as a failed approval — the tool has already run by now.
-    return null;
-  }
+export interface ApprovalSessionFields {
+  /** The approval's own id — the search term for the fallback path. */
+  id: string;
+  /** `TaskApproval.ChatSessionId`, straight off the row. */
+  chatSessionId?: string | null;
+  /**
+   * True when {@link chatSessionId} names a session the user can actually open and
+   * continue. False for the two substrates that carry a real ChatSessionId but are
+   * excluded from every chat list and search: the hidden `IsAgentRun` session behind
+   * an agent run or a computer-use gate, and a temporary (`IsEphemeral`) chat.
+   */
+  isChatSession?: boolean | null;
+  /** Title of that session; only meaningful when {@link isChatSession}. */
+  chatSessionTitle?: string | null;
+}
+
+/**
+ * The conversation to write an approved result into, straight off the pending row.
+ *
+ * Returns null when the row states there is no such conversation — no request is
+ * made in that case, which is the whole point: an agent-run or temporary-chat
+ * approval is answered without a speculative search.
+ *
+ * Returns undefined when the row says nothing usable — a malformed or empty id, or a
+ * row that claims to be a chat session without one. The caller treats that as "no
+ * conversation to write into" rather than guessing.
+ */
+export function approvalChatSessionFromRow(
+  row: ApprovalSessionFields
+): ApprovalChatSession | null | undefined {
+  if (row.isChatSession === false) return null;
+  if (row.isChatSession !== true) return undefined;
+
+  const id = typeof row.chatSessionId === 'string' ? row.chatSessionId.trim() : '';
+  // A row that claims to be a chat session but carries no usable id contradicts
+  // itself; treat it as "server said nothing" rather than trusting half of it.
+  if (!isApprovalId(id) || id === EMPTY_GUID) return undefined;
+
+  return { id, title: typeof row.chatSessionTitle === 'string' ? row.chatSessionTitle : '' };
+}
+
+/**
+ * The one call a surface makes to learn where an approved result should go.
+ *
+ * The pending row carries `chatSessionId` + `isChatSession`, so this is a pure read of
+ * what the server already knows. A row that says nothing usable answers null — the
+ * caller then tells the user the result was not written anywhere, which is honest,
+ * rather than guessing at a conversation.
+ *
+ * There used to be a fallback here that found the session by full-text-searching
+ * message content for the approval's GUID. It is deleted, not disabled: it depended on
+ * the `[HITL_APPROVAL_REQUIRED:{id}]` marker surviving verbatim in a persisted message,
+ * and it fed a user-supplied id into an endpoint that treats an empty term as "list
+ * every session" — so a malformed id could have returned an unrelated conversation for
+ * the caller to post an approved tool result into.
+ */
+export async function resolveApprovalChatSession(
+  row: ApprovalSessionFields
+): Promise<ApprovalChatSession | null> {
+  return approvalChatSessionFromRow(row) ?? null;
 }
 
 export interface ContinuationOutcome {

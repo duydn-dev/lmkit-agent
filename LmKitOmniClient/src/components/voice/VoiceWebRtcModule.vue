@@ -56,7 +56,11 @@ const connectLiveKit = async () => {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = import.meta.env.VITE_LIVEKIT_URL || `${wsProtocol}//${window.location.hostname}:7880`;
     
-    const response = await http.get('/api/Speech/token?room=omni-room');
+    // `agent=true` is the user's explicit opt-in to the server-side voice agent joining this
+    // room. The server records nothing without it and the room dispatcher never joins — a room
+    // existing is not consent to a listener being in it. Consent is withdrawn with
+    // DELETE /api/Speech/agent-session?room=omni-room (or it simply lapses).
+    const response = await http.get('/api/Speech/token?room=omni-room&agent=true');
     if (!response.ok) throw new Error(await readApiError(response, 'Không thể lấy token thoại'));
     const data = await response.json();
     const token = data.token;

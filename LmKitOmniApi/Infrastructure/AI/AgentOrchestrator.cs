@@ -354,8 +354,14 @@ public class AgentOrchestrator : IAgentOrchestrator
         // after the first was therefore generated with no persona, no project or custom
         // instructions, no memory context, and no fullContext — i.e. without this turn's own
         // ReAct/web-search result. See ChatConversationFactory.
+        // The tool catalog is the fourth argument for the same reason the system prompt is the
+        // third: LM-Kit emits BOTH only when it builds the conversation on an empty history, so
+        // registering tools after construction was silently dead from turn 2 onward — the model
+        // stopped being told the tools exist, and (measured) started inventing their output
+        // instead. RegisterSafeDefaults below is now idempotent and kept only as a no-op guard.
         var chat = ChatConversationFactory.Create(
-            model, history, BuildSystemPrompt(fullContext, memoryContext, options?.PersonaPrompt));
+            model, history, BuildSystemPrompt(fullContext, memoryContext, options?.PersonaPrompt),
+            _defaultToolCatalog.GetSafeDefaultTools());
         chat.MaximumCompletionTokens = DefaultMaximumCompletionTokens;
         _defaultToolCatalog.RegisterSafeDefaults(chat);
 
@@ -607,7 +613,23 @@ public class AgentOrchestrator : IAgentOrchestrator
             .WithMaxIterations(MaxReActIterations)
             .Build();
 
-        using var executor = new AgentExecutor();
+        // The parameterless AgentExecutor defers creating its conversation until Execute(), and
+        // MaximumCompletionTokens THROWS until one exists:
+        //   InvalidOperationException: Conversation has not been initialized.
+        //   Call ExecuteAsync first or provide a conversation in the constructor.
+        // So this line faulted every single ReAct pass, the controller caught it after the SSE
+        // headers were already sent, and every chat request in the product answered
+        // "[ERROR]: Unable to generate a response." — from the very first message.
+        //
+        // Nothing caught it because every test fakes the model boundary; only a run against real
+        // weights reaches this line. LiveChatSecondTurnTests is that run.
+        //
+        // Supplying the conversation up front is the alternative the exception itself names. It
+        // is created empty, exactly like the one Execute() would have built, so the ReAct pass
+        // still starts from the query alone and only the token cap changes — from silently
+        // unapplied to applied.
+        using var executorConversation = new MultiTurnConversation(model);
+        using var executor = new AgentExecutor(executorConversation);
         executor.MaximumCompletionTokens = DefaultMaximumCompletionTokens;
         var result = executor.Execute(agent, query, ct);
 

@@ -10,6 +10,22 @@ public sealed class VoiceTurnContext
 
     /// <summary>Voice/preset name to speak the reply with.</summary>
     public string Voice { get; init; } = "default";
+
+    // ── Identity of the room this turn belongs to ──
+    // Carried EXPLICITLY rather than ambiently: a dispatched agent serves several tenants'
+    // rooms from one process, so any seam that later reaches per-tenant model config, memory or
+    // documents must be handed the owning identity instead of inferring it from a request
+    // context that does not exist on a background turn. Empty on the single-user hosted path,
+    // which serves exactly one configured room.
+
+    /// <summary>Tenant that owns the room this turn came from.</summary>
+    public Guid TenantId { get; init; }
+
+    /// <summary>User who consented to the agent joining that room.</summary>
+    public Guid UserId { get; init; }
+
+    /// <summary>Full scoped room name (<c>{tenant:N}-{user:N}-{label}</c>), for correlation/logging.</summary>
+    public string Room { get; init; } = string.Empty;
 }
 
 /// <summary>Outcome of one voice turn.</summary>

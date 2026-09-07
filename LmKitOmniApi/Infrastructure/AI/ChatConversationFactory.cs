@@ -1,6 +1,8 @@
+using LMKit.Agents.Tools;
 using LMKit.Model;
 using LMKit.TextGeneration;
 using LMKit.TextGeneration.Chat;
+using LmKitOmniApi.Infrastructure.AI.Tools;
 
 namespace LmKitOmniApi.Infrastructure.AI;
 
@@ -59,12 +61,20 @@ namespace LmKitOmniApi.Infrastructure.AI;
 /// </list>
 ///
 /// <para>
-/// <b>Known residual gap (NOT fixed here, by design).</b> The registered tool catalog is
-/// injected on the empty-history path only. Seeding restores the persona/context but not the
-/// tool definitions, because LM-Kit builds that block from an <c>internal</c> type
-/// (<c>H.D.A(LM, IEnumerable&lt;ITool&gt;)</c>) with no public equivalent. That is a
-/// pre-existing LM-Kit limitation with the same root cause; this factory does not make it
-/// worse on any path. See S6-ROUND3.md.
+/// <b>The tool catalog rides the same branch — and is now seeded too.</b> LM-Kit injects the
+/// registered tool catalog inside that identical <c>if (MessageCount == 0)</c> block, so it too
+/// was lost from turn 2 onward: function calling worked on the first message of a session and
+/// silently stopped for the rest of it. Passing <c>tools</c> to <see cref="Create"/> fixes that:
+/// on a non-empty history the head of the rebuilt history is LM-Kit's OWN rendered
+/// system+catalog block, obtained through <see cref="LmKitToolCatalogRenderer"/>. Tool parsing
+/// and invocation were never gated on the branch — only on <c>Tools.Count &gt; 0</c> — so
+/// restoring the catalog text is the whole fix. Verified live: with a rotating-code tool the
+/// model called it on turn 3 in 3/3 runs with seeding and 0/3 without. See T1-ROUND4.md.
+/// </para>
+/// <para>
+/// If the renderer cannot bind (a future LM-Kit reshapes the internal it targets), seeding
+/// degrades to the plain system message — i.e. exactly the behaviour that shipped before this
+/// change, never something worse.
 /// </para>
 /// </summary>
 public static class ChatConversationFactory
@@ -88,6 +98,32 @@ public static class ChatConversationFactory
         SeededMessage,
     }
 
+    /// <summary>How the registered tool catalog will reach the model for a given history.</summary>
+    public enum ToolCatalogDelivery
+    {
+        /// <summary>No tools registered; nothing to deliver.</summary>
+        NotNeeded,
+
+        /// <summary>
+        /// History is empty: LM-Kit renders the catalog itself at the first <c>Submit</c>, as long
+        /// as the tools are registered before it. Seeding here would SUPPRESS that render.
+        /// </summary>
+        LmKitRenders,
+
+        /// <summary>
+        /// History is non-empty: LM-Kit will not render the catalog, so this factory seeds
+        /// LM-Kit's own rendered block at the head of the history instead.
+        /// </summary>
+        SeededMessages,
+
+        /// <summary>
+        /// History is non-empty and the catalog cannot be rendered (no model, or the LM-Kit
+        /// renderer did not bind). The turn runs without tool definitions — the pre-fix
+        /// behaviour — rather than with a hand-rolled block the model might mis-parse.
+        /// </summary>
+        Unavailable,
+    }
+
     /// <summary>
     /// Pure decision function: which delivery mode applies. Split out from
     /// <see cref="Create"/> so the rule is testable without a loaded model.
@@ -99,6 +135,31 @@ public static class ChatConversationFactory
         if (string.IsNullOrWhiteSpace(systemPrompt)) return SystemPromptDelivery.None;
         return historyMessageCount == 0 ? SystemPromptDelivery.Property : SystemPromptDelivery.SeededMessage;
     }
+
+    /// <summary>
+    /// Pure decision function for the tool catalog — the same <c>MessageCount == 0</c> rule the
+    /// system prompt obeys, because LM-Kit renders both inside the one branch.
+    /// </summary>
+    /// <param name="historyMessageCount">Message count of the history the conversation will be built on.</param>
+    /// <param name="toolCount">Number of tools the caller will register.</param>
+    /// <param name="rendererAvailable">
+    /// Whether LM-Kit's catalog renderer is reachable for this call — i.e. a model was supplied
+    /// AND <see cref="LmKitToolCatalogRenderer.IsAvailable"/>.
+    /// </param>
+    public static ToolCatalogDelivery PlanToolCatalog(int historyMessageCount, int toolCount, bool rendererAvailable)
+    {
+        if (toolCount <= 0) return ToolCatalogDelivery.NotNeeded;
+        if (historyMessageCount == 0) return ToolCatalogDelivery.LmKitRenders;
+        return rendererAvailable ? ToolCatalogDelivery.SeededMessages : ToolCatalogDelivery.Unavailable;
+    }
+
+    /// <summary>
+    /// Roles that are prompt scaffolding rather than conversation. They are dropped when a
+    /// history is rebuilt, so re-seeding on every turn can never stack a second persona or a
+    /// second (possibly stale) tool catalog on top of the first.
+    /// </summary>
+    private static bool IsPromptScaffolding(AuthorRole role) =>
+        role is AuthorRole.System or AuthorRole.Developer or AuthorRole.ToolsCatalog;
 
     /// <summary>
     /// Builds the history the conversation should actually be constructed on.
@@ -119,28 +180,64 @@ public static class ChatConversationFactory
     /// happily append a System message AFTER a User message (producing a nonsensical
     /// <c>User, System</c> history) — hence the rebuild rather than an append.
     /// </para>
+    /// <para>
+    /// When <paramref name="tools"/> are supplied and the history is non-empty, the head is not a
+    /// bare System message but LM-Kit's OWN rendered system+catalog block
+    /// (<see cref="LmKitToolCatalogRenderer.Render"/>) — which is what puts the tool definitions
+    /// back in front of the model on turns 2..n. That block may be one merged System message or a
+    /// System plus a Developer/ToolsCatalog message, depending on the model's chat template;
+    /// LM-Kit decides, this method just prepends what it produced. Previously seeded
+    /// Developer/ToolsCatalog messages are dropped from <paramref name="source"/> alongside System
+    /// ones, so re-seeding every turn cannot stack catalogs. If the renderer is unavailable, the
+    /// head falls back to the bare System message — the behaviour that shipped before.
+    /// </para>
     /// </summary>
     /// <param name="model">Model the history is bound to. May be <c>null</c> — <see cref="ChatHistory"/>
     /// tolerates it and simply skips chat-template setup, which is what makes this unit-testable
-    /// without weights.</param>
+    /// without weights. A null model also disables catalog seeding, since rendering the catalog
+    /// needs the model's chat template.</param>
     /// <param name="source">Existing turns, or <c>null</c> for a fresh conversation.</param>
     /// <param name="systemPrompt">The system prompt to apply, if any.</param>
-    public static ChatHistory BuildHistory(LM? model, ChatHistory? source, string? systemPrompt)
+    /// <param name="tools">Tools that will be registered on the conversation, if any.</param>
+    public static ChatHistory BuildHistory(
+        LM? model, ChatHistory? source, string? systemPrompt, IReadOnlyList<ITool>? tools = null)
     {
         var sourceMessages = source?.Messages ?? (IReadOnlyList<ChatHistory.Message>)[];
         var delivery = PlanDelivery(sourceMessages.Count, systemPrompt);
+        var catalogDelivery = PlanToolCatalog(
+            sourceMessages.Count,
+            tools?.Count ?? 0,
+            model is not null && LmKitToolCatalogRenderer.IsAvailable);
 
         // Nothing to seed: hand the caller's history straight back so this factory is a pure
-        // pass-through on the paths it has no opinion about.
-        if (delivery != SystemPromptDelivery.SeededMessage)
+        // pass-through on the paths it has no opinion about. Notably the EMPTY-history path,
+        // where LM-Kit renders the prompt AND the catalog itself — seeding there would suppress
+        // the catalog and regress tool calling on the first turn.
+        if (delivery != SystemPromptDelivery.SeededMessage
+            && catalogDelivery != ToolCatalogDelivery.SeededMessages)
             return source ?? new ChatHistory(model);
 
         var seeded = new ChatHistory(model);
-        seeded.AddMessage(new ChatHistory.Message(AuthorRole.System, systemPrompt!.Trim()));
+
+        var head = catalogDelivery == ToolCatalogDelivery.SeededMessages
+            ? LmKitToolCatalogRenderer.Render(model!, systemPrompt?.Trim(), tools)
+            : [];
+
+        if (head.Count > 0)
+        {
+            // LM-Kit's own block already carries the system prompt in whatever shape this
+            // model's template wants, so it replaces the bare System message rather than
+            // joining it.
+            foreach (var message in head) seeded.AddMessage(message);
+        }
+        else if (delivery == SystemPromptDelivery.SeededMessage)
+        {
+            seeded.AddMessage(new ChatHistory.Message(AuthorRole.System, systemPrompt!.Trim()));
+        }
 
         foreach (var message in sourceMessages)
         {
-            if (message.AuthorRole == AuthorRole.System) continue;
+            if (IsPromptScaffolding(message.AuthorRole)) continue;
             seeded.AddMessage(CopyOf(message));
         }
 
@@ -155,12 +252,19 @@ public static class ChatConversationFactory
     /// <param name="model">Loaded chat model.</param>
     /// <param name="history">Prior turns, or <c>null</c>/empty for a fresh conversation.</param>
     /// <param name="systemPrompt">System prompt for this turn. Null/whitespace leaves the model's default.</param>
-    public static MultiTurnConversation Create(LM model, ChatHistory? history, string? systemPrompt)
+    /// <param name="tools">
+    /// Tools to make callable this turn. Pass them HERE rather than registering after the call:
+    /// on a non-empty history the catalog has to be rendered into the history being built, and a
+    /// registration that lands after construction is advertised to the model on the first turn
+    /// only. Registration itself is still performed here, so callers need not repeat it.
+    /// </param>
+    public static MultiTurnConversation Create(
+        LM model, ChatHistory? history, string? systemPrompt, IReadOnlyList<ITool>? tools = null)
     {
         ArgumentNullException.ThrowIfNull(model);
 
         var delivery = PlanDelivery(history?.MessageCount ?? 0, systemPrompt);
-        var effectiveHistory = BuildHistory(model, history, systemPrompt);
+        var effectiveHistory = BuildHistory(model, history, systemPrompt, tools);
         var chat = new MultiTurnConversation(model, effectiveHistory);
 
         // Only assign on the empty-history path. On the seeded path the constructor has already
@@ -168,6 +272,17 @@ public static class ChatConversationFactory
         // LM-Kit — writing it anyway would make the property disagree with what is rendered.
         if (delivery == SystemPromptDelivery.Property)
             chat.SystemPrompt = systemPrompt;
+
+        // Registered BEFORE the caller's first Submit, which both paths need for different
+        // reasons: on an empty history it is what makes LM-Kit render the catalog at all; on a
+        // seeded history it is what lets LM-Kit PARSE and INVOKE the calls the seeded catalog
+        // invites (that half was never gated on MessageCount — only on Tools.Count > 0).
+        // overwrite:true so a caller that also registers the same tools stays a no-op instead of
+        // throwing InvalidOperationException on the duplicate name.
+        if (tools is { Count: > 0 })
+        {
+            foreach (var tool in tools) chat.Tools.Register(tool, overwrite: true);
+        }
 
         return chat;
     }

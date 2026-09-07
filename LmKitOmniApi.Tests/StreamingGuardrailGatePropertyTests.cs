@@ -242,6 +242,86 @@ public sealed class StreamingGuardrailGatePropertyTests
     }
 
     /// <summary>
+    /// A credential whose VALUE is itself a PII shape — the case that decides WHERE the
+    /// unlatched credential boundary is measured.
+    ///
+    /// <para>In <c>raw</c>, <c>TOKEN 123-45-6789</c> is a credential span (the
+    /// separator-less branch: 11 value characters, digits among them). In a view where
+    /// PII has already latched it reads <c>TOKEN [SSN REDACTED]</c>, which is NOT a
+    /// credential span — <c>'['</c> is not a value character. The full pass redacts
+    /// credentials FIRST (detection order in <c>PromptGuardService.LeakagePatterns</c>),
+    /// so its answer is <c>TOKEN: [REDACTED]</c>. A gate that measured the credential
+    /// boundary on the view would have streamed <c>TOKEN [SSN REDACTED]</c> and then
+    /// diverged, costing the user the tail of the answer. Measuring it on <c>raw</c> —
+    /// the input the credential transform actually receives — is what keeps the two
+    /// equal.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("TOKEN 123-45-6789")]
+    [InlineData("PASSWORD 123.45.6789")]
+    [InlineData("API_KEY 987 65 4321")]
+    [InlineData("PASSWORD abcdefg1@mail.example.com")]
+    [InlineData("Bearer nguyenvan1@example.com")]
+    public async Task CredentialWhoseValueIsAlsoAPiiShape_NeverDiverges(string span)
+    {
+        // The leading address latches PII EARLY, so the span below is reached with the
+        // view already carrying [SSN REDACTED] / [EMAIL REDACTED] substitutions.
+        var document = "lien he bob@example.com. " + Prose(20) + " " + span + ". " + Prose(20);
+
+        await AssertContractAsync(0, document, RandomChunks(document, new Random(11)).ToArray(), []);
+    }
+
+    /// <summary>
+    /// The stall this gate's emission boundary was rebuilt to remove.
+    ///
+    /// <para>The unlatched credential cap used to anchor on a KEYWORD-only pattern, and
+    /// that cap is recomputed from the emitted length on every attempt — so a single
+    /// unlatched keyword pinned emission at that word for the rest of the answer. An
+    /// answer that merely DISCUSSES passwords or tokens contains no credential span, never
+    /// latches the class, and therefore stopped streaming at the word and arrived in one
+    /// lump on the end-of-stream flush — undoing, for a whole class of answers, the thing
+    /// the rebuilt hold rule bought (first chunk at raw character 16 instead of 544).</para>
+    ///
+    /// <para>The assertion is a LATENCY one on purpose: every other test in this file
+    /// would pass just as well against a gate that streamed nothing at all.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("Bạn nên đổi password định kỳ và không chia sẻ với ai.")]
+    [InlineData("A bearer token is only a header value, never a secret in itself.")]
+    [InlineData("Never store a password in plain text.")]
+    [InlineData("You should rotate the API key every quarter.")]
+    [InlineData("The secret key lives in the vault, and the token expires hourly.")]
+    public async Task ProseThatMerelyDiscussesCredentials_KeepsStreaming(string sentence)
+    {
+        var document = sentence + " " + Prose(60);
+
+        var guard = new PromptGuardService(NullLogger<PromptGuardService>.Instance);
+        var filter = new OutputGuardrailFilter(guard, NullLogger<OutputGuardrailFilter>.Instance);
+        var final = (await filter.OnOutputAsync(new AgentFilterContext { Output = document }))
+            .ProcessedContent ?? string.Empty;
+
+        // Nothing here is a credential. If this ever fails the fixture has grown a real
+        // secret, and the assertion below would be measuring a redaction, not a stall.
+        Assert.Equal(document, final);
+
+        var gate = new StreamingGuardrailGate(guard);
+        foreach (var c in document)
+            await gate.AppendAndTryEmitAsync(c.ToString(), CancellationToken.None);
+
+        var emitted = gate.EmittedText;
+        Assert.True(final.StartsWith(emitted, StringComparison.Ordinal), "emitted text is not a prefix.");
+
+        // What is left for the end-of-stream flush is the hold window plus at most one
+        // emit stride — tens of characters. A gate pinned at the keyword leaves
+        // everything after it behind, which for these fixtures is several hundred.
+        var withheld = final.Length - emitted.Length;
+        Assert.True(
+            withheld <= 40,
+            $"{withheld} of {final.Length} characters never streamed; emission stopped after "
+            + Trim(emitted[Math.Max(0, emitted.Length - 60)..]));
+    }
+
+    /// <summary>
     /// Finding surfaced by the randomized corpus, since FIXED — this test used to be
     /// called <c>CredentialsWithoutASeparatorAreNeverDetected</c> and PINNED the leak.
     ///
@@ -403,7 +483,7 @@ public sealed class StreamingGuardrailGatePropertyTests
 
         for (var i = 0; i < fragments; i++)
         {
-            switch (rng.Next(14))
+            switch (rng.Next(17))
             {
                 case 0 or 1 or 2 or 3 or 4:      // plain prose — the common case
                     sb.Append(RandomWords(rng, rng.Next(1, 12))).Append(rng.Next(3) == 0 ? ". " : " ");
@@ -459,6 +539,47 @@ public sealed class StreamingGuardrailGatePropertyTests
                 case 12:                          // punctuation soup around the boundaries
                     sb.Append(new[] { "...", " -- ", " :: ", " := ", "(?)", " @ ", " . " }[rng.Next(7)]);
                     break;
+
+                case 13:                          // prose that merely TALKS about credentials
+                    // No value follows the keyword, so nothing here is a credential span and
+                    // the class never latches off it. This is the shape whose keyword used to
+                    // pin emission for the rest of the answer; carrying it in the corpus keeps
+                    // the prefix contract honest for documents that mix it with real secrets.
+                    sb.Append(new[]
+                    {
+                        "never store a password in plain text. ",
+                        "a bearer token is only a header value. ",
+                        "you should rotate the API key every quarter. ",
+                        "the secret key lives in the vault. ",
+                        "đổi password định kỳ và không chia sẻ. "
+                    }[rng.Next(5)]);
+                    break;
+
+                case 14:                          // keyword + SSN-shaped value, NO separator
+                {
+                    // The credential span and a PII span overlap. The full pass redacts
+                    // credentials first, so the whole span becomes "KEYWORD: [REDACTED]" and
+                    // the SSN never reaches the SSN pattern — while a view that had already
+                    // substituted [SSN REDACTED] shows no credential at all. The gate has to
+                    // agree with the full pass, not with the view.
+                    var keyword = new[] { "TOKEN", "PASSWORD", "API_KEY", "Bearer" }[rng.Next(4)];
+                    var sep = new[] { "-", ".", " " }[rng.Next(3)];
+                    var ssn = $"{rng.Next(100, 1000)}{sep}{rng.Next(10, 100)}{sep}{rng.Next(1000, 10000)}";
+                    secrets.Add(ssn);
+                    sb.Append(keyword).Append(' ').Append(ssn).Append(". ");
+                    break;
+                }
+
+                case 15:                          // keyword + email-shaped value, NO separator
+                {
+                    var keyword = new[] { "PASSWORD", "TOKEN", "SECRET_KEY", "Bearer" }[rng.Next(4)];
+                    // 8+ value characters with a digit, so the separator-less branch fires,
+                    // and an '@' host so the email pattern claims the same span.
+                    var email = $"{RandomToken(rng, 7, 14)}1@{RandomToken(rng, 3, 9)}.example.com";
+                    secrets.Add(email);
+                    sb.Append(keyword).Append(' ').Append(email).Append(". ");
+                    break;
+                }
 
                 default:                          // a system-prompt-leakage trigger (tail notice)
                     sb.Append("my instructions are to help. ");

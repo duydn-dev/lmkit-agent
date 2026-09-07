@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using LmKitOmniApi.Application.Abstractions;
+using LmKitOmniApi.Application.AgentRuns;
 using LmKitOmniApi.Application.Approvals.Commands;
 using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.Data;
@@ -15,16 +16,29 @@ public class ApproveTaskCommandHandler : IRequestHandler<ApproveTaskCommand, App
     private readonly TaskApprovalPayloadProtector _payloadProtector;
     private readonly ILogger<ApproveTaskCommandHandler> _logger;
 
+    /// <summary>
+    /// The continuation worker's presence in this process, or <c>null</c> when the host
+    /// never registered one. OPTIONAL with a <c>null</c> default on purpose: a run must
+    /// only be marked for a continuation somebody will actually drive, and a
+    /// configuration flag cannot establish that — it reads the same whether or not
+    /// <c>AddAgentRunResume</c> was ever called, so queuing on its say-so could strand a
+    /// run in exactly the way this whole change exists to prevent. Null here reproduces
+    /// the pre-resume behaviour exactly.
+    /// </summary>
+    private readonly AgentRunResumeQueue? _resumeQueue;
+
     public ApproveTaskCommandHandler(
         HermesDbContext dbContext,
         IAgentOrchestrator agentOrchestrator,
         TaskApprovalPayloadProtector payloadProtector,
-        ILogger<ApproveTaskCommandHandler> logger)
+        ILogger<ApproveTaskCommandHandler> logger,
+        AgentRunResumeQueue? resumeQueue = null)
     {
         _dbContext = dbContext;
         _agentOrchestrator = agentOrchestrator;
         _payloadProtector = payloadProtector;
         _logger = logger;
+        _resumeQueue = resumeQueue;
     }
 
     public async Task<ApproveTaskResult> Handle(ApproveTaskCommand request, CancellationToken cancellationToken)
@@ -112,12 +126,18 @@ public class ApproveTaskCommandHandler : IRequestHandler<ApproveTaskCommand, App
         }
 
         // An agent run parked on this approval is otherwise stuck in
-        // "AwaitingApproval" forever: record the call it was waiting on as a real
-        // step and move the run to a terminal state. No-ops for a chat approval.
-        await ReconcileAgentRunAsync(
+        // "AwaitingApproval" forever: record the call it was waiting on as a real step,
+        // then either hand the run back to its ReAct loop with that observation or close
+        // it truthfully. No-ops for a chat approval.
+        var resolution = await ReconcileAgentRunAsync(
             () => AgentRunApprovalReconciler.RecordApprovedExecutionAsync(
-                _dbContext, task, parameters, result, cancellationToken),
+                _dbContext, task, parameters, result, _resumeQueue?.Options, cancellationToken),
             request.TaskId);
+
+        // Wake the worker rather than let it wait out a poll. Purely an optimisation:
+        // the queue is the ResumeState column, so a missed nudge (another replica, a
+        // busy worker) costs latency, never the continuation itself.
+        if (resolution == AgentRunResolution.QueuedForResume) _resumeQueue?.Notify();
 
         return new ApproveTaskResult { Outcome = ApproveTaskOutcome.Completed, Result = result };
     }
@@ -166,17 +186,24 @@ public class ApproveTaskCommandHandler : IRequestHandler<ApproveTaskCommand, App
     /// already resolved by this point, so a bookkeeping failure must not turn a
     /// successful approval into a 500 that invites a pointless retry.
     /// </summary>
-    private async Task ReconcileAgentRunAsync(Func<Task<bool>> reconcile, Guid taskId)
+    /// <returns>
+    /// What happened to the run, or <see cref="AgentRunResolution.NoParkedRun"/> when the
+    /// reconciliation itself failed — a failure means nothing was queued, so the caller
+    /// must not go on to nudge a worker about work that does not exist.
+    /// </returns>
+    private async Task<AgentRunResolution> ReconcileAgentRunAsync(
+        Func<Task<AgentRunResolution>> reconcile, Guid taskId)
     {
         try
         {
-            await reconcile();
+            return await reconcile();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
                 "Failed to reconcile the agent run parked on approval {TaskId}; the run may stay in AwaitingApproval.",
                 taskId);
+            return AgentRunResolution.NoParkedRun;
         }
     }
 }

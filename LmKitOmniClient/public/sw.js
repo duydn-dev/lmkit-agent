@@ -2,12 +2,20 @@
  * Service worker tối giản cho LM-Kit Omni Agent (PWA v1).
  *
  * Chiến lược:
- * - /api/ và /hubs/ : KHÔNG BAO GIỜ can thiệp hay cache — dữ liệu, xác thực
- *   cookie và SSE/WebSocket phải luôn đi thẳng tới mạng.
- * - /assets/*       : cache-first (bundle Vite có hash trong tên file nên bất
- *   biến), fallback mạng khi chưa có trong cache.
+ * - /api/     : KHÔNG BAO GIỜ can thiệp hay cache — dữ liệu, xác thực cookie và
+ *   SSE phải luôn đi thẳng tới mạng.
+ * - /assets/* : cache-first (bundle Vite có hash trong tên file nên bất biến),
+ *   fallback mạng khi chưa có trong cache.
  * - Còn lại (HTML, /fonts/, favicon.svg, manifest...): network-first để bản
  *   deploy mới lan tỏa ngay lập tức, fallback cache khi offline.
+ *
+ * Danh sách bỏ qua từng có thêm `/hubs/` cho một SignalR hub mà API chưa bao giờ
+ * đăng ký (không có `AddSignalR`/`MapHub` nào trong LmKitOmniApi). Proxy `/hubs`
+ * ở nginx.conf và vite.config.ts đã bị xóa; nhánh ở đây là phần sót lại cuối
+ * cùng và cũng đã được gỡ. Bỏ nó KHÔNG đổi chiến lược cache: không có request
+ * `/hubs/*` nào được phát ra, và nếu có thì nhánh network-first cũng chỉ nhận
+ * 404 (chỉ phản hồi 200 mới được cache), nên CACHE_NAME giữ nguyên phiên bản —
+ * tăng phiên bản sẽ xóa sạch cache của mọi người dùng mà không đổi lại gì.
  *
  * Đổi CACHE_NAME (tăng phiên bản) mỗi khi thay đổi chiến lược cache; bước
  * activate sẽ dọn mọi cache phiên bản cũ.
@@ -64,8 +72,8 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // API/hub: không respondWith — trình duyệt xử lý như không có service worker.
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/hubs/')) return;
+  // API: không respondWith — trình duyệt xử lý như không có service worker.
+  if (url.pathname.startsWith('/api/')) return;
 
   if (url.pathname.startsWith('/assets/')) {
     event.respondWith(cacheFirst(request));

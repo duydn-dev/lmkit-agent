@@ -26,7 +26,10 @@ public sealed class AgentRun
     [MaxLength(4000)]
     public string Goal { get; set; } = string.Empty;
 
-    /// <summary>"Running" | "Completed" | "Failed" | "AwaitingApproval".</summary>
+    /// <summary>
+    /// One of <c>AgentRunStatuses</c> — that type carries the complete vocabulary and
+    /// says which values are terminal.
+    /// </summary>
     [MaxLength(32)]
     public string Status { get; set; } = "Running";
 
@@ -40,6 +43,43 @@ public sealed class AgentRun
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 
     public DateTime? CompletedAtUtc { get; set; }
+
+    /// <summary>
+    /// Durable continuation marker for a run that has to re-enter the ReAct loop after a
+    /// human approved the tool call it was parked on. <c>null</c> for every run that is
+    /// not owed a continuation; otherwise one of <c>AgentRunResumeStates</c>
+    /// (<c>Pending</c> = queued, <c>Claimed</c> = a worker is driving it right now).
+    ///
+    /// <para><b>Why a column and not an in-memory queue.</b> The orchestrator's ReAct
+    /// pass is an in-process <c>await foreach</c> whose state dies with the HTTP request
+    /// that started it, and an approval can land hours later, on a different replica.
+    /// The continuation therefore has to be reconstructible from the database alone —
+    /// and it is: <see cref="Goal"/> plus the ordered <see cref="Steps"/> (whose last
+    /// entry is the approved call and its real output) plus the approval row's own scope
+    /// snapshot are the ENTIRE input that pass takes, because it carries no session
+    /// history by design. This column is the only genuinely new state: which runs are
+    /// owed a continuation, and whether somebody is already giving them one.</para>
+    /// </summary>
+    [MaxLength(16)]
+    public string? ResumeState { get; set; }
+
+    /// <summary>
+    /// How many continuation passes have been CLAIMED for this run. Incremented by the
+    /// claim itself rather than by a successful finish, so a pass that faults or is cut
+    /// short by a shutdown still spends budget — the bounded direction. Capped by
+    /// <c>AgentRunResumeOptions.MaxResumesPerRun</c>; a run that reaches the cap is
+    /// closed at <c>CompletedAfterApproval</c>, the same truthful terminal state a run
+    /// with no resume at all reaches.
+    /// </summary>
+    public int ResumeCount { get; set; }
+
+    /// <summary>
+    /// When the current <c>Claimed</c> continuation stops being owned by whoever claimed
+    /// it. Without it, a worker that dies mid-resume would leave the run <c>Claimed</c>
+    /// forever; past this instant another worker (or the same one after a restart) may
+    /// retake it. Null whenever <see cref="ResumeState"/> is not <c>Claimed</c>.
+    /// </summary>
+    public DateTime? ResumeLeaseUntilUtc { get; set; }
 
     public ICollection<AgentRunStep> Steps { get; set; } = new List<AgentRunStep>();
 }

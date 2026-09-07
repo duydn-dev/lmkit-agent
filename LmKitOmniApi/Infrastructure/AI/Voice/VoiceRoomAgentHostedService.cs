@@ -23,11 +23,17 @@ namespace LmKitOmniApi.Infrastructure.AI.Voice;
 /// to join the bare <c>Voice:Room</c> label while the endpoint minted a tenant-scoped name,
 /// so the agent and its callers were permanently in different rooms.
 ///
-/// ONE ROOM PER PROCESS: this service is a single background participant, so it occupies
-/// exactly ONE room — the one belonging to <c>Voice:AgentTenantId</c> / <c>Voice:AgentUserId</c>.
-/// It stands down (loudly) when those are unset instead of joining a room no caller will ever
-/// be in. Serving many users at once requires a room-dispatcher redesign; tracked in
-/// <c>LmKitOmniApi/docs/known-issues.md</c>.
+/// ONE ROOM PER PROCESS (the default): this service is a single background participant, so it
+/// occupies exactly ONE room — the one belonging to <c>Voice:AgentTenantId</c> /
+/// <c>Voice:AgentUserId</c>. It stands down (loudly) when those are unset instead of joining a
+/// room no caller will ever be in.
+///
+/// MANY ROOMS (opt-in, <c>Voice:DispatcherEnabled=true</c>): the service instead runs
+/// <see cref="VoiceRoomDispatcher"/>, which owns one bounded session per room whose owner
+/// explicitly asked for an agent through <c>GET /api/speech/token?agent=true</c>. The
+/// single-room path above is untouched by that mode and is what runs whenever the switch is
+/// off — including when the dispatcher's own configuration is invalid, in which case the
+/// service stands down rather than running with a nonsense cap.
 ///
 /// CREDENTIALS: resolved once through <see cref="VoiceLiveKitCredentials"/>, so
 /// <c>Voice:LiveKit*</c> and the shared <c>LiveKit:*</c> block configure this agent and the
@@ -69,6 +75,14 @@ public sealed class VoiceRoomAgentHostedService : BackgroundService
             _logger.LogWarning(
                 "Voice live room agent enabled but LiveKit URL/API key/secret are not configured "
                 + "(set Voice:LiveKitUrl/LiveKitApiKey/LiveKitApiSecret or the shared LiveKit:Url/ApiKey/ApiSecret); standing down.");
+            return;
+        }
+
+        // MANY-ROOM MODE (opt-in). Everything below this branch is the shipped single-room path
+        // and runs unchanged whenever Voice:DispatcherEnabled is false.
+        if (_options.DispatcherEnabled)
+        {
+            await RunDispatcherAsync(credentials, stoppingToken);
             return;
         }
 
@@ -134,9 +148,53 @@ public sealed class VoiceRoomAgentHostedService : BackgroundService
     }
 
     /// <summary>
+    /// Many-room mode. Stands down loudly — never crashes the host, never falls back to the
+    /// single-room path — when the consent registry is not registered or a cap is nonsense,
+    /// because a dispatcher running on guessed limits is worse than no dispatcher.
+    /// </summary>
+    private async Task RunDispatcherAsync(VoiceLiveKitCredentials credentials, CancellationToken stoppingToken)
+    {
+        if (!_options.TryValidateDispatcher(out var configError))
+        {
+            _logger.LogWarning(
+                "Voice room dispatcher enabled but its configuration is invalid: {Reason} Standing down; no rooms will be served.",
+                configError);
+            return;
+        }
+
+        // Resolved rather than injected so a missing registration degrades to "stand down"
+        // instead of failing DI at startup and taking the whole host with it.
+        using var registryScope = _scopeFactory.CreateScope();
+        var registry = registryScope.ServiceProvider.GetService<IVoiceAgentConsentRegistry>();
+        if (registry is null)
+        {
+            _logger.LogWarning(
+                "Voice room dispatcher enabled but no {Registry} is registered, so no user can opt in and no room "
+                + "would ever be joined. Register it in Program.cs (see T2-ROUND4.md); standing down.",
+                nameof(IVoiceAgentConsentRegistry));
+            return;
+        }
+
+        // ONE gate for the whole process: it — not the room count — is what bounds pressure on
+        // the single chat/speech inference leases.
+        using var turnGate = new SemaphoreSlim(_options.MaxConcurrentTurns, _options.MaxConcurrentTurns);
+        var runner = new LiveKitVoiceRoomSessionRunner(
+            _options, credentials, _options.ToSessionLimits(), turnGate, _scopeFactory, _logger);
+        var dispatcher = new VoiceRoomDispatcher(registry, runner, _options.ToDispatcherLimits(), _logger);
+
+        _logger.LogInformation(
+            "🎙️ Voice room dispatcher enabled: serving rooms whose owner opted in via GET /api/speech/token?agent=true.");
+        await dispatcher.RunAsync(stoppingToken);
+    }
+
+    /// <summary>
     /// The live turn loop: join the room, then for each inbound utterance run one
     /// STT → LLM → TTS turn and publish the spoken reply. Kept static + internal so the
     /// join/loop wiring is concrete and unit-testable with fakes.
+    ///
+    /// This is the SINGLE-ROOM path and is intentionally left exactly as it shipped — no idle
+    /// timeout, no turn budget, no gate. The many-room dispatcher uses
+    /// <see cref="VoiceRoomSession"/> instead, where those bounds are required.
     /// </summary>
     internal static async Task RunSessionAsync(
         ILiveKitMediaSession session,

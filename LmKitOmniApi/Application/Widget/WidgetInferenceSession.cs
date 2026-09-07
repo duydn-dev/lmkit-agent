@@ -93,6 +93,11 @@ public sealed class LmKitWidgetInferenceSessionFactory(LmModelManager modelManag
             // { SystemPrompt = ... }`. On a returning widget turn `history` already holds the prior
             // User/Assistant turns, and LM-Kit silently ignores a SystemPrompt assigned on a
             // non-empty history — which dropped the widget persona from the second turn onward.
+            //
+            // The widget deliberately exposes NO tools. If it ever does, they must be passed as the
+            // factory's `tools` argument rather than registered on the returned conversation: the
+            // tool catalog rides the same MessageCount == 0 branch as the system prompt, so a
+            // post-construction registration reaches the model on the first widget turn only.
             _chat = ChatConversationFactory.Create(model, history, WidgetChatEngine.SystemPrompt);
             _chat.MaximumCompletionTokens = WidgetChatEngine.MaxCompletionTokens;
             _chat.AfterTextCompletion += ForwardSegment;

@@ -141,6 +141,43 @@ public sealed class VoiceSpeechApiTests : IClassFixture<LmKitApiFactory>
         Assert.False(synth!.IsAvailable);
     }
 
+    /// <summary>
+    /// The SHIPPED configuration must agree with the code defaults, knob for knob.
+    ///
+    /// This is not belt-and-braces: a value written into appsettings.json silently overrides a
+    /// new code default, and a fix whose default never takes effect is a fix that does nothing.
+    /// Anything added to the "Voice" block that disagrees with <see cref="VoiceOptions"/>'s own
+    /// initializers fails here rather than in production.
+    /// </summary>
+    [Fact]
+    public void VoiceDispatcherOptions_AsShipped_MatchTheCodeDefaults_AndAreOff()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var bound = scope.ServiceProvider.GetRequiredService<IOptions<VoiceOptions>>().Value;
+        var code = new VoiceOptions();
+
+        // Off by default, both switches — the single-room agent is what ships.
+        Assert.False(bound.LiveAgentEnabled);
+        Assert.False(bound.DispatcherEnabled);
+        Assert.False(bound.DispatcherActive);
+
+        Assert.Equal(code.MaxConcurrentRooms, bound.MaxConcurrentRooms);
+        Assert.Equal(code.MaxRoomsPerTenant, bound.MaxRoomsPerTenant);
+        Assert.Equal(code.MaxConcurrentTurns, bound.MaxConcurrentTurns);
+        Assert.Equal(code.RoomIdleTimeoutSeconds, bound.RoomIdleTimeoutSeconds);
+        Assert.Equal(code.TurnBudgetSeconds, bound.TurnBudgetSeconds);
+        Assert.Equal(code.DispatcherPollSeconds, bound.DispatcherPollSeconds);
+        Assert.Equal(code.RoomRejoinDelaySeconds, bound.RoomRejoinDelaySeconds);
+        Assert.Equal(code.DispatcherShutdownDrainSeconds, bound.DispatcherShutdownDrainSeconds);
+        Assert.Equal(code.AgentConsentTtlMinutes, bound.AgentConsentTtlMinutes);
+        Assert.Equal(code.MaxAgentConsentGrants, bound.MaxAgentConsentGrants);
+        Assert.Equal(code.MaxAgentConsentGrantsPerUser, bound.MaxAgentConsentGrantsPerUser);
+
+        // And the shipped defaults are internally consistent, so the dispatcher would not stand
+        // down on its own configuration the moment an operator turns it on.
+        Assert.True(bound.TryValidateDispatcher(out var error), error);
+    }
+
     private Task<HttpClient> CreateAuthenticatedClientAsync() => CreateAuthenticatedClientAsync(_factory);
 
     private static async Task<HttpClient> CreateAuthenticatedClientAsync(LmKitApiFactory factory)
