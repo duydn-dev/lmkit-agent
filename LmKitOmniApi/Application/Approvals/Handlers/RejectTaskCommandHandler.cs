@@ -6,6 +6,19 @@ using LmKitOmniApi.Infrastructure.Security;
 
 namespace LmKitOmniApi.Application.Approvals.Handlers;
 
+/// <summary>
+/// <b>Deliberately has no expiry guard, unlike <see cref="ApproveTaskCommandHandler"/>.</b>
+/// The deadline exists to stop a stale, out-of-context action from EXECUTING; a rejection
+/// executes nothing. Refusing to reject an overdue-but-unswept approval would only leave
+/// the row and the run parked for the sweeper while discarding a decision the human
+/// actually made — strictly worse. So a reject that lands after the deadline but before
+/// the sweep still succeeds, records the human's refusal, and terminates the run as
+/// Rejected, which is more truthful than Expired: somebody did look.
+///
+/// <para>Once the sweeper has run, the row is <c>Expired</c> rather than <c>Pending</c>,
+/// the claim below matches nothing, and the caller gets the existing 404 — the same answer
+/// as rejecting an already-approved task.</para>
+/// </summary>
 public class RejectTaskCommandHandler : IRequestHandler<RejectTaskCommand, bool>
 {
     private readonly HermesDbContext _dbContext;

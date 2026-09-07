@@ -2,7 +2,11 @@ using MediatR;
 
 namespace LmKitOmniApi.Application.Approvals.Queries;
 
-/// <summary>Lists the caller's pending task approvals, newest first.</summary>
+/// <summary>
+/// Lists the caller's pending task approvals, newest first. Approvals past their
+/// deadline are excluded even when the background sweeper has not yet marked them
+/// Expired — the list must only ever offer actions that are still executable.
+/// </summary>
 public class GetPendingApprovalsQuery : IRequest<List<PendingApprovalDto>>
 {
     public Guid TenantId { get; set; }
@@ -25,4 +29,11 @@ public class PendingApprovalDto
     /// </summary>
     public string Details { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; }
+
+    /// <summary>
+    /// When this approval stops being answerable. Always in the future for a row in this
+    /// list. Carried so a client can show the remaining time and warn before the window
+    /// closes; this round only makes the API honest and does not change the UI.
+    /// </summary>
+    public DateTime ExpiresAtUtc { get; set; }
 }

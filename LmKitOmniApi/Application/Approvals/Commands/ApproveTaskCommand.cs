@@ -23,6 +23,19 @@ public enum ApproveTaskOutcome
     /// <summary>The task exists but was no longer Pending when the atomic claim ran — 409.</summary>
     Conflict,
 
+    /// <summary>
+    /// The task is still Pending but is past its <c>ExpiresAtUtc</c>, so the gated tool
+    /// was NOT executed — 410.
+    ///
+    /// <para>Distinct from <see cref="Conflict"/> on purpose. Conflict means somebody
+    /// already decided; this means nobody did, in time. The action was proposed against a
+    /// situation that no longer exists, and a human clicking "approve" on a stale row in a
+    /// long queue is signing for context they no longer have — so the only safe answer is
+    /// to refuse and make the reason legible, rather than report a race that did not
+    /// happen.</para>
+    /// </summary>
+    Expired,
+
     /// <summary>The approved tool executed successfully — 200.</summary>
     Completed,
 

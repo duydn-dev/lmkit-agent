@@ -21,12 +21,19 @@ public class GetPendingApprovalsQueryHandler : IRequestHandler<GetPendingApprova
 
     public async Task<List<PendingApprovalDto>> Handle(GetPendingApprovalsQuery request, CancellationToken cancellationToken)
     {
-        // Materialize first (the payload is decrypted in memory — EF can't translate
-        // the protector), then decrypt each owner-scoped payload for display.
+        // Defence in depth on the deadline: an overdue row is filtered out here even
+        // though the sweeper normally flips its Status to Expired first. The sweeper can
+        // be disabled, behind, or down, and this list is what a human picks from — it must
+        // never offer an action the approve endpoint would refuse anyway. It is also what
+        // stops the list growing without bound from approvals nobody ever answered.
+        var now = DateTime.UtcNow;
         var rows = await _dbContext.TaskApprovals
-            .Where(t => t.TenantId == request.TenantId && t.UserId == request.UserId && t.Status == "Pending")
+            .Where(t => t.TenantId == request.TenantId
+                && t.UserId == request.UserId
+                && t.Status == "Pending"
+                && t.ExpiresAtUtc > now)
             .OrderByDescending(t => t.CreatedAtUtc)
-            .Select(t => new { t.Id, t.ActionName, t.ParametersJson, t.CreatedAtUtc })
+            .Select(t => new { t.Id, t.ActionName, t.ParametersJson, t.CreatedAtUtc, t.ExpiresAtUtc })
             .ToListAsync(cancellationToken);
 
         return rows.Select(t => new PendingApprovalDto
@@ -34,7 +41,8 @@ public class GetPendingApprovalsQueryHandler : IRequestHandler<GetPendingApprova
             Id = t.Id,
             ActionName = t.ActionName,
             Details = Describe(t.ParametersJson),
-            CreatedAtUtc = t.CreatedAtUtc
+            CreatedAtUtc = t.CreatedAtUtc,
+            ExpiresAtUtc = t.ExpiresAtUtc
         }).ToList();
     }
 

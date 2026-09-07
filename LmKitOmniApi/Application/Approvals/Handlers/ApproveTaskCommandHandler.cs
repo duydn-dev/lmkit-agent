@@ -35,13 +35,26 @@ public class ApproveTaskCommandHandler : IRequestHandler<ApproveTaskCommand, App
                 && t.UserId == request.UserId, cancellationToken);
         if (task == null) return new ApproveTaskResult { Outcome = ApproveTaskOutcome.NotFound };
 
+        var now = DateTime.UtcNow;
+
+        // A stale approval must never execute. The payload was captured against a
+        // situation that has since moved on, and a human clicking "approve" on an old row
+        // is approving something whose context is gone — so refuse before the claim and
+        // say why, instead of letting it read as a lost race.
+        if (task.Status == "Pending" && task.ExpiresAtUtc <= now)
+            return new ApproveTaskResult { Outcome = ApproveTaskOutcome.Expired };
+
         // Atomically claim the task. Two concurrent approval requests must never
-        // execute the same side-effecting tool twice.
+        // execute the same side-effecting tool twice. The deadline is repeated inside the
+        // claim on purpose: the check above is a read that raced the clock, and the
+        // background sweeper may not be running at all — this predicate is what actually
+        // makes execution-after-expiry impossible.
         var claimed = await _dbContext.TaskApprovals
             .Where(t => t.Id == request.TaskId
                 && t.TenantId == request.TenantId
                 && t.UserId == request.UserId
-                && t.Status == "Pending")
+                && t.Status == "Pending"
+                && t.ExpiresAtUtc > now)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(t => t.Status, "Executing")
                 .SetProperty(t => t.ResolvedAtUtc, DateTime.UtcNow),

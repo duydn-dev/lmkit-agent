@@ -26,7 +26,8 @@ namespace LmKitOmniApi.Application.Approvals;
 /// the approved call is recorded as a real <see cref="AgentRunStep"/>, its output is
 /// persisted where the user can read it, and the run reaches a TERMINAL state
 /// (<see cref="AgentRunStatuses.CompletedAfterApproval"/> /
-/// <see cref="AgentRunStatuses.Rejected"/> / <see cref="AgentRunStatuses.Failed"/>)
+/// <see cref="AgentRunStatuses.Rejected"/> / <see cref="AgentRunStatuses.Failed"/> /
+/// <see cref="AgentRunStatuses.Expired"/>)
 /// with <see cref="AgentRun.CompletedAtUtc"/> set. A run that ends after one
 /// approved tool call is a smaller answer than a resumed run would give — but it is
 /// a truthful one, and it ends.</para>
@@ -37,8 +38,9 @@ namespace LmKitOmniApi.Application.Approvals;
 /// approved result back as the next user turn (<c>useHitlActions</c> in
 /// <c>useChatStream.ts</c>). Nothing in the chat path changes.</para>
 ///
-/// <para>Static by design: both call sites already own a scoped
-/// <see cref="HermesDbContext"/>, so nothing new needs registering in DI.</para>
+/// <para>Static by design: every call site (the approve handler, the reject handler
+/// and the expiry sweeper) already owns a scoped <see cref="HermesDbContext"/>, so
+/// nothing new needs registering in DI.</para>
 /// </summary>
 internal static class AgentRunApprovalReconciler
 {
@@ -103,6 +105,37 @@ internal static class AgentRunApprovalReconciler
             stepInput: input,
             stepObservation: summary,
             terminalStatus: AgentRunStatuses.Rejected,
+            appendToResult: null,
+            error: summary,
+            assistantMessage: summary,
+            ct);
+    }
+
+    /// <summary>
+    /// Nobody answered in time: the approval lapsed to
+    /// <see cref="TaskApproval.ExpiredStatus"/>, so the run it parked is closed at
+    /// <see cref="AgentRunStatuses.Expired"/> with the lapse recorded as a step. No tool
+    /// ran, so there is no result to append — only a truthful explanation of why the run
+    /// stopped.
+    ///
+    /// <para>This is the one entry point NOT driven by a human request: the background
+    /// sweeper calls it after atomically claiming the row. That claim, plus the
+    /// <see cref="AgentRunStatuses.AwaitingApproval"/> predicate in <c>ResolveAsync</c>,
+    /// is what keeps a sweep idempotent — a second pass finds nothing to claim, and even
+    /// if it did, the run has already left AwaitingApproval and cannot be stepped twice.</para>
+    /// </summary>
+    /// <returns><c>true</c> when a parked run was closed; <c>false</c> for a plain chat approval.</returns>
+    public static Task<bool> RecordExpirationAsync(
+        HermesDbContext db, TaskApproval task, string input, CancellationToken ct)
+    {
+        var summary =
+            $"Yêu cầu phê duyệt hành động \"{task.ActionName}\" đã hết hạn mà không có ai phản hồi. "
+            + "Hành động KHÔNG được thực thi.";
+        return ResolveAsync(
+            db, task,
+            stepInput: input,
+            stepObservation: summary,
+            terminalStatus: AgentRunStatuses.Expired,
             appendToResult: null,
             error: summary,
             assistantMessage: summary,
