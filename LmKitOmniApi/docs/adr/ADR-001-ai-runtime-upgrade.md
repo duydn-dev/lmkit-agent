@@ -95,7 +95,14 @@ delete operations and any generated placeholder tool.
 - PostgreSQL and Qdrant readiness checks replace the previous always-healthy endpoint.
 - Audit interceptor redacts credentials, keys, tokens, PII and conversational content.
 - The simulated fine-tuning, hard-coded reflexion and random proactive-monitor jobs were removed, together with their unused Hangfire/Telegram runtime surface.
-- Windows CUDA is referenced only on Windows; Linux containers use LM-Kit base CPU/Vulkan.
+- Native backends are gated per platform in `LmKitOmniApi.csproj`: the Windows CUDA 13 backend
+  on `IsOSPlatform('Windows')`, and the CUDA 13 + CUDA 12 Linux backends on the *publish RID*
+  (`linux-x64` / `linux-arm64`) so a plain restore stays lean. Runtime priority is
+  CUDA 13 → CUDA 12 → CPU; Vulkan is not reachable in the shipped container because `libvulkan`
+  is absent from the image.
+- Loaded models are keyed by resolved file path in `LmModelManager`, so `AiModels:DefaultEmbedding`
+  and `AiModels:DefaultReranker` pointing at the same file (both `bge-m3` by default) materialize
+  the weights once and share one `LM` instance.
 - Frontend uses same-origin nginx proxying, credentialed API calls and lazy-loaded voice code.
 
 ## Verification gates
