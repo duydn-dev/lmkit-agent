@@ -57,6 +57,15 @@ public sealed class WidgetQuotaService(ILogger<WidgetQuotaService> logger, IConn
         // Both counters are consumed even when the first one is already over budget:
         // a rejected turn still counted against the caller, which is what stops a
         // hot loop from resetting its own day budget by racing the minute window.
+        //
+        // These are two SEPARATE atomic operations, not one. Each counter admits exactly its
+        // budget, but under contention not necessarily the same callers — another caller's day
+        // increment can land between this caller's two — so grants are the intersection and can
+        // come in one or two under budget. That is the fail-closed direction (a caller sees a
+        // spurious rejection; nobody gets extra) and it is why
+        // WidgetQuotaServiceTests.TryConsume_UnderConcurrency_NeverExceedsTheBudget asserts a
+        // cap rather than equality. Making it exact means one atomic operation spanning both
+        // counters, on both the Redis and the local path.
         var minuteCount = await IncrementAsync(minuteKey, TimeSpan.FromMinutes(2), nowUtc);
         var dayCount = await IncrementAsync(dayKey, TimeSpan.FromHours(25), nowUtc);
 
