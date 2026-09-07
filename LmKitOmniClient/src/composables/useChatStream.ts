@@ -1,9 +1,11 @@
 import { onUnmounted, ref } from 'vue';
 import type { Ref } from 'vue';
-import { http } from '@/api/http';
-import { ApiFactory } from '@/api/api.factory';
-import { errorMessage, readApiError } from '@/api/errors';
 import { ChatSseParser, type ChatStreamEvent } from '@/utils/chatSse';
+import {
+  approvalContinuationPrompt,
+  fetchPendingApproval,
+  submitApprovalDecision
+} from '@/composables/useTaskApproval';
 
 /**
  * Shared chat message shape used by BOTH the full-page chat (ChatView) and the
@@ -290,18 +292,10 @@ export function useChatStream() {
             assistantMsg.hitlTaskId = event.value;
             // Fetch the owner-scoped action details (e.g. the SQL a DB write wants
             // to run) so the approval card shows what is actually being approved.
-            try {
-              const res = await http.get(ApiFactory.TASK_APPROVAL.PENDING);
-              if (res.ok) {
-                const pending = (await res.json()) as Array<{ id: string; actionName?: string; details?: string }>;
-                const match = pending.find((item) => item.id === event.value);
-                if (match) {
-                  assistantMsg.hitlActionName = match.actionName;
-                  assistantMsg.hitlDetails = match.details;
-                }
-              }
-            } catch {
-              // The card still works (approve/reject) without the detail preview.
+            const pending = await fetchPendingApproval(event.value);
+            if (pending) {
+              assistantMsg.hitlActionName = pending.actionName;
+              assistantMsg.hitlDetails = pending.details;
             }
             scheduleScroll();
             streamFinished = true;
@@ -354,49 +348,61 @@ export interface HitlActionOptions {
 }
 
 /**
- * Human-in-the-loop approve/reject actions shared by both surfaces. The only
+ * Human-in-the-loop approve/reject actions shared by both chat surfaces. The only
  * per-surface difference is the wording of the post-approval system message,
- * which is supplied via `approvedSystemMessage`. All network calls, state
- * transitions, and error strings are identical to the originals.
+ * which is supplied via `approvedSystemMessage`.
+ *
+ * The network call and every failure string come from `submitApprovalDecision`, so
+ * the chat card, the Approvals page and the agent-run page describe a 404 / 409 /
+ * 410 / 500 identically — and in Vietnamese, rather than echoing the API's English
+ * "Task is no longer pending."
+ *
+ * A failed decision deliberately leaves `hitlResolved` unset even when the approval
+ * is settled: the chat surfaces render that field as either "Đã Phê duyệt" or "Đã
+ * Từ chối", and an approval that expired or was decided in another tab is neither.
+ * The card keeps its buttons and states what happened instead of claiming a
+ * decision the user did not make.
  */
 export function useHitlActions(options: HitlActionOptions) {
   const { messages, inputMessage, sendMessage, approvedSystemMessage } = options;
 
   const approveTask = async (msg: ChatMessage) => {
+    if (msg.hitlBusy || !msg.hitlTaskId) return;
     msg.hitlBusy = true;
     msg.hitlError = undefined;
     try {
-      const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/approve`);
-      if (!res.ok) throw new Error(await readApiError(res, 'Phê duyệt thất bại'));
-      const response = await res.json();
-      const result = typeof response.result === 'string' ? response.result : '';
+      const decision = await submitApprovalDecision(msg.hitlTaskId, 'approve');
+      if (!decision.ok) {
+        msg.hitlError = decision.error;
+        return;
+      }
       msg.hitlResolved = 'Approved';
       messages.value.push({
         role: 'system',
-        content: approvedSystemMessage(result)
+        content: approvedSystemMessage(decision.result)
       });
-      inputMessage.value = `Tôi đã phê duyệt hành động trên. Kết quả thực thi là: ${result}. Vui lòng tiếp tục.`;
+      inputMessage.value = approvalContinuationPrompt(decision.result);
       await sendMessage();
-    } catch (error) {
-      msg.hitlError = errorMessage(error, 'Không thể phê duyệt thao tác.');
     } finally {
       msg.hitlBusy = false;
     }
   };
 
   const rejectTask = async (msg: ChatMessage) => {
+    if (msg.hitlBusy || !msg.hitlTaskId) return;
     msg.hitlBusy = true;
     msg.hitlError = undefined;
     try {
-      const res = await http.post(`/api/TaskApproval/${msg.hitlTaskId}/reject`, { Comment: 'User rejected' });
-      if (!res.ok) throw new Error(await readApiError(res, 'Từ chối thất bại'));
+      const decision = await submitApprovalDecision(msg.hitlTaskId, 'reject');
+      if (!decision.ok) {
+        msg.hitlError = decision.error;
+        return;
+      }
       msg.hitlResolved = 'Rejected';
       messages.value.push({
         role: 'system',
         content: 'Đã từ chối hành động.'
       });
-    } catch (error) {
-      msg.hitlError = errorMessage(error, 'Không thể từ chối thao tác.');
     } finally {
       msg.hitlBusy = false;
     }

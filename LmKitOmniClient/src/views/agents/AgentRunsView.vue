@@ -70,6 +70,89 @@
             </form>
           </section>
 
+          <!--
+            The approval gate, decided here. The run parks on a TaskApproval; the
+            backend reconciler moves it to a terminal state the moment that
+            approval is answered, so the decision is made inline and the run is
+            re-read afterwards instead of sending the user off to another page.
+          -->
+          <section
+            v-if="approvalTaskId"
+            aria-labelledby="approval-heading"
+            class="rounded-2xl border border-sky-200 bg-sky-50 p-5"
+          >
+            <h2 id="approval-heading" class="text-sm font-semibold text-sky-950 flex items-center gap-2">
+              <i class="pi pi-shield" aria-hidden="true"></i>Cần bạn phê duyệt
+            </h2>
+            <p class="mt-1 text-sm text-sky-900">
+              Agent đã dừng ở một hành động nhạy cảm và sẽ không chạy tiếp cho tới khi bạn quyết định.
+            </p>
+
+            <div v-if="approvalActionName" class="mt-3 text-xs font-semibold text-sky-900">
+              Hành động: {{ approvalActionName }}
+            </div>
+            <pre
+              v-if="approvalDetails"
+              class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-sky-200 bg-white p-3 text-xs text-gray-800"
+            >{{ approvalDetails }}</pre>
+            <p v-if="approvalExpiryLabel" class="mt-2 text-xs text-sky-800">
+              <i class="pi pi-hourglass mr-1.5" aria-hidden="true"></i>{{ approvalExpiryLabel }}
+            </p>
+
+            <div v-if="approvalError" role="alert" class="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+              {{ approvalError }}
+            </div>
+
+            <div v-if="approvalOutcome === 'pending'" class="mt-4 flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                label="Phê duyệt"
+                icon="pi pi-check"
+                severity="success"
+                :loading="approvalBusy === 'approve'"
+                :disabled="approvalBusy !== null"
+                @click="decideApproval('approve')"
+                :aria-label="approvalActionName ? `Phê duyệt hành động ${approvalActionName}` : 'Phê duyệt hành động của agent'"
+                class="!min-h-11 !px-4 !rounded-xl !text-sm !font-medium"
+              />
+              <Button
+                type="button"
+                label="Từ chối"
+                icon="pi pi-times"
+                severity="danger"
+                outlined
+                :loading="approvalBusy === 'reject'"
+                :disabled="approvalBusy !== null"
+                @click="decideApproval('reject')"
+                :aria-label="approvalActionName ? `Từ chối hành động ${approvalActionName}` : 'Từ chối hành động của agent'"
+                class="!min-h-11 !px-4 !rounded-xl !text-sm"
+              />
+              <router-link
+                to="/approvals"
+                class="inline-flex items-center min-h-11 px-2 text-sm font-semibold text-sky-900 underline underline-offset-2 hover:text-sky-950 focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
+              >
+                Mở trang phê duyệt
+              </router-link>
+            </div>
+
+            <p v-else-if="approvalOutcome === 'approved'" role="status" class="mt-4 text-sm font-medium text-emerald-800">
+              <i class="pi pi-check-circle mr-1.5" aria-hidden="true"></i>
+              Đã phê duyệt. Hành động đã thực thi và được ghi thành một bước của lần chạy bên dưới.
+            </p>
+            <p v-else-if="approvalOutcome === 'rejected'" role="status" class="mt-4 text-sm font-medium text-rose-800">
+              <i class="pi pi-ban mr-1.5" aria-hidden="true"></i>
+              Đã từ chối. Lần chạy dừng lại mà không thực thi hành động.
+            </p>
+            <p v-else role="status" class="mt-4 text-sm font-medium text-gray-700">
+              <i class="pi pi-ban mr-1.5" aria-hidden="true"></i>
+              Yêu cầu phê duyệt này không còn xử lý được nữa. Trạng thái mới nhất của lần chạy hiển thị bên dưới.
+            </p>
+
+            <p v-if="runRefreshing" role="status" class="mt-3 flex items-center gap-2 text-xs text-sky-900">
+              <i class="pi pi-spin pi-spinner" aria-hidden="true"></i>Đang cập nhật lần chạy...
+            </p>
+          </section>
+
           <!-- ---------- Selected past run detail ---------- -->
           <section
             v-if="selectedRunId"
@@ -106,6 +189,7 @@
                   <span
                     class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border whitespace-nowrap"
                     :class="statusMeta(detail.status).classes"
+                    :title="statusMeta(detail.status).description"
                   >{{ statusMeta(detail.status).label }}</span>
                   <span class="text-xs text-gray-500">{{ detail.steps.length }} bước</span>
                   <span class="text-xs text-gray-400" aria-hidden="true">·</span>
@@ -160,13 +244,6 @@
               {{ runError }}
             </div>
 
-            <div v-if="approvalTaskId" role="status" class="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-              <i class="pi pi-clock mr-1.5" aria-hidden="true"></i>
-              Đang chờ phê duyệt trước khi tiếp tục.
-              <router-link to="/approvals" class="font-semibold underline underline-offset-2 hover:text-sky-950 focus-visible:ring-2 focus-visible:ring-sky-500 rounded">
-                Mở trang phê duyệt
-              </router-link>
-            </div>
 
             <!-- Live run panel -->
             <section
@@ -183,6 +260,7 @@
                   v-if="runStatus"
                   class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border whitespace-nowrap"
                   :class="statusMeta(runStatus).classes"
+                  :title="statusMeta(runStatus).description"
                 >{{ statusMeta(runStatus).label }}</span>
               </div>
 
@@ -317,6 +395,7 @@
                   <span
                     class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border whitespace-nowrap flex-shrink-0"
                     :class="statusMeta(run.status).classes"
+                    :title="statusMeta(run.status).description"
                   >{{ statusMeta(run.status).label }}</span>
                 </div>
                 <div class="mt-1.5 flex items-center gap-2 text-xs text-gray-500">
@@ -340,6 +419,13 @@ import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import { ChatSseParser } from '@/utils/chatSse';
 import { parseProducedFile, type ProducedFile } from '@/composables/useChatStream';
+import {
+  approvalIdFromMarkerText,
+  fetchPendingApproval,
+  submitApprovalDecision,
+  type ApprovalDecision
+} from '@/composables/useTaskApproval';
+import { agentRunStatusMeta } from './agentRunStatus';
 
 /** A single ReAct tool step. `createdAtUtc` is present only on persisted (detail) steps. */
 interface RunStep {
@@ -378,14 +464,42 @@ const MAX_GOAL = 4000;
 const goal = ref('');
 const isStreaming = ref(false);
 const currentRunId = ref('');
-/** '' | 'Running' | 'Completed' | 'AwaitingApproval' | 'Failed' — drives the live status pill. */
+/** '' or any `AgentRunStatuses` value — drives the live status pill via `statusMeta`. */
 const runStatus = ref('');
 const statusLines = ref<string[]>([]);      // [THINKING] log
 const steps = ref<RunStep[]>([]);           // live [STEP] timeline
 const resultText = ref('');                 // final synthesized answer ([content] chunks)
 const producedFiles = ref<ProducedFile[]>([]);
-const approvalTaskId = ref('');
 const runError = ref('');
+/** True while GET /api/agent-runs/{id} is being re-read after a decision. */
+const runRefreshing = ref(false);
+
+// --- Approval gate (the run parked on a TaskApproval) --------------------
+const approvalTaskId = ref('');
+/** The run this gate belongs to — the live one, or a parked one opened from history. */
+const gateRunId = ref('');
+const approvalActionName = ref('');
+const approvalDetails = ref('');
+const approvalExpiresAtUtc = ref('');
+const approvalBusy = ref<ApprovalDecision | null>(null);
+const approvalError = ref('');
+/**
+ * 'pending'  still answerable here,
+ * 'approved' / 'rejected' this user just decided it,
+ * 'closed'   unanswerable (already decided elsewhere, or expired) — buttons retire.
+ */
+const approvalOutcome = ref<'pending' | 'approved' | 'rejected' | 'closed'>('pending');
+
+const resetApprovalGate = (): void => {
+  approvalTaskId.value = '';
+  gateRunId.value = '';
+  approvalActionName.value = '';
+  approvalDetails.value = '';
+  approvalExpiresAtUtc.value = '';
+  approvalBusy.value = null;
+  approvalError.value = '';
+  approvalOutcome.value = 'pending';
+};
 
 // --- Past runs (right column) --------------------------------------------
 const runs = ref<AgentRunSummary[]>([]);
@@ -443,20 +557,25 @@ const relativeTime = (value: string | null): string => {
   return absoluteTime(value);
 };
 
-const statusMeta = (status: string): { label: string; classes: string } => {
-  switch (status) {
-    case 'Running':
-      return { label: 'Đang chạy', classes: 'bg-amber-50 text-amber-900 border-amber-200' };
-    case 'Completed':
-      return { label: 'Hoàn tất', classes: 'bg-emerald-50 text-emerald-900 border-emerald-200' };
-    case 'AwaitingApproval':
-      return { label: 'Chờ phê duyệt', classes: 'bg-sky-50 text-sky-900 border-sky-200' };
-    case 'Failed':
-      return { label: 'Thất bại', classes: 'bg-red-50 text-red-800 border-red-200' };
-    default:
-      return { label: status || 'Không rõ', classes: 'bg-gray-50 text-gray-600 border-gray-200' };
-  }
-};
+/**
+ * Presentation for every status the API can return, including the ones a run
+ * reaches only through the approval gate (`CompletedAfterApproval`, `Rejected`,
+ * `Expired`). Lives in `agentRunStatus.ts` so the full vocabulary can be pinned by
+ * a unit test against `AgentRunStatuses.cs`.
+ */
+const statusMeta = agentRunStatusMeta;
+
+/** How long the gating approval can still be answered; '' when unknown. */
+const approvalExpiryLabel = computed((): string => {
+  const time = new Date(approvalExpiresAtUtc.value || NaN).getTime();
+  if (Number.isNaN(time)) return '';
+  const minutes = Math.round((time - Date.now()) / 60000);
+  if (minutes <= 0) return 'Yêu cầu phê duyệt đã hết hạn.';
+  if (minutes < 60) return `Còn ${minutes} phút để phê duyệt.`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `Còn ${hours} giờ để phê duyệt.`;
+  return `Còn ${Math.round(hours / 24)} ngày để phê duyệt.`;
+});
 
 const loadRuns = async (): Promise<void> => {
   runsLoading.value = runs.value.length === 0;
@@ -477,10 +596,16 @@ const openRun = async (id: string): Promise<void> => {
   detail.value = null;
   detailError.value = '';
   detailLoading.value = true;
+  resetApprovalGate();
   try {
     const response = await http.get(ApiFactory.AGENT_RUNS.BY_ID(id));
-    if (response.ok) detail.value = await response.json();
-    else detailError.value = await readApiError(response, 'Không thể tải chi tiết lần chạy');
+    if (response.ok) {
+      const run = await response.json() as AgentRunDetail;
+      detail.value = run;
+      await adoptGateFrom(id, run);
+    } else {
+      detailError.value = await readApiError(response, 'Không thể tải chi tiết lần chạy');
+    }
   } catch (cause) {
     detailError.value = errorMessage(cause, 'Không thể tải chi tiết lần chạy.');
   } finally {
@@ -493,6 +618,126 @@ const closeDetail = (): void => {
   detail.value = null;
   detailError.value = '';
   detailLoading.value = false;
+  // The gate on screen belonged to the run being closed; hand it back to the live
+  // run if that one is still parked, so closing a history card never hides a gate
+  // the user still has to answer.
+  if (gateRunId.value !== currentRunId.value) {
+    resetApprovalGate();
+    if (currentRunId.value && runStatus.value === 'AwaitingApproval') void restoreLiveGate();
+  }
+};
+
+// --- Approval gate -------------------------------------------------------
+
+/** Fills the gate card with what is actually being approved (best effort). */
+const loadApprovalDetails = async (): Promise<void> => {
+  const pending = await fetchPendingApproval(approvalTaskId.value);
+  if (!pending) return;
+  approvalActionName.value = pending.actionName;
+  approvalDetails.value = pending.details;
+  approvalExpiresAtUtc.value = pending.expiresAtUtc;
+};
+
+/**
+ * Opens the gate for a run that is parked on an approval, recovering the approval
+ * id from the run's own steps: the orchestrator records the gated call with
+ * `[HITL_APPROVAL_REQUIRED:{id}]` as its observation. Without this, only the
+ * browser tab that watched the original stream could ever act on the gate — a
+ * reload, or opening the run from the history list, would show a run that is
+ * visibly waiting on the user with no way to answer it.
+ */
+const adoptGateFrom = async (runId: string, run: AgentRunDetail): Promise<void> => {
+  if (run.status !== 'AwaitingApproval') return;
+  const taskId = (run.steps ?? [])
+    .map((step) => approvalIdFromMarkerText(step.observation))
+    .filter((id) => id !== '')
+    .pop() ?? '';
+  if (!taskId) return;
+  approvalTaskId.value = taskId;
+  gateRunId.value = runId;
+  approvalOutcome.value = 'pending';
+  await loadApprovalDetails();
+};
+
+/** Re-derives the live run's gate after a history card that had one was closed. */
+const restoreLiveGate = async (): Promise<void> => {
+  try {
+    const response = await http.get(ApiFactory.AGENT_RUNS.BY_ID(currentRunId.value));
+    if (!response.ok) return;
+    await adoptGateFrom(currentRunId.value, await response.json() as AgentRunDetail);
+  } catch {
+    // The gate is a convenience here; the Approvals page remains the fallback.
+  }
+};
+
+/**
+ * Re-reads the gated run after its approval was answered.
+ *
+ * The stream that started the run ended at the gate, so nothing else will ever
+ * push the outcome to this page: the backend reconciler records the approved (or
+ * refused, or lapsed) call as the run's next step, appends it to the result and
+ * moves the run to a terminal status inside the approve/reject request itself.
+ * One read after that request is therefore enough — and the persisted run, not
+ * what streamed earlier, is the authority on every field it returns.
+ *
+ * The refreshed run is written into whichever pane is showing it (the live one,
+ * the open history card, or both when they are the same run).
+ */
+const refreshGatedRun = async (): Promise<void> => {
+  const runId = gateRunId.value;
+  if (!runId) return;
+  runRefreshing.value = true;
+  try {
+    const response = await http.get(ApiFactory.AGENT_RUNS.BY_ID(runId));
+    if (!response.ok) {
+      approvalError.value = await readApiError(response, 'Không thể tải lại lần chạy sau khi phê duyệt');
+      return;
+    }
+    const run = await response.json() as AgentRunDetail;
+    if (selectedRunId.value === runId) detail.value = run;
+    if (currentRunId.value === runId) {
+      runStatus.value = run.status;
+      if (Array.isArray(run.steps)) steps.value = run.steps;
+      if (run.result) resultText.value = run.result;
+      runError.value = run.error ?? '';
+    }
+    // Answered in another tab (or swept as expired) while this page waited: the
+    // run has left the gate, so stop offering buttons that can no longer work.
+    if (run.status !== 'AwaitingApproval' && approvalOutcome.value === 'pending') {
+      approvalOutcome.value = 'closed';
+    }
+  } catch (cause) {
+    approvalError.value = errorMessage(cause, 'Không thể tải lại lần chạy sau khi phê duyệt.');
+  } finally {
+    runRefreshing.value = false;
+  }
+};
+
+/**
+ * Approve or reject the gating action without leaving the page. The call and every
+ * failure string come from the shared `submitApprovalDecision`, so this page, the
+ * Approvals page and the chat card explain a 404 / 409 / 410 / 500 the same way.
+ */
+const decideApproval = async (decision: ApprovalDecision): Promise<void> => {
+  if (approvalBusy.value || approvalOutcome.value !== 'pending' || !approvalTaskId.value) return;
+  approvalBusy.value = decision;
+  approvalError.value = '';
+  try {
+    const outcome = await submitApprovalDecision(approvalTaskId.value, decision);
+    if (!outcome.ok) {
+      approvalError.value = outcome.error;
+      if (outcome.settled) approvalOutcome.value = 'closed';
+      // A settled failure means somebody (or the expiry sweeper) already moved the
+      // run on, so its new state is worth reading even though this attempt failed.
+      if (outcome.settled) await refreshGatedRun();
+      return;
+    }
+    approvalOutcome.value = decision === 'approve' ? 'approved' : 'rejected';
+    await refreshGatedRun();
+  } finally {
+    approvalBusy.value = null;
+    void loadRuns();
+  }
 };
 
 /**
@@ -510,7 +755,7 @@ const runGoal = async (): Promise<void> => {
   // A fresh run drops any open detail and resets the live pane.
   closeDetail();
   runError.value = '';
-  approvalTaskId.value = '';
+  resetApprovalGate();
   statusLines.value = [];
   steps.value = [];
   resultText.value = '';
@@ -585,6 +830,7 @@ const runGoal = async (): Promise<void> => {
           if (event.type === 'approval') {
             // Backend paused for human approval; the run is no longer "running".
             approvalTaskId.value = event.value;
+            gateRunId.value = currentRunId.value;
             runStatus.value = 'AwaitingApproval';
             finished = true;
             break;
@@ -601,6 +847,9 @@ const runGoal = async (): Promise<void> => {
     } finally {
       localController.signal.removeEventListener('abort', onAbort);
     }
+    // The gate card needs to show WHAT is being approved; fetched after the body
+    // is drained so the detail lookup never holds the stream open.
+    if (approvalTaskId.value) await loadApprovalDetails();
     // A natural end with no terminal marker means the run finished successfully.
     // After a user "Dừng" the run keeps going server-side, so leave the pill on
     // "Đang chạy" — the refreshed past-runs list carries the authoritative status.
