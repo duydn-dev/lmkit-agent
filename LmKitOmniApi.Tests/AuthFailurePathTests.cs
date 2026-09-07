@@ -121,6 +121,13 @@ public sealed class AuthFailurePathTests : IClassFixture<AuthPipelineFixture>
     private const string JwtCookie = "hermes_token";
     private const string RefreshCookie = "hermes_refresh_token";
 
+    /// <summary>
+    /// A fragment of the reply that says a token family was revoked for reuse, and the only
+    /// thing that distinguishes that 401 from the ordinary "your cookie is stale" one. Matched
+    /// as a substring so the surrounding wording can change without breaking these tests.
+    /// </summary>
+    private const string ReuseRevocationMarker = "Refresh Token được sử dụng lại";
+
     private readonly AuthPipelineFixture _fixture;
 
     public AuthFailurePathTests(AuthPipelineFixture fixture) => _fixture = fixture;
@@ -416,26 +423,31 @@ public sealed class AuthFailurePathTests : IClassFixture<AuthPipelineFixture>
 
     // ------------------------------------------- security-expectation probes
     //
-    // The three tests below are REPRODUCERS for defects that exist in AuthController today.
-    // Each one was written to the security bar the endpoint should meet, run against the real
-    // pipeline, and observed to fail. None of their assertions has been relaxed to make them
-    // pass, and none of them is speculative — the failure text in each Skip reason is what the
-    // run actually produced.
+    // The three tests below were written by the change that added this file as REPRODUCERS for
+    // defects that existed in AuthController. Each was written to the security bar the endpoint
+    // should meet, run against the real pipeline, and observed to fail; each was then Skipped
+    // rather than left red, because this suite is the regression signal for four other work
+    // streams and a permanently failing test trains people to ignore the colour.
     //
-    // They are Skipped rather than left red because this suite is the regression signal for
-    // four other work streams; a permanently failing test trains people to ignore the colour.
-    // Fixing the controller is a one-word change here: delete the Skip.
+    // All three now pass against a fixed AuthController. None of their assertions was relaxed
+    // to get there. What each one produced on the unfixed code, for the record:
     //
-    // AuthController.cs is not this change's to edit — the defects are reported, not patched.
+    //   Login_AgainstALockedAccount_DoesNotRevealThatTheAccountExists
+    //     Assert.Equal() Failure: Strings differ, ↓ (pos 12)
+    //     Expected: "{"message":"Invalid email or password."}"
+    //     Actual:   "{"message":"Tài khoản đã bị khóa tạm thời"···
+    //
+    //   Login_OneWrongPasswordAfterALockoutExpires_DoesNotImmediatelyRelock
+    //     A single failed attempt after the lockout window had already expired re-locked the
+    //     account for another 15 minutes, because FailedLoginAttempts is never reset when a
+    //     lockout expires — only a SUCCESSFUL login clears it.
+    //
+    //   Refresh_ReplayingASupersededToken_RevokesTheSession
+    //     Assert.Equal() Failure: Values differ / Expected: Unauthorized / Actual: OK
+    //
+    // The tests AFTER them cover what the fixes introduced rather than what they removed.
 
-    [Fact(Skip =
-        "PRODUCTION DEFECT (account enumeration). AuthController.Login returns "
-        + "'{\"message\":\"Tài khoản đã bị khóa tạm thời...\"}' for a locked account "
-        + "(AuthController.cs:57-61) but '{\"message\":\"Invalid email or password.\"}' for an "
-        + "unknown one (:50-54). Both are 401, so an unauthenticated caller distinguishes a real "
-        + "account from a fake one by sending five wrong passwords and reading the sixth reply. "
-        + "Combined with the lockout defect below, that oracle also confirms the DoS landed. "
-        + "Fix: return the same body for both, and delete this Skip.")]
+    [Fact]
     public async Task Login_AgainstALockedAccount_DoesNotRevealThatTheAccountExists()
     {
         const string password = "Correct-Horse-2026!";
@@ -453,15 +465,7 @@ public sealed class AuthFailurePathTests : IClassFixture<AuthPipelineFixture>
             await locked.Content.ReadAsStringAsync());
     }
 
-    [Fact(Skip =
-        "PRODUCTION DEFECT (indefinite lockout / DoS). AuthController.Login clears "
-        + "FailedLoginAttempts only on a SUCCESSFUL login (AuthController.cs:96-97); an expiring "
-        + "lockout leaves the counter at 5. The next single wrong password therefore evaluates "
-        + "6 >= 5 (:76) and re-locks for another 15 minutes. Observed: one failed attempt after "
-        + "the window had already expired set LockoutEnd back into the future. Anyone who knows "
-        + "a user's email can keep that account locked out forever at one request per 15 "
-        + "minutes. Fix: reset FailedLoginAttempts when an expired lockout is observed, and "
-        + "delete this Skip.")]
+    [Fact]
     public async Task Login_OneWrongPasswordAfterALockoutExpires_DoesNotImmediatelyRelock()
     {
         const string password = "Correct-Horse-2026!";
@@ -480,15 +484,7 @@ public sealed class AuthFailurePathTests : IClassFixture<AuthPipelineFixture>
             + "lockout expires — only a SUCCESSFUL login clears it.");
     }
 
-    [Fact(Skip =
-        "PRODUCTION DEFECT (no refresh-token reuse detection). AuthController.Refresh rotates "
-        + "atomically and rejects a superseded token (AuthController.cs:203-211), but treats the "
-        + "replay as a plain 401 and leaves the session active. Observed: after replaying the "
-        + "old token, POST /api/auth/refresh with the ROTATED token still returned 200 OK. A "
-        + "replay is evidence the token leaked and nothing can tell which holder is the thief, "
-        + "so OAuth 2.0 Security BCP §4.14.2 requires revoking the whole grant. As shipped, the "
-        + "victim gets a silent 401 and the thief keeps the working token. Fix: revoke the "
-        + "session when rotation finds the token already spent, and delete this Skip.")]
+    [Fact]
     public async Task Refresh_ReplayingASupersededToken_RevokesTheSession()
     {
         var session = await SignInAsync();
@@ -510,6 +506,290 @@ public sealed class AuthFailurePathTests : IClassFixture<AuthPipelineFixture>
         using var stillLive = await SendAsync(
             client, HttpMethod.Post, "/api/auth/refresh", (RefreshCookie, rotated));
         Assert.Equal(HttpStatusCode.Unauthorized, stillLive.StatusCode);
+    }
+
+    // ------------------------------------- what the fixes introduced (D1/D2)
+
+    /// <summary>
+    /// The body is the obvious half of an enumeration fix and the easy half to get right. This
+    /// pins the rest of the observable response: the status line and every header the
+    /// application controls. A <c>Content-Length</c> or a <c>Content-Type</c> that differed
+    /// would enumerate accounts just as well as a different message.
+    /// </summary>
+    [Fact]
+    public async Task Login_TheTwo401s_AreIndistinguishableInStatusHeadersAndBody()
+    {
+        const string password = "Correct-Horse-2026!";
+        var user = await _fixture.CreateUserAsync(password);
+        using var client = _fixture.CreateClient();
+        await LockOutAsync(user, lockoutEnd: DateTime.UtcNow.AddMinutes(15));
+
+        using var locked = await LoginAsync(client, user.Email, "wrong");
+        using var unknown = await LoginAsync(client, $"nobody-{Guid.NewGuid():N}@example.test", "wrong");
+
+        Assert.Equal(unknown.StatusCode, locked.StatusCode);
+        Assert.Equal(unknown.ReasonPhrase, locked.ReasonPhrase);
+        Assert.Equal(
+            await unknown.Content.ReadAsStringAsync(),
+            await locked.Content.ReadAsStringAsync());
+        Assert.Equal(ComparableHeaders(unknown), ComparableHeaders(locked));
+    }
+
+    /// <summary>
+    /// The other half of the enumeration fix: the account owner must still be told. They learn
+    /// it by presenting the CORRECT password, which a stranger probing for valid addresses
+    /// cannot do — so this reply can be specific without being an oracle.
+    /// </summary>
+    [Fact]
+    public async Task Login_WithTheCorrectPasswordOnALockedAccount_TellsTheOwnerTheyAreLockedOut()
+    {
+        const string password = "Correct-Horse-2026!";
+        var user = await _fixture.CreateUserAsync(password);
+        using var client = _fixture.CreateClient();
+        await LockOutAsync(user, lockoutEnd: DateTime.UtcNow.AddMinutes(15));
+
+        using var response = await LoginAsync(client, user.Email, password);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(CredentialRejection, body, StringComparison.Ordinal);
+        Assert.Contains("khóa", body, StringComparison.Ordinal);
+        // Still no session, and the lockout is not extended by the correct password either.
+        Assert.Empty(await _fixture.ReadSessionsAsync(user.Id));
+    }
+
+    /// <summary>
+    /// Failing WHILE locked must cost nothing. If it bumped the counter or pushed
+    /// <c>LockoutEnd</c> forward, the denial of service the counter fix removed would simply
+    /// come back through the other door — a stranger keeps the account shut by failing once
+    /// inside every window instead of once after every window.
+    /// </summary>
+    [Fact]
+    public async Task Login_FailingWhileAlreadyLockedOut_DoesNotExtendTheLockout()
+    {
+        const string password = "Correct-Horse-2026!";
+        var user = await _fixture.CreateUserAsync(password);
+        using var client = _fixture.CreateClient();
+        var lockoutEnd = DateTime.UtcNow.AddMinutes(15);
+        await LockOutAsync(user, lockoutEnd);
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            using var failure = await LoginAsync(client, user.Email, $"wrong-{attempt}");
+            Assert.Equal(HttpStatusCode.Unauthorized, failure.StatusCode);
+        }
+
+        var after = await _fixture.ReadUserAsync(user.Id);
+        Assert.Equal(5, after.FailedLoginAttempts);
+        Assert.NotNull(after.LockoutEnd);
+        // Same instant it was set to, to the second — nothing moved it.
+        Assert.True(
+            Math.Abs((after.LockoutEnd!.Value - lockoutEnd).TotalSeconds) < 1,
+            $"Three failures during the lockout moved LockoutEnd from {lockoutEnd:O} to {after.LockoutEnd:O}.");
+    }
+
+    /// <summary>
+    /// The counter fix must not weaken the lockout it is fixing. After a window closes the
+    /// account gets its FULL budget back — not an unlimited one: five more failures lock it
+    /// again. That is the property that stops credential stuffing, and it survives.
+    /// </summary>
+    [Fact]
+    public async Task Login_AfterALockoutExpires_RestoresTheFullBudgetAndStillRelocksOnTheFifthFailure()
+    {
+        const string password = "Correct-Horse-2026!";
+        var user = await _fixture.CreateUserAsync(password);
+        using var client = _fixture.CreateClient();
+        await LockOutAsync(user, lockoutEnd: DateTime.UtcNow.AddMinutes(-1));
+
+        for (var attempt = 1; attempt <= 4; attempt++)
+        {
+            using var failure = await LoginAsync(client, user.Email, $"wrong-{attempt}");
+            Assert.Equal(HttpStatusCode.Unauthorized, failure.StatusCode);
+
+            var during = await _fixture.ReadUserAsync(user.Id);
+            Assert.Equal(attempt, during.FailedLoginAttempts);
+            Assert.Null(during.LockoutEnd);
+        }
+
+        using var fifth = await LoginAsync(client, user.Email, "wrong-5");
+        Assert.Equal(HttpStatusCode.Unauthorized, fifth.StatusCode);
+
+        var relocked = await _fixture.ReadUserAsync(user.Id);
+        Assert.Equal(5, relocked.FailedLoginAttempts);
+        Assert.NotNull(relocked.LockoutEnd);
+        Assert.True(relocked.LockoutEnd > DateTime.UtcNow, "The fifth failure did not re-lock the account.");
+    }
+
+    // ------------------------------------------ what the fix introduced (D3)
+
+    /// <summary>
+    /// Revoking the family has to kill the ACCESS token too, or the thief keeps calling the API
+    /// for the remainder of the JWT's thirty minutes and only loses the ability to renew. It
+    /// does, because <c>OnTokenValidated</c> re-reads the session on every request — this test
+    /// is what proves the two halves are actually wired together.
+    /// </summary>
+    [Fact]
+    public async Task Refresh_ReuseRevocation_AlsoKillsTheAccessTokenMintedFromThatSession()
+    {
+        var session = await SignInAsync();
+        using var client = _fixture.CreateClient();
+
+        using var beforeAnything = await SendAsync(client, HttpMethod.Get, "/api/auth/me", (JwtCookie, session.JwtToken));
+        Assert.Equal(HttpStatusCode.OK, beforeAnything.StatusCode);
+
+        using var rotation = await SendAsync(
+            client, HttpMethod.Post, "/api/auth/refresh", (RefreshCookie, session.RefreshToken));
+        Assert.Equal(HttpStatusCode.OK, rotation.StatusCode);
+
+        using var replay = await SendAsync(
+            client, HttpMethod.Post, "/api/auth/refresh", (RefreshCookie, session.RefreshToken));
+        Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+
+        var stored = Assert.Single(await _fixture.ReadSessionsAsync(session.User.Id));
+        Assert.Equal("revoked", stored.Status);
+        Assert.NotNull(stored.RevokedAtUtc);
+        Assert.Null(stored.RefreshTokenHash);
+
+        using var afterRevocation = await SendAsync(client, HttpMethod.Get, "/api/auth/me", (JwtCookie, session.JwtToken));
+        Assert.Equal(HttpStatusCode.Unauthorized, afterRevocation.StatusCode);
+    }
+
+    /// <summary>
+    /// A logout is not a breach. The refresh a browser had already queued when the user pressed
+    /// "sign out" must be answered with the ordinary rejection, not with the alarming one — and
+    /// it must not be attributed to token theft in the log either.
+    /// </summary>
+    [Fact]
+    public async Task Refresh_AfterLogout_IsRejectedWithoutBeingCalledReuse()
+    {
+        var session = await SignInAsync();
+        using var client = _fixture.CreateClient();
+
+        using var logout = await SendAsync(
+            client, HttpMethod.Post, "/api/auth/logout",
+            (JwtCookie, session.JwtToken), (RefreshCookie, session.RefreshToken));
+        Assert.Equal(HttpStatusCode.OK, logout.StatusCode);
+
+        using var response = await SendAsync(
+            client, HttpMethod.Post, "/api/auth/refresh", (RefreshCookie, session.RefreshToken));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.DoesNotContain(ReuseRevocationMarker, await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Revocation is scoped to the family that was replayed. One stolen token must not sign
+    /// every other user out — including the same user's other devices, which are separate
+    /// sessions and therefore separate families.
+    /// </summary>
+    [Fact]
+    public async Task Refresh_ReuseRevocation_TouchesOnlyTheFamilyThatWasReplayed()
+    {
+        var breached = await SignInAsync();
+        var bystander = await SignInAsync();
+        using var client = _fixture.CreateClient();
+
+        using var rotation = await SendAsync(
+            client, HttpMethod.Post, "/api/auth/refresh", (RefreshCookie, breached.RefreshToken));
+        Assert.Equal(HttpStatusCode.OK, rotation.StatusCode);
+
+        using var replay = await SendAsync(
+            client, HttpMethod.Post, "/api/auth/refresh", (RefreshCookie, breached.RefreshToken));
+        Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+        Assert.Contains(ReuseRevocationMarker, await replay.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+        Assert.Equal("revoked", Assert.Single(await _fixture.ReadSessionsAsync(breached.User.Id)).Status);
+        Assert.Equal("active", Assert.Single(await _fixture.ReadSessionsAsync(bystander.User.Id)).Status);
+
+        using var unaffected = await SendAsync(
+            client, HttpMethod.Post, "/api/auth/refresh", (RefreshCookie, bystander.RefreshToken));
+        Assert.Equal(HttpStatusCode.OK, unaffected.StatusCode);
+    }
+
+    /// <summary>
+    /// The family is the session row, and it is what stays put while the token underneath it
+    /// changes. Rotating repeatedly must never look like reuse to the endpoint: this walks a
+    /// chain of five rotations and demands the same session survives all of them, still active.
+    /// </summary>
+    [Fact]
+    public async Task Refresh_RotatingRepeatedly_KeepsOneFamilyAliveAcrossEveryRotation()
+    {
+        var session = await SignInAsync();
+        using var client = _fixture.CreateClient();
+
+        var seen = new HashSet<string>(StringComparer.Ordinal) { session.RefreshToken };
+        var current = session.RefreshToken;
+        var familyId = Assert.Single(await _fixture.ReadSessionsAsync(session.User.Id)).Id;
+
+        for (var rotation = 0; rotation < 5; rotation++)
+        {
+            using var refreshed = await SendAsync(
+                client, HttpMethod.Post, "/api/auth/refresh", (RefreshCookie, current));
+            Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
+
+            current = ReadCookies(refreshed)[RefreshCookie];
+            Assert.True(seen.Add(current), "A rotation re-issued a refresh token that had already been used.");
+
+            var row = Assert.Single(await _fixture.ReadSessionsAsync(session.User.Id));
+            Assert.Equal(familyId, row.Id);
+            Assert.Equal("active", row.Status);
+        }
+    }
+
+    /// <summary>
+    /// The race the reuse rule must not lose to.
+    ///
+    /// <para>Several requests arrive holding the SAME, current refresh token — two browser tabs
+    /// whose 401s coincided, a retried request. Exactly one may rotate; the others must fail
+    /// WITHOUT being read as theft, because losing a rotation race is the one thing a
+    /// well-behaved client can do. That is why <c>rotated != 1</c> is answered with the plain
+    /// rejection and never with a revocation.</para>
+    ///
+    /// <para>The assertions are the invariants that hold under EVERY interleaving, which is
+    /// what keeps this test honest rather than lucky: exactly one caller may win; a family may
+    /// be revoked at most once, never in a cascade; and the row's final state must agree with
+    /// what the callers were told. In practice the observed run reports zero revocations — the
+    /// requests all read the row before the winner committed — and a revocation here would mean
+    /// one request was late enough to see a genuinely superseded token, which is by design the
+    /// same thing a replay looks like.</para>
+    /// </summary>
+    [Fact]
+    public async Task Refresh_ConcurrentRefreshesOfTheCurrentToken_ProduceOneWinnerAndNoCascade()
+    {
+        const int callers = 6;
+        var session = await SignInAsync();
+        using var client = _fixture.CreateClient();
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, callers).Select(_ =>
+            SendAsync(client, HttpMethod.Post, "/api/auth/refresh", (RefreshCookie, session.RefreshToken))));
+
+        try
+        {
+            Assert.Equal(1, responses.Count(response => response.StatusCode == HttpStatusCode.OK));
+            Assert.All(
+                responses.Where(response => response.StatusCode != HttpStatusCode.OK),
+                response => Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode));
+
+            var bodies = await Task.WhenAll(responses.Select(response => response.Content.ReadAsStringAsync()));
+            var revocations = bodies.Count(body => body.Contains(ReuseRevocationMarker, StringComparison.Ordinal));
+            Assert.InRange(revocations, 0, 1);
+
+            var row = Assert.Single(await _fixture.ReadSessionsAsync(session.User.Id));
+            Assert.Equal(revocations == 0 ? "active" : "revoked", row.Status);
+
+            if (revocations == 0)
+            {
+                // The family survived, so the winner's token — and only the winner's — is live.
+                var winner = responses.Single(response => response.StatusCode == HttpStatusCode.OK);
+                using var stillWorks = await SendAsync(
+                    client, HttpMethod.Post, "/api/auth/refresh", (RefreshCookie, ReadCookies(winner)[RefreshCookie]));
+                Assert.Equal(HttpStatusCode.OK, stillWorks.StatusCode);
+            }
+        }
+        finally
+        {
+            foreach (var response in responses) response.Dispose();
+        }
     }
 
     // ------------------------------------------------------------- helpers
@@ -560,6 +840,20 @@ public sealed class AuthFailurePathTests : IClassFixture<AuthPipelineFixture>
         request.Headers.Add(TestPeerIpStartupFilter.HeaderName, peerIp ?? _fixture.NextPeerIp());
         return request;
     }
+
+    /// <summary>
+    /// Every response header the application decides, flattened and ordered so two responses
+    /// can be compared for equality. <c>Date</c> is dropped because it is the clock, not a
+    /// decision; everything else — including <c>Content-Type</c> and <c>Content-Length</c>,
+    /// which a differing message body would give away — is compared.
+    /// </summary>
+    private static string ComparableHeaders(HttpResponseMessage response) =>
+        string.Join(
+            "\n",
+            response.Headers.Concat(response.Content.Headers)
+                .Where(header => !header.Key.Equals("Date", StringComparison.OrdinalIgnoreCase))
+                .Select(header => $"{header.Key}: {string.Join(",", header.Value)}")
+                .OrderBy(line => line, StringComparer.Ordinal));
 
     /// <summary>Name → value of every <c>Set-Cookie</c> on the response, attributes stripped.</summary>
     private static Dictionary<string, string> ReadCookies(HttpResponseMessage response)

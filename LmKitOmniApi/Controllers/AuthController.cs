@@ -17,6 +17,39 @@ namespace LmKitOmniApi.Controllers;
 [Route("api/[controller]")]
 public class AuthController : ControllerBase
 {
+    /// <summary>
+    /// The ONLY thing an unauthenticated caller is ever told about a failed sign-in. Unknown
+    /// email, wrong password and locked account all end here, with the same status, the same
+    /// body and the same headers, because any difference between them is an oracle that lets a
+    /// stranger enumerate which addresses have accounts.
+    /// </summary>
+    private const string CredentialRejection = "Invalid email or password.";
+
+    /// <summary>
+    /// Reachable only AFTER the correct password has been presented, which is why it can be
+    /// specific: a caller who already proved they hold the credential learns nothing from it
+    /// that they did not already know, while a stranger probing the endpoint never gets here.
+    /// </summary>
+    private const string LockoutNotice =
+        "Tài khoản đã bị khóa tạm thời do đăng nhập sai quá nhiều lần. Vui lòng thử lại sau 15 phút.";
+
+    private const string RefreshTokenRejection = "Refresh Token không hợp lệ hoặc đã hết hạn.";
+
+    /// <summary>
+    /// Said out loud, on purpose. Revoking the family logs the legitimate holder out, and a
+    /// silent 401 would read as a glitch and teach them to retry; this tells them the session
+    /// was terminated and that signing in again is the remedy.
+    /// </summary>
+    private const string RefreshTokenReuseNotice =
+        "Phiên đăng nhập đã bị thu hồi vì Refresh Token được sử dụng lại. Vui lòng đăng nhập lại.";
+
+    /// <summary>Five wrong passwords, then fifteen minutes. Unchanged by this file's fixes.</summary>
+    private const int MaxFailedLoginAttempts = 5;
+    private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
+
+    private const string ActiveSession = "active";
+    private const string RevokedSession = "revoked";
+
     private readonly HermesDbContext _dbContext;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AuthController> _logger;
@@ -46,49 +79,72 @@ public class AuthController : ControllerBase
 
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
         var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
-        
-        if (user == null)
+        var now = DateTime.UtcNow;
+
+        // An EXPIRED lockout hands the account its full budget of attempts back. Without this,
+        // the counter stays at the limit for ever (only a successful login used to clear it),
+        // so the first wrong password after the window closed re-locks immediately and anyone
+        // who knows the address holds the account shut at one request per fifteen minutes.
+        // Serving the window is the whole penalty; it must not also be a permanent handicap.
+        if (user is not null && user.LockoutEnd.HasValue && user.LockoutEnd <= now)
         {
-            _logger.LogWarning("Failed login attempt for non-existent email {Email} from IP {IP}", request.Email, ipAddress);
-            return Unauthorized(new { message = "Invalid email or password." });
+            user.FailedLoginAttempts = 0;
+            user.LockoutEnd = null;
         }
 
-        // Check if account is locked out
-        if (user.LockoutEnd.HasValue && user.LockoutEnd > DateTime.UtcNow)
-        {
-            _logger.LogWarning("Login attempt for locked account {Email} from IP {IP}", request.Email, ipAddress);
-            return Unauthorized(new { message = "Tài khoản đã bị khóa tạm thời do đăng nhập sai quá nhiều lần. Vui lòng thử lại sau 15 phút." });
-        }
+        var isLockedOut = user is not null && user.LockoutEnd.HasValue && user.LockoutEnd > now;
 
-        var isBCryptHash = user.PasswordHash.StartsWith("$2a$", StringComparison.Ordinal)
-            || user.PasswordHash.StartsWith("$2b$", StringComparison.Ordinal)
-            || user.PasswordHash.StartsWith("$2y$", StringComparison.Ordinal);
-        var isPasswordValid = false;
-        if (isBCryptHash)
-        {
-            try { isPasswordValid = BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash); }
-            catch (BCrypt.Net.SaltParseException) { isPasswordValid = false; }
-        }
+        // Verified on EVERY path, including the two that used to return before reaching it: a
+        // missing account and a locked one. Skipping the hash there left the response TIME
+        // saying what the response body no longer does. See LoginPasswordVerifier.
+        var isPasswordValid = LoginPasswordVerifier.Verify(request.Password, user?.PasswordHash);
 
         if (!isPasswordValid)
         {
-            user.FailedLoginAttempts++;
-            if (user.FailedLoginAttempts >= 5)
+            if (user is null)
             {
-                user.LockoutEnd = DateTime.UtcNow.AddMinutes(15);
-                _logger.LogWarning("Account {Email} locked out due to multiple failed login attempts from IP {IP}", request.Email, ipAddress);
+                _logger.LogWarning("Failed login attempt for non-existent email {Email} from IP {IP}", request.Email, ipAddress);
+            }
+            else if (isLockedOut)
+            {
+                // Deliberately does NOT touch the counter or extend the window. Letting failed
+                // attempts accumulate during a lockout would hand the same denial of service
+                // back through a different door.
+                _logger.LogWarning("Failed login attempt for locked account {Email} from IP {IP}", request.Email, ipAddress);
             }
             else
             {
-                _logger.LogWarning("Failed login attempt for {Email} from IP {IP}. Attempt {Attempt}", request.Email, ipAddress, user.FailedLoginAttempts);
+                user.FailedLoginAttempts++;
+                if (user.FailedLoginAttempts >= MaxFailedLoginAttempts)
+                {
+                    user.LockoutEnd = now.Add(LockoutDuration);
+                    _logger.LogWarning("Account {Email} locked out due to multiple failed login attempts from IP {IP}", request.Email, ipAddress);
+                }
+                else
+                {
+                    _logger.LogWarning("Failed login attempt for {Email} from IP {IP}. Attempt {Attempt}", request.Email, ipAddress, user.FailedLoginAttempts);
+                }
+                await _dbContext.SaveChangesAsync();
             }
-            await _dbContext.SaveChangesAsync();
-            return Unauthorized(new { message = "Invalid email or password." });
+
+            return Unauthorized(new { message = CredentialRejection });
         }
 
-        if (!user.IsActive)
+        // Past this line the caller has PROVED they hold the account's password, so a specific
+        // reason is safe: it tells the owner what is wrong without telling a stranger that the
+        // address exists.
+        if (isLockedOut)
+        {
+            _logger.LogWarning("Correct password presented for locked account {Email} from IP {IP}", request.Email, ipAddress);
+            return Unauthorized(new { message = LockoutNotice });
+        }
+
+        if (!user!.IsActive)
         {
             _logger.LogWarning("Login attempt for disabled account {Email} from IP {IP}", request.Email, ipAddress);
+            // Persists the expired-lockout reset above; the account cannot sign in either way,
+            // but leaving a stale counter behind would outlive the deactivation.
+            await _dbContext.SaveChangesAsync();
             return Unauthorized(new { message = "Account is disabled." });
         }
 
@@ -99,17 +155,19 @@ public class AuthController : ControllerBase
 
         _logger.LogInformation("Successful login for {Email} from IP {IP}", request.Email, ipAddress);
 
-        var refreshToken = RefreshTokenProtector.Generate();
+        // The session row IS the token family, and its key is fixed before the insert, so the
+        // very first refresh token can already name the family it belongs to.
         var session = new Domain.Entities.UserSession
         {
             UserId = user.Id,
             SessionKey = Guid.NewGuid().ToString("N"),
-            RefreshTokenHash = RefreshTokenProtector.Hash(refreshToken),
             DeviceInfo = Request.Headers.UserAgent.ToString()[..Math.Min(Request.Headers.UserAgent.ToString().Length, 500)],
             IpAddress = ipAddress[..Math.Min(ipAddress.Length, 50)],
             ExpiresAtUtc = DateTime.UtcNow.AddDays(7),
             LastSeenAtUtc = DateTime.UtcNow
         };
+        var refreshToken = RefreshTokenProtector.GenerateFor(session.Id);
+        session.RefreshTokenHash = RefreshTokenProtector.Hash(refreshToken);
         _dbContext.UserSessions.Add(session);
         user.RefreshToken = null;
         user.RefreshTokenExpiryTime = null;
@@ -155,15 +213,18 @@ public class AuthController : ControllerBase
         {
             session = await _dbContext.UserSessions.FindAsync(sessionId);
         }
-        else if (Request.Cookies.TryGetValue("hermes_refresh_token", out var refreshToken))
+        else if (Request.Cookies.TryGetValue("hermes_refresh_token", out var refreshToken)
+            && !string.IsNullOrWhiteSpace(refreshToken))
         {
+            // Hashing the WHOLE cookie, family prefix included, so this keeps matching whatever
+            // RefreshTokenProtector minted.
             var refreshHash = RefreshTokenProtector.Hash(refreshToken);
             session = await _dbContext.UserSessions.FirstOrDefaultAsync(candidate => candidate.RefreshTokenHash == refreshHash);
         }
 
         if (session != null)
         {
-            session.Status = "revoked";
+            session.Status = RevokedSession;
             session.RefreshTokenHash = null;
             session.RevokedAtUtc = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync();
@@ -174,41 +235,117 @@ public class AuthController : ControllerBase
         return Ok();
     }
 
+    /// <summary>
+    /// Rotates the refresh token, and treats a replayed one as evidence of theft.
+    ///
+    /// <para><b>Families.</b> Every token minted for one login carries that login's session id
+    /// (see <see cref="RefreshTokenProtector"/>), so a SUPERSEDED token still says which family
+    /// it came from even though its hash was overwritten by the rotation that superseded it.
+    /// That is what makes reuse detection possible here without a schema change: the family is
+    /// the <c>user_sessions</c> row, and it already survives every rotation.</para>
+    ///
+    /// <para><b>What a replay means.</b> Two parties now hold tokens from one family and only
+    /// one of them is the legitimate holder — and nothing in the request distinguishes them.
+    /// OAuth 2.0 Security BCP §4.14.2 resolves that by revoking the whole grant, which is the
+    /// conservative direction: the legitimate user is logged out and signs in again, whereas
+    /// rejecting only the replay leaves the thief holding the token that still works.</para>
+    ///
+    /// <para><b>Why a concurrent legitimate refresh cannot revoke itself.</b> Two in-flight
+    /// requests carrying the CURRENT token both read the hash they presented, so neither takes
+    /// the reuse branch; one wins the conditional rotation below and the other simply loses it.
+    /// Losing that race is NOT treated as reuse — it is the one outcome a well-behaved client
+    /// can produce — so the loser gets a plain 401 and the family survives. The revocation
+    /// itself re-tests the mismatch inside its own <c>WHERE</c> clause, under the row lock, so a
+    /// read that went stale between the two statements cannot revoke a family whose current
+    /// token is the one being presented.</para>
+    /// </summary>
     [HttpPost("refresh")]
     public async Task<IActionResult> Refresh()
     {
-        if (!Request.Cookies.TryGetValue("hermes_refresh_token", out var refreshToken))
+        if (!Request.Cookies.TryGetValue("hermes_refresh_token", out var refreshToken)
+            || string.IsNullOrWhiteSpace(refreshToken))
         {
             return Unauthorized(new { message = "Không tìm thấy Refresh Token." });
         }
 
         var refreshTokenHash = RefreshTokenProtector.Hash(refreshToken);
-        var session = await _dbContext.UserSessions
-            .Include(candidate => candidate.User)
-            .FirstOrDefaultAsync(candidate => candidate.RefreshTokenHash == refreshTokenHash);
+
+        // A token minted before this change carries no family and can only be found by its
+        // hash — which means a replay of one is indistinguishable from a fabrication and gets
+        // the plain rejection below. Those cookies age out with the first successful refresh,
+        // which mints a family-carrying replacement.
+        var session = RefreshTokenProtector.TryReadFamily(refreshToken, out var familyId)
+            ? await _dbContext.UserSessions
+                .Include(candidate => candidate.User)
+                .FirstOrDefaultAsync(candidate => candidate.Id == familyId)
+            : await _dbContext.UserSessions
+                .Include(candidate => candidate.User)
+                .FirstOrDefaultAsync(candidate => candidate.RefreshTokenHash == refreshTokenHash);
+
         var user = session?.User;
         if (session == null
             || user == null
-            || !session.Status.Equals("active", StringComparison.OrdinalIgnoreCase)
+            || !session.Status.Equals(ActiveSession, StringComparison.OrdinalIgnoreCase)
             || session.ExpiresAtUtc <= DateTime.UtcNow
             || !user.IsActive)
         {
-            return Unauthorized(new { message = "Refresh Token không hợp lệ hoặc đã hết hạn." });
+            // Includes a refresh that arrives after logout or an out-of-band revocation. That
+            // is an ordinary stale cookie, not evidence of theft, and it is answered as such.
+            return Unauthorized(new { message = RefreshTokenRejection });
         }
 
-        var newRefreshToken = RefreshTokenProtector.Generate();
+        // The family is live but this is not its current token: the token was spent by an
+        // earlier rotation and is being presented again.
+        if (!string.Equals(session.RefreshTokenHash, refreshTokenHash, StringComparison.Ordinal))
+        {
+            var revokedAt = DateTime.UtcNow;
+            var revoked = await _dbContext.UserSessions
+                .Where(candidate => candidate.Id == session.Id
+                    && candidate.Status == ActiveSession
+                    && candidate.RefreshTokenHash != refreshTokenHash)
+                .ExecuteUpdateAsync(update => update
+                    .SetProperty(candidate => candidate.Status, RevokedSession)
+                    .SetProperty(candidate => candidate.RefreshTokenHash, (string?)null)
+                    .SetProperty(candidate => candidate.RevokedAtUtc, revokedAt));
+
+            if (revoked != 1)
+            {
+                // The row no longer satisfies the mismatch this branch was entered on: another
+                // request revoked the family first, or it moved back under the read. Either way
+                // this request revokes nothing.
+                return Unauthorized(new { message = RefreshTokenRejection });
+            }
+
+            _logger.LogWarning(
+                "Refresh token reuse detected for session {SessionId} (user {UserId}) from IP {IP}; "
+                + "the token family has been revoked and the user must sign in again.",
+                session.Id, user.Id, HttpContext.Connection.RemoteIpAddress?.ToString() ?? "Unknown");
+
+            // The JWT minted from this session dies with it: OnTokenValidated re-checks the
+            // session on every authenticated request, so no cookie survives the revocation.
+            DeleteAuthCookie("hermes_token");
+            DeleteAuthCookie("hermes_refresh_token");
+            return Unauthorized(new { message = RefreshTokenReuseNotice });
+        }
+
+        var newRefreshToken = RefreshTokenProtector.GenerateFor(session.Id);
         var newRefreshTokenHash = RefreshTokenProtector.Hash(newRefreshToken);
         var refreshedAt = DateTime.UtcNow;
 
         var rotated = await _dbContext.UserSessions
             .Where(candidate => candidate.Id == session.Id
                 && candidate.RefreshTokenHash == refreshTokenHash
-                && candidate.Status == "active")
+                && candidate.Status == ActiveSession)
             .ExecuteUpdateAsync(update => update
                 .SetProperty(candidate => candidate.RefreshTokenHash, newRefreshTokenHash)
                 .SetProperty(candidate => candidate.LastSeenAtUtc, refreshedAt));
         if (rotated != 1)
+        {
+            // Lost the rotation race to another request holding the SAME token, or the family
+            // was revoked in between. Not reuse — see the remarks above — so nothing is revoked
+            // here; the caller's cookie was replaced by the winner's response.
             return Unauthorized(new { message = "Refresh Token đã được sử dụng hoặc thu hồi." });
+        }
 
         var newJwtToken = GenerateJwtToken(user, session.Id);
 
