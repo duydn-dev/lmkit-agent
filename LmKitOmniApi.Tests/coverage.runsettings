@@ -2,8 +2,13 @@
 <RunSettings>
   <!--
     Configures the coverlet "XPlat Code Coverage" data collector (coverlet.collector,
-    already referenced by this test project). Used by CI as:
-      dotnet test ... --collect:"XPlat Code Coverage" --settings LmKitOmniApi.Tests/coverage.runsettings
+    already referenced by this test project). CI passes it with the collect and settings
+    switches; see .github/workflows/ci.yml, "Test with code coverage".
+
+    Do NOT write those switches out here. A double hyphen is illegal inside an XML comment,
+    so spelling them made this file unparseable: dotnet test refused it with "Settings file
+    provided does not conform to required format", which failed the whole backend CI job
+    before a single test ran.
   -->
   <DataCollectionRunSettings>
     <DataCollectors>
