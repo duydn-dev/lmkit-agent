@@ -82,7 +82,9 @@ public sealed class GroundingTrainingService : IGroundingTrainingService
         try
         {
             await using var content = File.OpenRead(trained.AdapterPath);
-            var name = $"grounding-{stamp}-{Guid.NewGuid().ToString("N")[..8]}";
+            // The name is what ComputerUseModel later selects the adapter BY, so it comes from
+            // the shared naming helper rather than being spelled here.
+            var name = GroundingAdapterNaming.NewName(DateTime.UtcNow);
             var registration = await _loraService.RegisterAsync(
                 tenantId,
                 name,
