@@ -970,6 +970,17 @@ const copyToClipboard = async (text: string): Promise<boolean> => {
   }
 };
 
+/**
+ * " Liên kết sẽ hết hạn vào <ngày giờ>." for a usable ISO timestamp, otherwise the
+ * empty string so the toast reads exactly as it did before this field existed.
+ */
+const formatShareExpiry = (expiresAtUtc: unknown): string => {
+  if (typeof expiresAtUtc !== 'string' || !expiresAtUtc) return '';
+  const date = new Date(expiresAtUtc);
+  if (Number.isNaN(date.getTime())) return '';
+  return ` Liên kết sẽ hết hạn vào ${date.toLocaleString('vi-VN')}.`;
+};
+
 const shareSession = async () => {
   if (!currentSessionId.value || shareBusy.value) return;
   shareBusy.value = true;
@@ -977,22 +988,27 @@ const shareSession = async () => {
   try {
     const response = await http.post(ApiFactory.SHARE.CREATE_LINK(currentSessionId.value));
     if (!response.ok) throw new Error(await readApiError(response, 'Không thể tạo liên kết chia sẻ'));
-    const data = await response.json() as { token?: unknown };
+    const data = await response.json() as { token?: unknown; expiresAtUtc?: unknown };
     if (typeof data.token !== 'string' || !data.token) throw new Error('Máy chủ không trả về token chia sẻ.');
     const shareUrl = `${window.location.origin}/share/${data.token}`;
+    // Share links now expire. The owner is the only one who can act on that — they are
+    // the one who has to re-share before the deadline — so it is stated at the moment
+    // the link is handed out, not left for the recipient to discover as a dead URL.
+    // Silently omitted if the server did not send a usable date.
+    const expiryNote = formatShareExpiry(data.expiresAtUtc);
     const copied = await copyToClipboard(shareUrl);
     if (copied) {
       toast.add({
         severity: 'success',
         summary: 'Đã sao chép liên kết chia sẻ',
-        detail: 'Liên kết chia sẻ cũ của đoạn chat này (nếu có) đã ngừng hoạt động.',
+        detail: `Liên kết chia sẻ cũ của đoạn chat này (nếu có) đã ngừng hoạt động.${expiryNote}`,
         life: 7000
       });
     } else {
       toast.add({
         severity: 'warn',
         summary: 'Không thể tự động sao chép',
-        detail: `Liên kết chia sẻ: ${shareUrl} (liên kết cũ, nếu có, đã ngừng hoạt động).`,
+        detail: `Liên kết chia sẻ: ${shareUrl} (liên kết cũ, nếu có, đã ngừng hoạt động).${expiryNote}`,
         life: 12000
       });
     }

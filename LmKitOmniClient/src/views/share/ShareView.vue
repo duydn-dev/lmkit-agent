@@ -19,13 +19,39 @@
         <p class="text-sm">Đang tải đoạn chat được chia sẻ...</p>
       </div>
 
-      <!-- Invalid / revoked link -->
+      <!-- Unknown link: the API deliberately says nothing more than "no" here. -->
       <div v-else-if="state === 'not-found'" class="flex flex-col items-center justify-center py-20 text-center">
         <div class="w-14 h-14 rounded-full bg-gray-200/70 flex items-center justify-center mb-4">
           <i class="pi pi-link text-2xl text-gray-500" aria-hidden="true"></i>
         </div>
         <h1 class="text-xl font-semibold text-gray-900 mb-2">Không tìm thấy đoạn chat</h1>
         <p class="text-sm text-gray-600 max-w-md" role="alert">Liên kết không tồn tại hoặc đã bị thu hồi.</p>
+      </div>
+
+      <!--
+        Expired link (410 + reason "expired"). Kept distinct from the revoked case
+        below: the remedy differs — here the owner simply has to share again.
+      -->
+      <div v-else-if="state === 'expired'" class="flex flex-col items-center justify-center py-20 text-center">
+        <div class="w-14 h-14 rounded-full bg-amber-50 flex items-center justify-center mb-4">
+          <i class="pi pi-clock text-2xl text-amber-500" aria-hidden="true"></i>
+        </div>
+        <h1 class="text-xl font-semibold text-gray-900 mb-2">Liên kết đã hết hạn</h1>
+        <p class="text-sm text-gray-600 max-w-md" role="alert">
+          Liên kết chia sẻ này đã hết hạn{{ formattedRefusedAt ? ` vào ${formattedRefusedAt}` : '' }}.
+          Hãy đề nghị người chia sẻ tạo một liên kết mới.
+        </p>
+      </div>
+
+      <!-- Revoked link (410 + reason "revoked"): a deliberate act by the owner. -->
+      <div v-else-if="state === 'revoked'" class="flex flex-col items-center justify-center py-20 text-center">
+        <div class="w-14 h-14 rounded-full bg-gray-200/70 flex items-center justify-center mb-4">
+          <i class="pi pi-ban text-2xl text-gray-500" aria-hidden="true"></i>
+        </div>
+        <h1 class="text-xl font-semibold text-gray-900 mb-2">Liên kết đã bị thu hồi</h1>
+        <p class="text-sm text-gray-600 max-w-md" role="alert">
+          Người chia sẻ đã thu hồi hoặc thay thế liên kết này{{ formattedRefusedAt ? ` vào ${formattedRefusedAt}` : '' }}.
+        </p>
       </div>
 
       <!-- Unexpected failure -->
@@ -100,8 +126,10 @@ interface SharedConversation {
 
 const route = useRoute();
 
-const state = ref<'loading' | 'ready' | 'not-found' | 'error'>('loading');
+const state = ref<'loading' | 'ready' | 'not-found' | 'expired' | 'revoked' | 'error'>('loading');
 const conversation = ref<SharedConversation | null>(null);
+/** When a 410 says the link stopped working — revocation stamp or deadline. */
+const refusedAtUtc = ref('');
 
 /**
  * IMPORTANT: this page is anonymous. It deliberately uses a PLAIN `fetch`
@@ -119,6 +147,20 @@ const loadSharedConversation = async () => {
     const response = await fetch(`${API_BASE_URL}${ApiFactory.SHARE.GET_SHARED_CHAT(token)}`);
     if (response.status === 404) {
       state.value = 'not-found';
+      return;
+    }
+    // 410 Gone: the link existed and no longer resolves. The body names which clock ran
+    // out. Without this branch an expired link would fall into the generic `!response.ok`
+    // path below and read as "Đã có lỗi xảy ra" — telling the visitor the app is broken
+    // when in fact it is working exactly as designed.
+    if (response.status === 410) {
+      const refusal = await response.json().catch(() => null) as { reason?: unknown; expiredAtUtc?: unknown; revokedAtUtc?: unknown } | null;
+      refusedAtUtc.value = typeof refusal?.expiredAtUtc === 'string'
+        ? refusal.expiredAtUtc
+        : typeof refusal?.revokedAtUtc === 'string' ? refusal.revokedAtUtc : '';
+      // Unknown/absent reason falls back to 'revoked', the pre-existing wording: a new
+      // server reason this build has not learnt must not surface as a crash.
+      state.value = refusal?.reason === 'expired' ? 'expired' : 'revoked';
       return;
     }
     if (!response.ok) {
@@ -143,6 +185,14 @@ const formattedCreatedAt = computed(() => {
   const raw = conversation.value?.createdAt;
   if (!raw) return '';
   const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('vi-VN');
+});
+
+/** Empty string when the server sent no usable timestamp — the copy reads fine without it. */
+const formattedRefusedAt = computed(() => {
+  if (!refusedAtUtc.value) return '';
+  const date = new Date(refusedAtUtc.value);
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleString('vi-VN');
 });

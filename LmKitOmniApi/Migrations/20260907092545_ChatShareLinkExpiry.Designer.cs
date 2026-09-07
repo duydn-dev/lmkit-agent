@@ -3,6 +3,7 @@ using System;
 using LmKitOmniApi.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace LmKitOmniApi.Migrations
 {
     [DbContext(typeof(HermesDbContext))]
-    partial class HermesDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260907092545_ChatShareLinkExpiry")]
+    partial class ChatShareLinkExpiry
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -998,6 +1001,36 @@ namespace LmKitOmniApi.Migrations
                     b.ToTable("Tenants");
                 });
 
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.TenantApiCryptoKey", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("PrivateKeyPem")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PublicKeyPem")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("tenant_api_crypto_keys");
+                });
+
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.TenantApiKey", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1539,6 +1572,17 @@ namespace LmKitOmniApi.Migrations
                     b.Navigation("Tenant");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.TenantApiCryptoKey", b =>
+                {
+                    b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
                 });
 
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.TenantApiKey", b =>
