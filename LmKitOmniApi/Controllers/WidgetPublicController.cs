@@ -30,6 +30,15 @@ public sealed class WidgetPublicController(
 {
     private const string RateLimitPolicyName = "widget-chat";
 
+    /// <summary>
+    /// Per-IP fixed-window policy for the ANONYMOUS key exchange, mirroring the
+    /// LoginPolicy/SharePolicy shape used by the other unauthenticated endpoints.
+    /// The exchange is a credential-presenting endpoint that drives an indexed
+    /// key-hash lookup, so it must be throttled before it reaches the database.
+    /// Registered in <c>Program.cs</c> — see <c>WIDGET-FIX-INTEGRATION.md</c>.
+    /// </summary>
+    public const string AuthRateLimitPolicyName = "widget-auth";
+
     public sealed class WidgetAuthRequest
     {
         public string? Origin { get; init; }
@@ -43,6 +52,7 @@ public sealed class WidgetPublicController(
 
     [HttpPost("auth")]
     [AllowAnonymous]
+    [EnableRateLimiting(AuthRateLimitPolicyName)]
     public async Task<IActionResult> ExchangeKey([FromBody] WidgetAuthRequest? request, CancellationToken ct)
     {
         // Effective origin: X-Widget-Origin (set inside the same-origin iframe from
@@ -84,6 +94,54 @@ public sealed class WidgetPublicController(
                 settings.Position
             }
         });
+    }
+
+    /// <summary>
+    /// Per-tenant framing policy for the widget DOCUMENT route
+    /// (<c>GET /widget/chat?key=…</c>). The document itself is a static SPA file
+    /// served by nginx, which cannot know a tenant's allowlist — so nginx issues
+    /// this as an internal <c>auth_request</c> subrequest and copies the returned
+    /// <c>frame-ancestors</c> onto the document response (see the widget location
+    /// block in <c>LmKitOmniClient/nginx.conf</c>). The value is derived ONLY from
+    /// the tenant's configured origin allowlist; an unknown key, a disabled widget
+    /// or an empty allowlist all yield <c>'none'</c>, so the widget stays
+    /// unembeddable until an admin explicitly allowlists an origin (fail closed).
+    /// Deliberately un-throttled: it is one indexed key-hash read on the path of a
+    /// page load, and a 429 here would blank the widget for every visitor sharing
+    /// the proxy's address.
+    /// </summary>
+    [HttpGet("frame-policy")]
+    [AllowAnonymous]
+    public async Task<IActionResult> FramePolicy([FromQuery] string? key, CancellationToken ct)
+    {
+        var frameAncestors = await ResolveFrameAncestorsAsync(key, ct);
+
+        // Header for nginx to lift onto the document (auth_request_set), plus the
+        // real CSP so a direct fetch of this endpoint is self-describing.
+        Response.Headers["X-Widget-Frame-Ancestors"] = frameAncestors;
+        Response.Headers.ContentSecurityPolicy = $"frame-ancestors {frameAncestors}";
+        Response.Headers.CacheControl = "no-store";
+        return NoContent();
+    }
+
+    private async Task<string> ResolveFrameAncestorsAsync(string? rawKey, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(rawKey) || rawKey.Length > WidgetSecrets.MaxPresentedLength)
+            return "'none'";
+
+        var settings = await settingsLookup.FindActiveByKeyHashAsync(WidgetSecrets.Hash(rawKey), ct);
+        if (settings is null) return "'none'";
+
+        // Re-normalize on the way out: the CSP header must never carry anything but
+        // scheme://host[:port] tokens, whatever the stored JSON happens to hold.
+        var allowed = WidgetOrigins.Parse(settings.AllowedOriginsJson)
+            .Select(WidgetOrigins.Normalize)
+            .Where(origin => origin is not null)
+            .Select(origin => origin!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return allowed.Count == 0 ? "'none'" : string.Join(' ', allowed);
     }
 
     [HttpPost("chat")]

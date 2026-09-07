@@ -5,17 +5,20 @@ using LmKitOmniApi.Application.Widget;
 using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace LmKitOmniApi.Tests;
 
 /// <summary>
 /// Integration coverage for the PUBLIC widget surface: key exchange, origin
-/// allowlist enforcement, widget-token chat, rotation, and cross-tenant
-/// isolation. The chat engine is replaced with a canned implementation so no
-/// model load is needed; everything around it (auth, policy, quota, controller
-/// wiring) is the real production pipeline over SQLite.
+/// allowlist enforcement, widget-token chat, rotation, quota, throttling and
+/// cross-tenant isolation. Only the LM boundary is canned
+/// (<see cref="TestWidgetInferenceSessionFactory"/>) so no model load is needed —
+/// the chat engine itself and everything around it (auth, policy, quota,
+/// controller wiring) is the real production pipeline over SQLite.
 /// </summary>
 public sealed class WidgetPublicApiTests : IClassFixture<WidgetApiFixture>
 {
@@ -105,7 +108,12 @@ public sealed class WidgetPublicApiTests : IClassFixture<WidgetApiFixture>
         var text = await response.Content.ReadAsStringAsync();
         Assert.Contains("data: ", text);
         Assert.Contains("\"answer\"", text);
-        Assert.Contains("Canned widget answer", text);
+        // The REAL WidgetChatEngine ran: these tokens only reach the response if the
+        // engine subscribed the model's text-completion event and drained its channel.
+        // If that plumbing breaks the guardrail sees an empty answer and the endpoint
+        // emits the canned apology instead.
+        Assert.Contains(TestWidgetInferenceSessionFactory.CannedAnswer, text);
+        Assert.DoesNotContain(WidgetChatEngine.FallbackAnswer, text);
     }
 
     [Fact]
@@ -179,7 +187,150 @@ public sealed class WidgetPublicApiTests : IClassFixture<WidgetApiFixture>
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Exchange_IsThrottledPerClientAddress()
+    {
+        // Own host: the shared fixture runs a deliberately generous window so the rest
+        // of the suite never trips it. POST /api/widget/auth is anonymous and drives a
+        // key-hash lookup, so it must be limited like /api/auth/login and the share
+        // links are (per-IP fixed window).
+        using var factory = new LmKitApiFactory();
+        factory.ConfigurationOverrides["RateLimiting:WidgetAuthRequestsPerWindow"] = "3";
+        factory.ConfigurationOverrides["RateLimiting:WidgetAuthWindowSeconds"] = "3600";
+        factory.EnsureSeeded();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
+            db.TenantWidgetSettings.Add(new TenantWidgetSettings
+            {
+                TenantId = LmKitApiFactory.TenantId,
+                IsActive = true,
+                AllowedOriginsJson = WidgetOrigins.Serialize([WidgetApiFixture.DefaultOrigin])
+            });
+            await db.SaveChangesAsync();
+        }
+
+        HttpResponseMessage? last = null;
+        for (var attempt = 1; attempt <= 4; attempt++)
+        {
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Widget-Origin", WidgetApiFixture.DefaultOrigin);
+            last?.Dispose();
+            last = await client.PostAsync("/api/widget/auth", Json(new { origin = WidgetApiFixture.DefaultOrigin }));
+            // The un-keyed request is rejected before any lookup; what matters is that
+            // the limiter counts it and cuts the client off on the fourth attempt.
+            if (attempt < 4) Assert.Equal(HttpStatusCode.Unauthorized, last.StatusCode);
+        }
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, last!.StatusCode);
+        Assert.True(last.Headers.TryGetValues("Retry-After", out _));
+        last.Dispose();
+    }
+
+    [Fact]
+    public async Task WidgetSettings_AreUniquePerTenant()
+    {
+        await _fixture.SeedActiveWidgetAsync(allowedOrigins: [WidgetApiFixture.DefaultOrigin]);
+
+        using var scope = _fixture.Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
+        db.TenantWidgetSettings.Add(new TenantWidgetSettings { TenantId = LmKitApiFactory.TenantId });
+
+        // Without this index two concurrent PUTs leave two rows behind and EVERY later
+        // SingleOrDefaultAsync read throws — the tenant's widget is bricked for good.
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+    }
+
+    [Fact]
+    public async Task UpdateSettings_LosingTheInsertRace_StillLeavesExactlyOneRow()
+    {
+        var connection = _fixture.Factory.Services.GetRequiredService<SqliteConnection>();
+
+        // A competing PUT inserts the tenant's row after this handler's read found
+        // nothing but before its INSERT hits the database — the exact interleaving
+        // that used to create a second row.
+        var interceptor = new InsertRaceInterceptor(async () =>
+        {
+            await using var competitor = new HermesDbContext(
+                new DbContextOptionsBuilder<HermesDbContext>().UseSqlite(connection).Options);
+            competitor.TenantWidgetSettings.Add(new TenantWidgetSettings
+            {
+                TenantId = LmKitApiFactory.TenantId,
+                IsActive = false,
+                AllowedOriginsJson = WidgetOrigins.Serialize(["https://loser.example.com"])
+            });
+            await competitor.SaveChangesAsync();
+        });
+
+        await using var racing = new HermesDbContext(new DbContextOptionsBuilder<HermesDbContext>()
+            .UseSqlite(connection)
+            .AddInterceptors(interceptor)
+            .Options);
+
+        var result = await new UpdateWidgetSettingsCommandHandler(racing).Handle(
+            new UpdateWidgetSettingsCommand
+            {
+                TenantId = LmKitApiFactory.TenantId,
+                IsActive = true,
+                AllowedOrigins = [WidgetApiFixture.DefaultOrigin]
+            },
+            CancellationToken.None);
+
+        Assert.Equal(WidgetMutationStatus.Success, result.Status);
+
+        using var scope = _fixture.Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
+        var rows = await db.TenantWidgetSettings.AsNoTracking()
+            .Where(s => s.TenantId == LmKitApiFactory.TenantId)
+            .ToListAsync();
+
+        var surviving = Assert.Single(rows);
+        Assert.True(surviving.IsActive);
+        Assert.Equal([WidgetApiFixture.DefaultOrigin], WidgetOrigins.Parse(surviving.AllowedOriginsJson));
+    }
+
+    [Fact]
+    public async Task Chat_BeyondThePerMinuteQuota_Returns429()
+    {
+        // Both budgets are pinned at 2 so the assertion holds even if the run happens
+        // to straddle a minute boundary.
+        var key = await _fixture.SeedActiveWidgetAsync(
+            allowedOrigins: [WidgetApiFixture.DefaultOrigin], requestsPerMinute: 2, requestsPerDay: 2);
+        var token = await ExchangeForTokenAsync(key, WidgetApiFixture.DefaultOrigin);
+
+        var statuses = new List<HttpStatusCode>();
+        for (var turn = 0; turn < 3; turn++)
+        {
+            var client = _fixture.CreateWidgetClient(WidgetApiFixture.DefaultOrigin);
+            using var response = await PostWithHeadersAsync(
+                client, "/api/widget/chat", new { message = "xin chào" }, widgetToken: token);
+            statuses.Add(response.StatusCode);
+        }
+
+        Assert.Equal([HttpStatusCode.OK, HttpStatusCode.OK, HttpStatusCode.TooManyRequests], statuses);
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────
+
+    /// <summary>Runs an action once, immediately before the intercepted context saves.</summary>
+    private sealed class InsertRaceInterceptor(Func<Task> beforeFirstSave) : SaveChangesInterceptor
+    {
+        private bool _fired;
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_fired)
+            {
+                _fired = true;
+                await beforeFirstSave();
+            }
+            return result;
+        }
+    }
 
     private static StringContent Json(object payload) =>
         new(JsonSerializer.Serialize(payload), System.Text.Encoding.UTF8, "application/json");
@@ -255,6 +406,9 @@ public sealed class WidgetApiFixture : IAsyncLifetime
         var db = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
         db.TenantWidgetSettings.RemoveRange(db.TenantWidgetSettings);
         db.SaveChanges();
+        // Quota counters live for the process (Redis-less hosts count locally), so a
+        // previous test's turns must not eat into this one's budget.
+        WidgetQuotaService.ResetLocalCountersForTests(LmKitApiFactory.TenantId);
     }
 
     /// <summary>Creates an ACTIVE widget settings row (optionally with a raw key) and returns the raw key (or "").</summary>
@@ -262,9 +416,12 @@ public sealed class WidgetApiFixture : IAsyncLifetime
         string[] allowedOrigins,
         string? title = null,
         string? brandColor = null,
-        string? welcome = null)
+        string? welcome = null,
+        int requestsPerMinute = 0,
+        int requestsPerDay = 0)
     {
-        return await SeedWidgetAsync(isActive: true, allowedOrigins, issueKey: true, title, brandColor, welcome);
+        return await SeedWidgetAsync(
+            isActive: true, allowedOrigins, issueKey: true, title, brandColor, welcome, requestsPerMinute, requestsPerDay);
     }
 
     public async Task<string> SeedWidgetAsync(
@@ -273,7 +430,9 @@ public sealed class WidgetApiFixture : IAsyncLifetime
         bool issueKey,
         string? title = null,
         string? brandColor = null,
-        string? welcome = null)
+        string? welcome = null,
+        int requestsPerMinute = 0,
+        int requestsPerDay = 0)
     {
         var rawKey = issueKey ? WidgetSecrets.Generate() : string.Empty;
         using var scope = Factory.Services.CreateScope();
@@ -287,8 +446,8 @@ public sealed class WidgetApiFixture : IAsyncLifetime
             WidgetTitle = title,
             BrandColor = brandColor,
             WelcomeMessage = welcome,
-            RequestsPerMinute = 0,
-            RequestsPerDay = 0
+            RequestsPerMinute = requestsPerMinute,
+            RequestsPerDay = requestsPerDay
         });
         await db.SaveChangesAsync();
         return rawKey;

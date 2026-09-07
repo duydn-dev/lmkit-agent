@@ -18,11 +18,14 @@ public class ControllerAuthorizationTests
         // Its authenticated-only endpoint (GetCurrentUser) still carries its own [Authorize].
         typeof(AuthController),
 
-        // Public embeddable widget. Only /api/widget/auth is truly anonymous (raw
-        // widget key + origin allowlist in lieu of a user session); /api/widget/chat
-        // carries its own [Authorize(AuthenticationSchemes = WidgetToken)] plus the
-        // WidgetOrigin policy and per-tenant+origin quotas. Both endpoints are
-        // rate-limited and audited; nothing else is reachable.
+        // Public embeddable widget. Two endpoints are truly anonymous:
+        // /api/widget/auth (raw widget key + origin allowlist in lieu of a user
+        // session, per-IP rate limited) and /api/widget/frame-policy, which returns
+        // only the tenant's already-public frame-ancestors for a presented key —
+        // 'none' for anything unknown — and is reached as an nginx-internal
+        // subrequest. /api/widget/chat carries its own
+        // [Authorize(AuthenticationSchemes = WidgetToken)] plus the WidgetOrigin
+        // policy and per-tenant+origin quotas. Nothing else is reachable.
         typeof(WidgetPublicController),
     };
 

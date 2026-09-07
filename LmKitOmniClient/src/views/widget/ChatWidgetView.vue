@@ -134,7 +134,7 @@ import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import { formatSafeMessage } from '@/utils/safeFormatting';
-import { sendWidgetChat, ensureWidgetToken } from '@/api/widgetClient';
+import { sendWidgetChat, ensureWidgetToken, detectHostOrigin } from '@/api/widgetClient';
 import {
   useChatStream,
   useHitlActions,
@@ -149,6 +149,23 @@ const params = new URLSearchParams(window.location.search);
 const publicKey = params.get('key');
 const isPublicMode = !!publicKey;
 
+// A CROSS-ORIGIN embed with no key is always a misconfiguration: the visitor has
+// no session here, so the authenticated flow would 401, fail to refresh and drag
+// the embedding page to our login screen. Refuse the turn and say what is missing
+// instead. Same-origin frames (internal dashboards) keep the legacy behavior.
+const isEmbedded = (() => {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true; // cross-origin parent — access to window.top throws
+  }
+})();
+const isMisconfiguredEmbed =
+  !publicKey && isEmbedded && detectHostOrigin() !== window.location.origin.toLowerCase();
+const misconfiguredEmbedMessage =
+  'Widget chưa được cấu hình: thiếu khóa widget. Thêm ?key=<WIDGET_KEY> vào URL nhúng ' +
+  '(hoặc data-widget-key="<WIDGET_KEY>" trên thẻ <script> widget.js).';
+
 const headerTitle = ref('Trợ lý AI');
 const headerSubtitle = ref('Luôn sẵn sàng');
 const brandColor = ref('#2563eb'); // blue-600
@@ -157,7 +174,7 @@ const inputMessage = ref('');
 const messages = ref<ChatMessage[]>([
     {
         role: 'assistant',
-        content: 'Xin chào! Tôi có thể giúp gì cho bạn?'
+        content: isMisconfiguredEmbed ? misconfiguredEmbedMessage : 'Xin chào! Tôi có thể giúp gì cho bạn?'
     }
 ]);
 const isGenerating = ref(false);
@@ -199,6 +216,16 @@ const formatMessage = formatSafeMessage;
 const sendMessage = async () => {
   const content = inputMessage.value.trim();
   if (!content || isGenerating.value) return;
+
+  if (isMisconfiguredEmbed) {
+    // Never start the authenticated flow from a foreign page: a 401 here would
+    // navigate the embed to the login screen.
+    messages.value.push({ role: 'user', content });
+    messages.value.push({ role: 'assistant', content: misconfiguredEmbedMessage });
+    inputMessage.value = '';
+    await scrollToBottom();
+    return;
+  }
 
   messages.value.push({ role: 'user', content: content });
   inputMessage.value = '';
