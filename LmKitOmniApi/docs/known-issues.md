@@ -7,73 +7,10 @@ delete it from this file in the same change.
 Not a backlog of ideas. Something only belongs here once someone has read the code and can
 point at the line.
 
----
-
-## 0. HIGH — the embeddable widget can never actually be framed
-
-`LmKitOmniClient/nginx.conf:39-43`
-
-```nginx
-# comment claims: "Subrequests inherit the parent's query string, so ?key= reaches the API"
-location = /internal/widget-frame-policy {
-    internal;
-    proxy_pass http://api:5000/api/widget/frame-policy$is_args$args;
-```
-
-The comment is false: an `auth_request` subrequest does **not** inherit the parent request's
-args, so `$is_args$args` expands to nothing. Measured against a running full stack:
-
-- the subrequest reaches the API as `GET /api/widget/frame-policy` with **no query string**, and
-  the API correctly answers `204` + `X-Widget-Frame-Ancestors: 'none'`;
-- the same endpoint called directly *with* the key returns the tenant's real allowlist.
-
-So the API is right and nginx drops the key. The `map` then fails closed and **every** embedded
-widget document is served with `frame-ancestors 'none'` — unframeable by any customer site. The
-fail-closed default is well designed; it is just always firing.
-
-Caught by `LmKitOmniClient/e2e-fullstack/application.fullstack.spec.ts:116`.
-
-**Fix:** capture the arg in the parent location, where variables *are* shared with the
-subrequest, and correct the comment:
-
-```nginx
-location = /widget/chat {
-    set $widget_key $arg_key;
-    auth_request /internal/widget-frame-policy;
-    …
-}
-location = /internal/widget-frame-policy {
-    internal;
-    proxy_pass http://api:5000/api/widget/frame-policy?key=$widget_key;
-    …
-}
-```
-
----
-
-## 1. `ToolSandboxService` pins its allowed roots at type-init time
-
-`LmKitOmniApi/Infrastructure/AI/Security/ToolSandboxService.cs:27-34`
-
-```csharp
-private static readonly string[] DefaultAllowedPaths = new[]
-{
-    Path.Combine(Directory.GetCurrentDirectory(), "Uploads"),
-    …
-};
-```
-
-A `static readonly` initializer captures `Directory.GetCurrentDirectory()` **once**, the first
-time the type is touched. Any later change to the process working directory silently
-invalidates every sandbox root: file paths that should resolve inside `Uploads/` no longer do,
-and the sandbox rejects legitimate paths (or accepts nothing at all).
-
-Nothing in production changes the cwd today, so this does not currently misbehave in a running
-server — but it is a latent trap, and it is why a single test that calls
-`Directory.SetCurrentDirectory` can knock over unrelated test classes.
-
-**Fix:** resolve the roots lazily per call, or anchor them to `AppContext.BaseDirectory`
-instead of the mutable cwd.
+Numbers are **stable ids, not positions**: a gap means that entry was fixed and deleted. Never
+renumber — other files link to these anchors, and renumbering is how such links go stale.
+Fixed so far: **#0** (the widget frame-ancestors CSP, fixed in `nginx.conf`) and **#1**
+(`ToolSandboxService` now resolves its roots per instance instead of at type-init).
 
 ---
 
@@ -196,8 +133,9 @@ max-concurrent-rooms cap and per-room idle timeout (each live room holds a model
 turn), and add a per-user opt-in — the dispatcher would otherwise join rooms on behalf of users
 who never consented to an agent participant.
 
-`docker-compose.prod.yml` does not currently pass `Voice__AgentTenantId` / `Voice__AgentUserId`
-through, so a compose deployment cannot configure the agent without editing the file.
+`docker-compose.prod.yml` now passes `Voice__AgentTenantId` / `Voice__AgentUserId` through as
+`VOICE_AGENT_TENANT_ID` / `VOICE_AGENT_USER_ID`, so configuring the single-user agent no longer
+requires editing the compose file. The dispatcher redesign above is still open.
 
 ---
 

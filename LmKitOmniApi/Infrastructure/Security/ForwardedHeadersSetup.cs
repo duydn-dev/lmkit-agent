@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.HttpOverrides;
 // Both namespaces define IPNetwork and the two are unrelated types. CIDR text is parsed
 // with the BCL one (it is the only one with TryParse) and then converted to the
 // ASP.NET Core one, which is what ForwardedHeadersOptions.KnownNetworks holds.
-using ProxyNetwork = Microsoft.AspNetCore.HttpOverrides.IPNetwork;
 using CidrNetwork = System.Net.IPNetwork;
 
 namespace LmKitOmniApi.Infrastructure.Security;
@@ -108,11 +107,12 @@ public static class ForwardedHeadersSetup
                 : Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor;
             options.ForwardLimit = forwardLimit;
 
-            // Inherit no trust: see the type remarks.
+            // Inherit no trust: see the type remarks. KnownIPNetworks (not the obsolete
+            // KnownNetworks) is the supported list — the old one is a shim over it.
             options.KnownProxies.Clear();
-            options.KnownNetworks.Clear();
+            options.KnownIPNetworks.Clear();
             foreach (var proxy in proxies) options.KnownProxies.Add(proxy);
-            foreach (var network in networks) options.KnownNetworks.Add(network);
+            foreach (var network in networks) options.KnownIPNetworks.Add(network);
         });
 
         return services;
@@ -177,9 +177,9 @@ public static class ForwardedHeadersSetup
         return parsed;
     }
 
-    private static List<ProxyNetwork> ParseNetworks(IReadOnlyList<string> values)
+    private static List<CidrNetwork> ParseNetworks(IReadOnlyList<string> values)
     {
-        var parsed = new List<ProxyNetwork>(values.Count);
+        var parsed = new List<CidrNetwork>(values.Count);
         foreach (var value in values)
         {
             if (string.IsNullOrWhiteSpace(value)) continue;
@@ -200,7 +200,7 @@ public static class ForwardedHeadersSetup
                     $"{SectionName}:KnownNetworks contains '{value}', which trusts EVERY address "
                     + "and would let any client spoof its client IP. List the proxy's actual subnet.");
             }
-            parsed.Add(new ProxyNetwork(network.BaseAddress, network.PrefixLength));
+            parsed.Add(network);
         }
         return parsed;
     }

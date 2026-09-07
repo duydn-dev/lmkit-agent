@@ -318,16 +318,28 @@ public abstract class DocumentsApiFactoryBase : WebApplicationFactory<Program>
     protected abstract bool DocumentToolsEnabled { get; }
     protected virtual long MaxInputBytes => 25L * 1024 * 1024;
 
-    private readonly SqliteConnection _connection = new("Data Source=:memory:");
+    /// <summary>Per-host key ring — see the note on <c>LmKitApiFactory</c>.</summary>
+    private readonly string _dataProtectionKeyPath =
+        Path.Combine(Path.GetTempPath(), $"lmkit-tests-dpkeys-{Guid.NewGuid():N}");
+
+    /// <summary>Named shared-cache in-memory db — see the note on <c>LmKitApiFactory</c>.</summary>
+    private readonly string _databaseName = $"lmkit-tests-{Guid.NewGuid():N}";
+
+    private string ConnectionString => $"Data Source={_databaseName};Mode=Memory;Cache=Shared";
+
+    private readonly SqliteConnection _connection;
     private readonly ServiceProvider _sqliteProvider = new ServiceCollection()
         .AddEntityFrameworkSqlite()
         .BuildServiceProvider();
     private readonly object _seedLock = new();
     private bool _seeded;
 
+    protected DocumentsApiFactoryBase() => _connection = new SqliteConnection(ConnectionString);
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
+        builder.UseSetting("DataProtection:KeyPath", _dataProtectionKeyPath);
         builder.ConfigureAppConfiguration((_, configuration) =>
         {
             configuration.AddInMemoryCollection(new Dictionary<string, string?>
@@ -365,7 +377,7 @@ public abstract class DocumentsApiFactoryBase : WebApplicationFactory<Program>
             _connection.Open();
             services.AddSingleton(_connection);
             services.AddDbContext<HermesDbContext>((provider, options) =>
-                options.UseSqlite(_connection)
+                options.UseSqlite(ConnectionString)
                     .UseInternalServiceProvider(_sqliteProvider)
                     .AddInterceptors(provider.GetRequiredService<AuditSaveChangesInterceptor>()));
             services.RemoveAll<IMcpProtocolClient>();
@@ -416,6 +428,9 @@ public abstract class DocumentsApiFactoryBase : WebApplicationFactory<Program>
         {
             _connection.Dispose();
             _sqliteProvider.Dispose();
+            try { Directory.Delete(_dataProtectionKeyPath, recursive: true); }
+            catch (DirectoryNotFoundException) { }
+            catch (IOException) { /* best effort cleanup */ }
         }
     }
 }

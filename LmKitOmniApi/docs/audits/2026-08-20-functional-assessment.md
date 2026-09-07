@@ -15,8 +15,8 @@
 >
 > - **#18 Embeddable chat widget (4,5)** — credential/origin contract nay đã có thật:
 >   `WidgetPublicController` với `POST /api/widget/auth` (`[AllowAnonymous]`), widget key hash
->   at rest + rotate, origin allowlist, token ngắn hạn và quota phút/ngày. Việc nhúng thật thì
->   vẫn hỏng vì cấu hình nginx — [known-issues #0](../known-issues.md).
+>   at rest + rotate, origin allowlist, token ngắn hạn và quota phút/ngày. Việc nhúng thật đã
+>   chạy được sau khi sửa `auth_request` trong `nginx.conf`, có test e2e trên stack thật.
 > - **#19 Notification / API key (4,5)** — không còn là schema kế thừa: `ApiKeysController`
 >   (`X-Api-Key`, hash SHA-256, không tự quản lý được bằng chính key đó) và
 >   `NotificationsController` + `ScheduledTaskWorker` ghi notification thật đều đang chạy.

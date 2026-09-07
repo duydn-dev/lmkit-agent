@@ -43,7 +43,7 @@ Mọi thứ trong mục này **bật sẵn** trừ khi ghi rõ. Các chức năn
 - Web search: **SearXNG self-hosted** (mặc định, không cần API key) → Brave → Tavily (đều tùy chọn, cần API key) → fallback DuckDuckGo scraping
 
 **Widget & API**
-- Widget chat nhúng công khai: widget key theo tenant (rotate, hash at rest), origin allowlist, token ngắn hạn, quota theo phút/ngày. **Hiện chưa nhúng được thật**: nginx đánh rơi `?key=` ở subrequest lấy frame-policy nên mọi trang widget đều nhận `frame-ancestors 'none'` — xem [known-issues #0](LmKitOmniApi/docs/known-issues.md)
+- Widget chat nhúng công khai: widget key theo tenant (rotate, hash at rest), origin allowlist, token ngắn hạn, quota theo phút/ngày. Frame-ancestors CSP theo tenant được kiểm bằng `auth_request` trong nginx và có test e2e trên stack thật (`application.fullstack.spec.ts`): key hợp lệ → origin của tenant, key sai/thiếu → `'none'`
 - API key cho tích hợp machine-to-machine (header `X-Api-Key`, lưu dưới dạng hash SHA-256)
 - Notification in-app (chuông thông báo cho kết quả tác vụ định kỳ)
 

@@ -262,7 +262,43 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
     public const string Email = "integration@example.test";
     public const string Password = "Integration-2026!";
 
-    private readonly SqliteConnection _connection = new("Data Source=:memory:");
+    /// <summary>
+    /// Every host gets its OWN data-protection key ring. Program.cs reads
+    /// <c>DataProtection:KeyPath</c> in a top-level statement and defaults it to
+    /// <c>&lt;content root&gt;/App_Data/DataProtectionKeys</c> — one directory shared by every
+    /// factory in the process. Under real parallelism several hosts create and read that key
+    /// ring at the same time, and a host that reads a half-written key XML fails its first
+    /// protected operation, which surfaces as a 500 on login and takes the whole fixture with
+    /// it. Reproduced at <c>xUnit.MaxParallelThreads=32</c>.
+    ///
+    /// It has to be <see cref="IWebHostBuilder.UseSetting"/>, not <see cref="ConfigurationOverrides"/>:
+    /// UseSetting writes HOST configuration, which the entry point's top-level statements can
+    /// see, while ConfigureAppConfiguration is merged at builder.Build() — too late for
+    /// anything Program.cs already read. Same reason ConfigurationOverrides silently does
+    /// nothing for settings consumed up there.
+    /// </summary>
+    private readonly string _dataProtectionKeyPath =
+        Path.Combine(Path.GetTempPath(), $"lmkit-tests-dpkeys-{Guid.NewGuid():N}");
+
+    /// <summary>
+    /// A NAMED shared-cache in-memory database, not a single shared <see cref="SqliteConnection"/>
+    /// handed to <c>UseSqlite</c>. EF constructs a <c>SqliteRelationalConnection</c> per DbContext
+    /// and its constructor calls <c>SqliteConnection.CreateFunction</c>, which writes to a plain
+    /// non-thread-safe <c>Dictionary</c> on the connection object. Two scoped DbContexts built at
+    /// the same time — which any test issuing concurrent HTTP calls does — corrupt it:
+    /// "Operations that change non-concurrent collections must have exclusive access", thrown from
+    /// DI resolution and therefore taking down whole fixtures. Reproduced at
+    /// <c>xUnit.MaxParallelThreads=32</c>. With a connection string each DbContext gets its own
+    /// connection; <see cref="_connection"/> stays open only to keep the in-memory database alive
+    /// for the lifetime of the host.
+    /// </summary>
+    private readonly string _databaseName = $"lmkit-tests-{Guid.NewGuid():N}";
+
+    private string ConnectionString => $"Data Source={_databaseName};Mode=Memory;Cache=Shared";
+
+    private readonly SqliteConnection _connection;
+
+    public LmKitApiFactory() => _connection = new SqliteConnection(ConnectionString);
     private readonly ServiceProvider _sqliteProvider = new ServiceCollection()
         .AddEntityFrameworkSqlite()
         .BuildServiceProvider();
@@ -272,6 +308,7 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
+        builder.UseSetting("DataProtection:KeyPath", _dataProtectionKeyPath);
         builder.ConfigureAppConfiguration((_, configuration) =>
         {
             configuration.AddInMemoryCollection(new Dictionary<string, string?>
@@ -316,7 +353,7 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
             _connection.Open();
             services.AddSingleton(_connection);
             services.AddDbContext<HermesDbContext>((provider, options) =>
-                options.UseSqlite(_connection)
+                options.UseSqlite(ConnectionString)
                     .UseInternalServiceProvider(_sqliteProvider)
                     .AddInterceptors(provider.GetRequiredService<AuditSaveChangesInterceptor>()));
             services.RemoveAll<IMcpProtocolClient>();
@@ -445,6 +482,9 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
         {
             _connection.Dispose();
             _sqliteProvider.Dispose();
+            try { Directory.Delete(_dataProtectionKeyPath, recursive: true); }
+            catch (DirectoryNotFoundException) { }
+            catch (IOException) { /* best effort cleanup */ }
         }
     }
 }
