@@ -182,7 +182,7 @@
                   <pre v-if="msg.hitlDetails" class="text-xs text-gray-800 bg-white border border-orange-200 rounded-lg p-3 max-h-48 overflow-auto whitespace-pre-wrap break-words">{{ msg.hitlDetails }}</pre>
                 </div>
                 <div v-if="msg.hitlError" class="text-sm text-red-700 mb-3" role="alert">{{ msg.hitlError }}</div>
-                <div class="flex gap-2" v-if="!msg.hitlResolved">
+                <div class="flex gap-2" v-if="!msg.hitlResolved && !msg.hitlClosed">
                   <button @click="approveTask(msg)" :disabled="msg.hitlBusy" class="flex-1 min-h-11 px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
                     Phê duyệt
                   </button>
@@ -190,8 +190,11 @@
                     Từ chối
                   </button>
                 </div>
-                <div v-else class="text-sm font-medium" :class="msg.hitlResolved === 'Approved' ? 'text-green-600' : 'text-red-600'">
+                <div v-else-if="msg.hitlResolved" class="text-sm font-medium" :class="msg.hitlResolved === 'Approved' ? 'text-green-600' : 'text-red-600'">
                   Đã {{ msg.hitlResolved === 'Approved' ? 'Phê duyệt' : 'Từ chối' }} thao tác này.
+                </div>
+                <div v-else class="text-sm font-medium text-gray-600">
+                  Yêu cầu này đã đóng — xem lý do ở trên.
                 </div>
               </div>
 

@@ -72,7 +72,7 @@
                   Agent cần sự cho phép của bạn để tiếp tục.
                 </div>
                 <div v-if="msg.hitlError" class="text-xs text-red-700 mb-2" role="alert">{{ msg.hitlError }}</div>
-                <div class="flex gap-2" v-if="!msg.hitlResolved">
+                <div class="flex gap-2" v-if="!msg.hitlResolved && !msg.hitlClosed">
                   <button @click="approveTask(msg)" :disabled="msg.hitlBusy" class="flex-1 min-h-11 px-2 py-1.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-xs font-medium rounded transition-colors">
                     Phê duyệt
                   </button>
@@ -80,8 +80,11 @@
                     Từ chối
                   </button>
                 </div>
-                <div v-else class="text-xs font-medium" :class="msg.hitlResolved === 'Approved' ? 'text-green-600' : 'text-red-600'">
+                <div v-else-if="msg.hitlResolved" class="text-xs font-medium" :class="msg.hitlResolved === 'Approved' ? 'text-green-600' : 'text-red-600'">
                   Đã {{ msg.hitlResolved === 'Approved' ? 'Phê duyệt' : 'Từ chối' }}.
+                </div>
+                <div v-else class="text-xs font-medium text-gray-600">
+                  Yêu cầu này đã đóng.
                 </div>
               </div>
             </div>

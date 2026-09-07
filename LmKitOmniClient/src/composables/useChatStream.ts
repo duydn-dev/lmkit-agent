@@ -41,6 +41,13 @@ export interface ChatMessage {
   hitlResolved?: string;
   hitlBusy?: boolean;
   hitlError?: string;
+  /**
+   * The approval can no longer be answered — expired, or decided in another tab or on
+   * the Approvals page. Distinct from `hitlResolved`, which names a decision THIS user
+   * made here; a card that is closed without being resolved shows what happened and
+   * offers no buttons, rather than inviting a click that can only fail again.
+   */
+  hitlClosed?: boolean;
 }
 
 /**
@@ -360,8 +367,10 @@ export interface HitlActionOptions {
  * A failed decision deliberately leaves `hitlResolved` unset even when the approval
  * is settled: the chat surfaces render that field as either "Đã Phê duyệt" or "Đã
  * Từ chối", and an approval that expired or was decided in another tab is neither.
- * The card keeps its buttons and states what happened instead of claiming a
- * decision the user did not make.
+ * It sets `hitlClosed` instead, so the card states what happened and retires its
+ * buttons without claiming a decision the user did not make. Retrying a settled
+ * approval can only fail the same way, so leaving the buttons live would be a
+ * standing invitation to a dead end.
  */
 export function useHitlActions(options: HitlActionOptions) {
   const { messages, inputMessage, sendMessage, approvedSystemMessage } = options;
@@ -374,6 +383,7 @@ export function useHitlActions(options: HitlActionOptions) {
       const decision = await submitApprovalDecision(msg.hitlTaskId, 'approve');
       if (!decision.ok) {
         msg.hitlError = decision.error;
+        msg.hitlClosed = decision.settled;
         return;
       }
       msg.hitlResolved = 'Approved';
@@ -396,6 +406,7 @@ export function useHitlActions(options: HitlActionOptions) {
       const decision = await submitApprovalDecision(msg.hitlTaskId, 'reject');
       if (!decision.ok) {
         msg.hitlError = decision.error;
+        msg.hitlClosed = decision.settled;
         return;
       }
       msg.hitlResolved = 'Rejected';
