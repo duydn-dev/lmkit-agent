@@ -21,11 +21,13 @@ namespace LmKitOmniApi.Infrastructure.Security;
 ///   <item>Success → a principal carrying the same authoritative claims the JWT flow
 ///   mints (<see cref="ClaimTypes.NameIdentifier"/> + <c>TenantId</c> + <c>Role</c>)
 ///   plus the <c>auth_method=api_key</c> marker that lets endpoints refuse key
-///   self-management from a key-authenticated caller. The role claim type is passed
-///   explicitly to <see cref="ClaimsIdentity"/> because the JWT options'
-///   <c>RoleClaimType = "Role"</c> mapping is per-scheme; the name claim type is
-///   <see cref="ClaimTypes.NameIdentifier"/> so <c>Identity.Name</c> stays the stable
-///   user id the rate-limiter partitions on.</item>
+///   self-management from a key-authenticated caller, plus <c>api_key_id</c>
+///   identifying WHICH key was presented. The role claim type is passed explicitly to
+///   <see cref="ClaimsIdentity"/> because the JWT options' <c>RoleClaimType = "Role"</c>
+///   mapping is per-scheme; the name claim type is <see cref="ClaimTypes.NameIdentifier"/>
+///   so <c>Identity.Name</c> stays the stable user id. Note that the rate limiter keys
+///   on <c>api_key_id</c>, NOT on <c>Identity.Name</c> — see
+///   <see cref="RateLimitPartitionKey"/>.</item>
 /// </list>
 /// The raw key is never persisted and never logged.
 /// </summary>
@@ -35,6 +37,17 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
     public const string HeaderName = "X-Api-Key";
     public const string AuthMethodClaimType = "auth_method";
     public const string AuthMethodClaimValue = "api_key";
+
+    /// <summary>
+    /// Identifies WHICH key authenticated the request — the surrogate
+    /// <c>TenantApiKey.Id</c>, never the raw key and never its hash. Purely
+    /// server-side: it is attached to the per-request principal the handler builds
+    /// and is never signed into a token or returned to the caller.
+    /// <see cref="RateLimitPartitionKey"/> partitions on it so two keys owned by the
+    /// same user get two independent rate-limit budgets.
+    /// </summary>
+    public const string ApiKeyIdClaimType = "api_key_id";
+
     private const string RoleClaimType = "Role";
 
     public ApiKeyAuthenticationHandler(
@@ -118,7 +131,10 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
             new Claim(ClaimTypes.NameIdentifier, key.UserId.ToString()),
             new Claim("TenantId", key.TenantId.ToString()),
             new Claim(RoleClaimType, key.Role),
-            new Claim(AuthMethodClaimType, AuthMethodClaimValue)
+            new Claim(AuthMethodClaimType, AuthMethodClaimValue),
+            // Per-KEY rate-limit identity. Without it every key a user owns shared one
+            // budget, so one noisy integration throttled all the others.
+            new Claim(ApiKeyIdClaimType, key.Id.ToString())
         };
         var identity = new ClaimsIdentity(
             claims,
