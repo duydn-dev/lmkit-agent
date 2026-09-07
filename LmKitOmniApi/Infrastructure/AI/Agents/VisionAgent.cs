@@ -37,20 +37,6 @@ public class VisionAgent : ISpecializedAgent
         _logger = logger;
     }
 
-    public Task<double> EvaluateConfidenceAsync(string query, CancellationToken ct = default)
-    {
-        var lower = query.ToLowerInvariant();
-        // High confidence if query mentions image file extensions
-        if (lower.Contains(".jpg") || lower.Contains(".png") || lower.Contains(".jpeg") || lower.Contains(".bmp") || lower.Contains(".webp"))
-            return Task.FromResult(0.95);
-
-        var visionKeywords = new[] { "ảnh", "image", "hình", "photo", "ocr", "nhận dạng", "picture", "scan",
-            "chữ trong ảnh", "đọc ảnh", "xem ảnh", "mô tả ảnh", "describe image" };
-        var matchCount = visionKeywords.Count(k => lower.Contains(k));
-        var confidence = Math.Min(matchCount * 0.3, 0.9);
-        return Task.FromResult(confidence);
-    }
-
     public async Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string userRole, string query, CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();

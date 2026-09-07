@@ -32,16 +32,6 @@ public class ResearchAgent : ISpecializedAgent
         _logger = logger;
     }
 
-    public Task<double> EvaluateConfidenceAsync(string query, CancellationToken ct = default)
-    {
-        var lower = query.ToLowerInvariant();
-        var researchKeywords = new[] { "tìm", "search", "tra cứu", "kiến thức", "knowledge", "tài liệu", "document",
-            "thông tin", "research", "nguồn", "reference", "dữ liệu", "data", "hỏi", "ask" };
-        var matchCount = researchKeywords.Count(k => lower.Contains(k));
-        var confidence = Math.Min(matchCount * 0.25, 0.9);
-        return Task.FromResult(confidence);
-    }
-
     public async Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string userRole, string query, CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();

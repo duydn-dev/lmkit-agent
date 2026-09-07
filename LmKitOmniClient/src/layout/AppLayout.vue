@@ -215,6 +215,7 @@ const navGroups: NavGroup[] = [
       { to: '/memory', icon: 'pi pi-history', label: 'Bộ nhớ trợ lý' },
       { to: '/settings/custom-instructions', icon: 'pi pi-user-edit', label: 'Hướng dẫn tùy chỉnh' },
       { to: '/agents', icon: 'pi pi-microchip-ai', label: 'Agents' },
+      { to: '/agents/content-creation', icon: 'pi pi-pen-to-square', label: 'Tạo nội dung' },
       { to: '/agent-mode', icon: 'pi pi-bolt', label: 'Agent tự hành' },
       { to: '/schedules', icon: 'pi pi-calendar-clock', label: 'Lịch tác vụ' },
       { to: '/research', icon: 'pi pi-compass', label: 'Nghiên cứu' }

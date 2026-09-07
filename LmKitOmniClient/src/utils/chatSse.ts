@@ -60,8 +60,13 @@ function parseDataLine(line: string): ChatStreamEvent | null {
   // (orchestrator pipeline status); the consumer accumulates it into a collapsible panel.
   if (value.startsWith('[REASONING]:'))
     return { type: 'reasoning', value: value.slice('[REASONING]:'.length) };
+  // Source citations: one pipe-separated URL list per message. Trimmed like
+  // [THINKING] — and unlike [REASONING], whose fragments need their whitespace —
+  // because the orchestrator terminates this marker with a REAL newline (its own
+  // line-anchored stripper depends on that), so the last URL would otherwise
+  // reach the reference drawer with the terminator still glued to it.
   if (value.startsWith('[WEB_SEARCH]:'))
-    return { type: 'web-search', value: value.slice('[WEB_SEARCH]:'.length) };
+    return { type: 'web-search', value: value.slice('[WEB_SEARCH]:'.length).trim() };
   if (value.startsWith('[HITL_APPROVAL_REQUIRED:') && value.endsWith(']'))
     return { type: 'approval', value: value.slice('[HITL_APPROVAL_REQUIRED:'.length, -1).trim() };
   if (value.startsWith('[RESEARCH_SAVED:') && value.endsWith(']'))

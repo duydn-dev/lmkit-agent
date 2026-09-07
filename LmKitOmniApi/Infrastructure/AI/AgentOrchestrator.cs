@@ -113,6 +113,13 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// <summary>Upper bound on discovered MCP tool definitions exposed to the ReAct agent per request.</summary>
     private const int MaxDiscoveredMcpToolCount = 12;
 
+    /// <summary>
+    /// Upper bound on source URLs carried by the single <c>[WEB_SEARCH]:</c> marker.
+    /// The client renders them as a "Read N web pages" chip, and the marker is
+    /// persisted with the message, so this caps both the row size and the chip.
+    /// </summary>
+    private const int MaxWebReferenceCount = 12;
+
     // C3 Fix: Map ReAct action names → tool permission names for correct RBAC checks.
     // Internal (not private) because AgentActionDispatcher applies the same mapping
     // when enforcing a custom agent's AllowedTools whitelist — one source of truth.
@@ -340,6 +347,35 @@ public class AgentOrchestrator : IAgentOrchestrator
             }) + "]";
         }
 
+        // Source citations for the answer below: the URLs the search_web tool
+        // actually returned this turn, pipe-joined into ONE marker. This is the
+        // producer for the client's "Read N web pages" chip and reference drawer
+        // (chatSse 'web-search' → useChatStream.onWebSearch → ChatView/ShareView),
+        // which until now consumed a channel nobody wrote to.
+        //
+        // ONE marker, not one per search: the client's persisted-history parser
+        // matches [WEB_SEARCH] non-globally (one `webUrls` list per message), so a
+        // second marker would survive its strip and render as literal text.
+        //
+        // CHAT ONLY (stepSink is null), mirroring the [STEP:] block above in
+        // reverse. An agent run already persists every search hit verbatim in
+        // AgentRunStep.Observation and AgentRunsView deliberately ignores the
+        // web-search event, so a marker there would add nothing — and AgentRun's
+        // own stripper (AgentRunMarkers) cannot remove a newline-terminated marker,
+        // so it would be left sitting in the stored run result.
+        //
+        // The trailing "\n" is a REAL newline and load-bearing, not cosmetic. Both
+        // strippers — StreamChatCommandHandler.WebSearchMarker on the server and
+        // parseStoredAssistantContent on the client — are line-anchored
+        // (\[WEB_SEARCH\]:[^\n\r]+[\n\r]*). Emitting "\\n" from a non-verbatim
+        // literal would put backslash+'n' on the wire instead, and [^\n\r]+ would
+        // then run straight through the answer and delete it. ProtocolMarkerStreamTests
+        // pins exactly that failure mode.
+        if (stepSink is null && nativeRun.WebReferences.Count > 0)
+        {
+            yield return FormatWebSearchMarker(nativeRun.WebReferences);
+        }
+
         string fullContext = string.IsNullOrWhiteSpace(nativeRun.Content)
             ? string.Empty
             : $"[LM-Kit ReAct result]:\n{nativeRun.Content}";
@@ -551,6 +587,14 @@ public class AgentOrchestrator : IAgentOrchestrator
         // string observation (and its sandbox output cap), and are yielded as
         // [FILE:] markers by the caller after this method returns.
         var producedFiles = new List<ProducedFile>();
+        // Per-request sink for the source URLs search_web returned — the same
+        // side-channel pattern as producedFiles, for the same reason: the ReAct
+        // pass is a blocking call that can only hand back one observation string,
+        // and the caller needs the citations to emit a [WEB_SEARCH] marker after
+        // it returns. Insertion-ordered and de-duplicated across every search this
+        // turn made, because the client shows one reference list per message.
+        var webReferences = new List<string>();
+        var seenWebReferences = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         async Task<string> InvokeActionAsync(string action, string toolQuery, CancellationToken toolCt)
         {
@@ -563,6 +607,15 @@ public class AgentOrchestrator : IAgentOrchestrator
                 && Guid.TryParse(output[approvalPrefix.Length..^1], out var approvalId))
             {
                 pendingApprovalId = approvalId;
+            }
+
+            if (string.Equals(action, "WEB_SEARCH", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var url in ExtractWebReferences(output))
+                {
+                    if (webReferences.Count >= MaxWebReferenceCount) break;
+                    if (seenWebReferences.Add(url)) webReferences.Add(url);
+                }
             }
 
             // Agent-run step capture: one record per tool call at the single seam all
@@ -637,8 +690,85 @@ public class AgentOrchestrator : IAgentOrchestrator
             result.Content ?? string.Empty,
             result.InferenceCount,
             pendingApprovalId,
-            producedFiles);
+            producedFiles,
+            webReferences);
     }
+
+    /// <summary>
+    /// Pulls the source URLs out of ONE <c>search_web</c> observation, in hit order.
+    ///
+    /// <para>
+    /// The observation is <c>WebSearchOutcome.ToToolOutput()</c>: a JSON array of
+    /// <c>{url,title,snippet}</c> on success, but a bracketed human notice for every
+    /// failure mode ("[Web search is temporarily unavailable.]", "[Tìm kiếm web đang
+    /// tắt cho phiên này]", a whitelist refusal, a resilience error). Both start with
+    /// '[', so this parses defensively and treats ANY shape it does not recognise as
+    /// "no citations" — a missing chip, never a broken answer.
+    /// </para>
+    /// <para>
+    /// Only absolute http/https URLs survive, mirroring the client's
+    /// <c>isSafeWebUrl</c> allowlist so a hostile search result cannot smuggle a
+    /// <c>javascript:</c> or <c>data:</c> link into a rendered anchor, and anything
+    /// carrying the marker's own framing characters ('|', CR, LF) is dropped rather
+    /// than allowed to corrupt the line.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<string> ExtractWebReferences(string observation)
+    {
+        if (string.IsNullOrWhiteSpace(observation)) return [];
+
+        System.Text.Json.JsonDocument document;
+        try
+        {
+            document = System.Text.Json.JsonDocument.Parse(observation);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return [];
+        }
+
+        using (document)
+        {
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array)
+                return [];
+
+            var urls = new List<string>();
+            foreach (var hit in document.RootElement.EnumerateArray())
+            {
+                if (hit.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                if (!hit.TryGetProperty("url", out var urlElement)) continue;
+                if (urlElement.ValueKind != System.Text.Json.JsonValueKind.String) continue;
+
+                var url = urlElement.GetString();
+                if (string.IsNullOrWhiteSpace(url)) continue;
+                url = url.Trim();
+
+                if (url.AsSpan().IndexOfAny('|', '\n', '\r') >= 0) continue;
+                if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed)) continue;
+                if (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps) continue;
+
+                urls.Add(url);
+            }
+
+            return urls;
+        }
+    }
+
+    /// <summary>
+    /// Builds the single <c>[WEB_SEARCH]</c> marker for a turn. Lives here, and is
+    /// called by the one place that emits it, so the marker's contract is testable
+    /// without standing up the whole orchestrator.
+    ///
+    /// <para>
+    /// THE TRAILING NEWLINE IS PART OF THE PROTOCOL. Every stripper on both sides is
+    /// line-anchored (<c>\[WEB_SEARCH\]:[^\n\r]+[\n\r]*</c>); a marker that ends in
+    /// the two-character escape instead of a real newline makes <c>[^\n\r]+</c> run
+    /// through the answer that follows and delete it. Keep this a plain
+    /// <c>"\n"</c> — see ProtocolMarkerStreamTests.
+    /// </para>
+    /// </summary>
+    internal static string FormatWebSearchMarker(IReadOnlyList<string> urls) =>
+        "[WEB_SEARCH]:" + string.Join('|', urls) + "\n";
 
     private async Task<IReadOnlyList<ITool>> CreateNativeActionToolsAsync(
         Guid tenantId,
@@ -875,7 +1005,11 @@ public class AgentOrchestrator : IAgentOrchestrator
     }
 
     private sealed record NativeReActResult(
-        string Content, int InferenceCount, Guid? PendingApprovalId, IReadOnlyList<ProducedFile> ProducedFiles);
+        string Content,
+        int InferenceCount,
+        Guid? PendingApprovalId,
+        IReadOnlyList<ProducedFile> ProducedFiles,
+        IReadOnlyList<string> WebReferences);
 
     /// <summary>
     /// Execute action with RESILIENCE wrapping (retry + circuit breaker).

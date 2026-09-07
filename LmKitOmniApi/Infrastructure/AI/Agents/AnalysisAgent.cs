@@ -28,16 +28,6 @@ public class AnalysisAgent : ISpecializedAgent
         _logger = logger;
     }
 
-    public Task<double> EvaluateConfidenceAsync(string query, CancellationToken ct = default)
-    {
-        var lower = query.ToLowerInvariant();
-        var analysisKeywords = new[] { "phân tích", "analyze", "sentiment", "cảm xúc", "thực thể", "entity",
-            "pii", "nhận dạng", "classify", "phân loại", "đánh giá", "evaluate", "review" };
-        var matchCount = analysisKeywords.Count(k => lower.Contains(k));
-        var confidence = Math.Min(matchCount * 0.3, 0.9);
-        return Task.FromResult(confidence);
-    }
-
     public async Task<AgentExecutionResult> ExecuteAsync(Guid tenantId, Guid? userId, string userRole, string query, CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();
