@@ -607,7 +607,23 @@ public class AgentOrchestrator : IAgentOrchestrator
             .WithMaxIterations(MaxReActIterations)
             .Build();
 
-        using var executor = new AgentExecutor();
+        // The parameterless AgentExecutor defers creating its conversation until Execute(), and
+        // MaximumCompletionTokens THROWS until one exists:
+        //   InvalidOperationException: Conversation has not been initialized.
+        //   Call ExecuteAsync first or provide a conversation in the constructor.
+        // So this line faulted every single ReAct pass, the controller caught it after the SSE
+        // headers were already sent, and every chat request in the product answered
+        // "[ERROR]: Unable to generate a response." — from the very first message.
+        //
+        // Nothing caught it because every test fakes the model boundary; only a run against real
+        // weights reaches this line. LiveChatSecondTurnTests is that run.
+        //
+        // Supplying the conversation up front is the alternative the exception itself names. It
+        // is created empty, exactly like the one Execute() would have built, so the ReAct pass
+        // still starts from the query alone and only the token cap changes — from silently
+        // unapplied to applied.
+        using var executorConversation = new MultiTurnConversation(model);
+        using var executor = new AgentExecutor(executorConversation);
         executor.MaximumCompletionTokens = DefaultMaximumCompletionTokens;
         var result = executor.Execute(agent, query, ct);
 
