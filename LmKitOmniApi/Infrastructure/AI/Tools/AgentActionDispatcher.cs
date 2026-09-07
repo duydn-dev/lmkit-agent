@@ -37,6 +37,32 @@ public sealed class AgentActionDispatcher
     /// <summary>Character cap on content injected into the summarization prompt.</summary>
     private const int SummarizeContextMaxChars = 3000;
 
+    /// <summary>
+    /// What this dispatcher says if a <c>COMPUTER_USE</c> approval ever reaches it.
+    ///
+    /// <para>It is a human-in-the-loop MARKER, not a tool: the click / type / navigate it
+    /// describes is executed by the computer-use loop inside its own browser container,
+    /// against an observation only that loop holds. There is nothing to replay here.</para>
+    ///
+    /// <para>It THROWS rather than returning this text, and that is the whole point.
+    /// <c>ApproveTaskCommandHandler</c> records whatever the dispatcher RETURNS as a
+    /// successful execution — so the <c>default:</c> arm's "Unknown action: COMPUTER_USE"
+    /// would have been stored as a completed tool call that never happened. A throw lands
+    /// in that handler's catch, the row becomes <c>Failed</c>, and the caller sees a
+    /// failure, which is the truth.</para>
+    ///
+    /// <para>Today nothing reaches this case: no role grants a <c>COMPUTER_USE</c> tool
+    /// permission so the orchestrator's RBAC re-check refuses first, and the approve
+    /// handler now short-circuits computer-use rows into a decision record before ever
+    /// calling the orchestrator. It exists so that adding the permission later — or a new
+    /// approval path forgetting the short-circuit — cannot quietly turn into a fake
+    /// success.</para>
+    /// </summary>
+    public const string ComputerUseNotDispatchable =
+        "Hành động computer-use không thể thực thi qua bộ điều phối công cụ — "
+        + "hãy phê duyệt qua /api/agent/computer-use/approvals/{id}/approve "
+        + "hoặc /api/taskapproval/{id}/approve, nơi vòng lặp computer-use đang chờ.";
+
     // H6 Fix: Regex patterns for robust file path extraction
     private static readonly Regex ImagePathRegex = new(
         @"(?:^|\s)(?:""([^""]+\.(jpg|jpeg|png|bmp|webp))""|([^""\s]+\.(jpg|jpeg|png|bmp|webp)))",
@@ -188,6 +214,10 @@ public sealed class AgentActionDispatcher
                 return await ExecuteRedactOfficeAsync(tenantId, userId, query, fileSink, ct);
             case "VALIDATE_PDFA":
                 return await ExecuteValidatePdfAAsync(tenantId, userId, query, ct);
+
+            // ── Computer-use: a HITL marker, deliberately NOT executable from here ──
+            case LmKitOmniApi.Domain.Entities.TaskApproval.ComputerUseActionName:
+                throw new InvalidOperationException(ComputerUseNotDispatchable);
 
             default:
                 return $"Unknown action: {action}";

@@ -16,6 +16,25 @@ public sealed class TaskApproval
     public const string ExpiredStatus = "Expired";
 
     /// <summary>
+    /// Terminal <see cref="Status"/> for an approval whose REQUESTER went away before a
+    /// human answered — today only the computer-use gate, whose run can be cancelled
+    /// mid-wait. Already part of the gate's denied-status vocabulary, so nothing has to
+    /// learn a new word to read it as "not approved".
+    /// </summary>
+    public const string CancelledStatus = "Cancelled";
+
+    /// <summary>
+    /// The <see cref="ActionName"/> <c>ComputerUseApprovalGate</c> writes. It is a
+    /// human-in-the-loop MARKER, not a dispatchable tool: the click / type / navigate it
+    /// describes is performed by the computer-use loop inside its own browser container,
+    /// against an observation only that loop holds. Named on the entity because four
+    /// layers compare against it (the gate, the dedicated resolve handler, the generic
+    /// approve handler and the tool dispatcher) and a typo in any one of them silently
+    /// re-opens the "approve does nothing useful" hole.
+    /// </summary>
+    public const string ComputerUseActionName = "COMPUTER_USE";
+
+    /// <summary>
     /// Fallback lifetime, in hours, for an approval created without consulting
     /// <c>ApprovalExpiry:TimeToLiveHours</c> — it backs the <see cref="ExpiresAtUtc"/>
     /// initializer below, so a creation site that forgets the option still produces a
@@ -43,6 +62,33 @@ public sealed class TaskApproval
     public string ActionName { get; set; } = string.Empty;
 
     public string ParametersJson { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Snapshot of the NARROWING half of the requesting turn's
+    /// <c>AgentRequestOptions</c> — its tool whitelist, its RAG document scope and its
+    /// web-search switch — serialized by <c>ApprovalScopeSnapshot</c>. Null means "no
+    /// snapshot": either the turn was genuinely unscoped, or the row predates this
+    /// column, and in both cases the approval falls back to walking
+    /// approval → session → bound custom agent exactly as before.
+    ///
+    /// <para><b>Why the row and not the session.</b> The scope used to be recoverable
+    /// only through that walk, and deleting a custom agent NULLs every session's binding
+    /// to it (<c>ChatSession.CustomAgentId</c> is <c>DeleteBehavior.SetNull</c>), so a
+    /// pending approval from such a session executed with NO narrowing at all — strictly
+    /// more authority than the turn that requested it. The snapshot survives the delete.</para>
+    ///
+    /// <para><b>Deliberately NOT encrypted</b>, unlike <see cref="ParametersJson"/>. That
+    /// column holds user/model CONTENT — a SQL statement, a file path, a prompt — which is
+    /// exactly what must not sit in the clear. This one holds authorization STRUCTURE: tool
+    /// names from a fixed vocabulary, document ids, and a boolean, every one of which
+    /// already lives unencrypted one join away in <c>custom_agents.AllowedToolsCsv</c> /
+    /// <c>KnowledgeDocumentIdsCsv</c>. Encrypting it would protect nothing new and would
+    /// make a SECURITY decision depend on the data-protection keyring: a rotated key turns
+    /// every snapshot unreadable, and an unreadable snapshot has to fail closed, so a
+    /// keyring hiccup would deny-all every pending approval in the system. Plaintext keeps
+    /// the fail-closed branch reachable only by genuine corruption.</para>
+    /// </summary>
+    public string? RequestOptionsJson { get; set; }
 
     [MaxLength(32)]
     public string Status { get; set; } = "Pending";
