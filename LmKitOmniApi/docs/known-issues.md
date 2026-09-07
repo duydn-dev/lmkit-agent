@@ -68,6 +68,22 @@ What remains open:
 
 ---
 
+## 9. The default chat model is not shipped and its filename looks wrong
+
+`LmKitOmniApi/appsettings.json:49,60`
+
+`AiModels:DefaultChat = "bonsai"` resolves to `AIModels/bonsai/Bonsai-27B-Q1_0.gguf`.
+`*AIModels/` is gitignored (`.gitignore:89`) and there is no download script, so **a fresh
+checkout has no chat model** and `/health/ready` reports Unhealthy until one is placed there.
+That is intended — the previous behaviour reported healthy and failed on the first user
+message.
+
+Separately, `Q1_0` is not a llama.cpp quantization tag (it ships `Q2_K`, `IQ1_S`, `IQ1_M`, …),
+so this exact filename most likely never existed. Picking the shipped default is a product
+decision, so it is recorded rather than changed.
+
+---
+
 ## 11. The opt-in live model tests are a probe, not a gate
 
 `LmKitOmniApi.Tests/ChatConversationFactoryLiveTests.cs`,
@@ -95,17 +111,3 @@ guarded deterministically elsewhere and those guards are the real gate:
   stable.
 
 ---
-## 9. The default chat model is not shipped and its filename looks wrong
-
-`LmKitOmniApi/appsettings.json:49,60`
-
-`AiModels:DefaultChat = "bonsai"` resolves to `AIModels/bonsai/Bonsai-27B-Q1_0.gguf`.
-`*AIModels/` is gitignored (`.gitignore:89`) and there is no download script, so **a fresh
-checkout has no chat model** and `/health/ready` reports Unhealthy until one is placed there.
-That is intended — the previous behaviour reported healthy and failed on the first user
-message.
-
-Separately, `Q1_0` is not a llama.cpp quantization tag (it ships `Q2_K`, `IQ1_S`, `IQ1_M`, …),
-so this exact filename most likely never existed. Picking the shipped default is a product
-decision, so it is recorded rather than changed.
-
