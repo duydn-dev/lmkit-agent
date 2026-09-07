@@ -142,19 +142,66 @@ public sealed class StreamChatCommandHandlerTests : IDisposable
         // The model history carries the trimmed window, and the summary is injected as
         // USER context (the handler maps role "system" to AuthorRole.User).
         //
-        // Note the shape: LM-Kit's ChatHistory MERGES consecutive same-role turns with
-        // a newline, so the injected summary is glued onto the user turn that follows
-        // it rather than standing as its own block — the model receives ONE user turn
-        // containing "<summary>\n<message>", not two. Pinned here because it is not
-        // obvious from the handler's AddMessage loop.
+        // AuthorRole.System is NOT an option here and this shape is deliberate: LM-Kit
+        // only renders MultiTurnConversation.SystemPrompt when the conversation is
+        // constructed on an EMPTY history, and constructing on a non-empty one instead
+        // ADOPTS a leading System message as the SystemPrompt. AgentOrchestrator builds
+        // its conversation from this history and then assigns chat.SystemPrompt, so a
+        // System message here would be adopted and immediately overwritten — the
+        // summary would vanish.
+        //
+        // The consequence of the User role: LM-Kit's ChatHistory MERGES consecutive
+        // same-role turns with a newline, so the injected summary is glued onto the
+        // user turn that follows it rather than standing as its own block — the model
+        // receives ONE user turn containing "<summary>\n<end marker>\n<message>", not
+        // two. The end marker is the handler's doing and is the reason the boundary is
+        // still legible after the merge. Pinned here because none of it is obvious from
+        // the handler's AddMessage loop.
         var history = _orchestrator.LastHistoryRoles!;
         Assert.Equal(
-            [(AuthorRole.User, "Tóm tắt: đã nói về X.\ncâu 2"), (AuthorRole.Assistant, "đáp 2")],
+            [(AuthorRole.User,
+                "Tóm tắt: đã nói về X.\n[Hết phần tóm tắt — nội dung bên dưới là tin nhắn của người dùng]\ncâu 2"),
+             (AuthorRole.Assistant, "đáp 2")],
             history);
 
         using var verify = NewContext();
         Assert.Equal("Tóm tắt: đã nói về X.",
             verify.ChatSessions.AsNoTracking().Single(s => s.Id == _sessionId).Summary);
+    }
+
+    /// <summary>
+    /// Guards the non-obvious constraint behind the summary's role. Replaying it as
+    /// <see cref="AuthorRole.System"/> looks like the tidier fix — it would stop the
+    /// summary being merged into the following user turn — but LM-Kit adopts a leading
+    /// System message as <c>MultiTurnConversation.SystemPrompt</c> when the conversation
+    /// is built on a non-empty history, and <c>AgentOrchestrator</c> assigns
+    /// <c>chat.SystemPrompt</c> immediately afterwards. The summary would be adopted,
+    /// overwritten and silently lost. So: no System-role message may reach the
+    /// orchestrator, and the summary must stay separable by its end marker instead.
+    /// </summary>
+    [Fact]
+    public async Task InjectedSummary_IsNeverGivenTheSystemRole_AndStaysDelimitedFromTheUserTurn()
+    {
+        SeedSession();
+        SeedConversation(("user", "câu 1"), ("assistant", "đáp 1"), ("user", "câu 2"));
+
+        _tokens.Trim = messages => new TrimmedHistoryResult
+        {
+            Messages = [new HistoryMessage { Role = "system", Content = "TÓM TẮT" }, .. messages.TakeLast(1)],
+            ConversationSummary = "TÓM TẮT"
+        };
+
+        await CollectAsync(Handler().Handle(Command("câu 3"), CancellationToken.None));
+
+        var history = _orchestrator.LastHistoryRoles!;
+        Assert.DoesNotContain(history, m => m.Role == AuthorRole.System);
+
+        // One merged user turn, with the summary still bounded on both sides: its own
+        // opening text, then the end marker, then the real user turn.
+        var merged = Assert.Single(history).Text;
+        Assert.StartsWith("TÓM TẮT\n", merged);
+        Assert.EndsWith("\ncâu 2", merged);
+        Assert.Contains("Hết phần tóm tắt", merged);
     }
 
     [Fact]
