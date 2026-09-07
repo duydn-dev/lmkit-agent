@@ -348,10 +348,16 @@ public class AgentOrchestrator : IAgentOrchestrator
         yield return "[THINKING]: ✍️ Đang tổng hợp và tạo câu trả lời...\n";
 
         var model = await _modelManager.GetChatModelAsync(ct: cancellationToken);
-        var chat = new MultiTurnConversation(model, history);
+        // MUST go through the factory: assigning chat.SystemPrompt after constructing on a
+        // NON-EMPTY history is silently dropped by LM-Kit (it renders the system block only
+        // when MessageCount == 0, and the getter still returns what you assigned). Every turn
+        // after the first was therefore generated with no persona, no project or custom
+        // instructions, no memory context, and no fullContext — i.e. without this turn's own
+        // ReAct/web-search result. See ChatConversationFactory.
+        var chat = ChatConversationFactory.Create(
+            model, history, BuildSystemPrompt(fullContext, memoryContext, options?.PersonaPrompt));
         chat.MaximumCompletionTokens = DefaultMaximumCompletionTokens;
         _defaultToolCatalog.RegisterSafeDefaults(chat);
-        chat.SystemPrompt = BuildSystemPrompt(fullContext, memoryContext, options?.PersonaPrompt);
 
         // Streaming LLM response — TRUE token streaming through a guardrail gate.
         // UserVisible tokens are forwarded to the client as they are generated,
