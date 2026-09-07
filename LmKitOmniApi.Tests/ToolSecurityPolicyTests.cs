@@ -25,15 +25,30 @@ public class ToolSecurityPolicyTests
         Assert.False(user.IsAllowed);
     }
 
+    /// <summary>
+    /// "UploadsEvil" shares a string prefix with the "Uploads" sandbox root but is a sibling on
+    /// disk, so a naive StartsWith check would let it through.
+    ///
+    /// This test's expectations are anchored to the process working directory, which is also
+    /// where <c>ToolSandboxService</c> anchors its roots. If it starts failing on the "allowed"
+    /// line, suspect a test elsewhere in the suite calling <c>Directory.SetCurrentDirectory</c>
+    /// while this one runs — see the note on <see cref="LmModelRegistryTests"/> — rather than a
+    /// real regression in the sandbox.
+    /// </summary>
     [Fact]
     public void FileSandbox_DoesNotAcceptSiblingWithAllowedPrefix()
     {
+        var workingDirectory = Directory.GetCurrentDirectory();
         var sandbox = new ToolSandboxService(NullLogger<ToolSandboxService>.Instance);
-        var sibling = Path.Combine(Directory.GetCurrentDirectory(), "UploadsEvil", "payload.txt");
-        var allowed = Path.Combine(Directory.GetCurrentDirectory(), "Uploads", "payload.txt");
+        var sibling = Path.Combine(workingDirectory, "UploadsEvil", "payload.txt");
+        var allowed = Path.Combine(workingDirectory, "Uploads", "payload.txt");
 
         Assert.False(sandbox.ValidateFilePath(sibling).IsAllowed);
-        Assert.True(sandbox.ValidateFilePath(allowed).IsAllowed);
+
+        var allowedResult = sandbox.ValidateFilePath(allowed);
+        Assert.True(
+            allowedResult.IsAllowed,
+            $"'{allowed}' should be inside the sandbox. Denial reason: {allowedResult.DenialReason}");
     }
 
     [Theory]

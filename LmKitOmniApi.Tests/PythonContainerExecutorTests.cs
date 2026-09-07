@@ -15,8 +15,15 @@ namespace LmKitOmniApi.Tests;
 /// </summary>
 public class PythonContainerExecutorTests
 {
-    private static readonly Guid TenantId = Guid.Parse("11111111-1111-1111-1111-111111111111");
-    private static readonly Guid UserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    // Identity for the produced-file tests. It MUST NOT match any other test class's
+    // identity: CleanUploadDir below recursively deletes "<cwd>/Uploads/<tenant>/<user>",
+    // which is a process-global path shared with every other test in the suite. These used
+    // to be 1111…/2222… — the same pair as LmKitApiFactory — so this class was recursively
+    // deleting the upload tree that FilesControllerTests writes fixtures into and that
+    // ApiIntegrationTests.ChatAttachment_IsDeletedAfterRequestProcessing snapshots with an
+    // exact SetEquals, while those classes ran in parallel collections. Keep it unique.
+    private static readonly Guid TenantId = Guid.Parse("eeeeeeee-1111-1111-1111-111111111111");
+    private static readonly Guid UserId = Guid.Parse("ffffffff-2222-2222-2222-222222222222");
 
     // ─────────────────────────────────────────────
     // Fake runner + helpers

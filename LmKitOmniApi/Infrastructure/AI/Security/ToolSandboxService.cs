@@ -24,14 +24,14 @@ public class ToolSandboxService
     private readonly ILogger<ToolSandboxService> _logger;
 
     // ── File System Sandbox ──
+    // POLICY (static, immutable): the complete set of folder names a tool may ever reach.
+    // Nothing outside this class can add to it — there is no configuration hook and no
+    // caller-supplied path. Widening the sandbox means editing this line.
+    private static readonly string[] AllowedRootFolderNames = { "Uploads", "Documents", "Temp", "wwwroot" };
+
+    // ANCHOR (per instance): the policy names resolved against the working directory at the
+    // moment this service is constructed. See ResolveAllowedBasePaths for why not static.
     private readonly HashSet<string> _allowedBasePaths;
-    private static readonly string[] DefaultAllowedPaths = new[]
-    {
-        Path.Combine(Directory.GetCurrentDirectory(), "Uploads"),
-        Path.Combine(Directory.GetCurrentDirectory(), "Documents"),
-        Path.Combine(Directory.GetCurrentDirectory(), "Temp"),
-        Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"),
-    };
 
     // ── Blocked Paths (never accessible, even if under allowed base) ──
     private static readonly string[] BlockedPathPatterns = new[]
@@ -92,8 +92,29 @@ public class ToolSandboxService
     public ToolSandboxService(ILogger<ToolSandboxService> logger)
     {
         _logger = logger;
-        _allowedBasePaths = new HashSet<string>(
-            DefaultAllowedPaths.Select(p => Path.GetFullPath(p)),
+        _allowedBasePaths = ResolveAllowedBasePaths();
+    }
+
+    /// <summary>
+    /// Resolves <see cref="AllowedRootFolderNames"/> against the process working directory —
+    /// the same anchor and the same folder set as before, so the boundary is not widened by
+    /// one byte. The only thing that changes is WHEN the anchor is read.
+    ///
+    /// This used to be a <c>static readonly</c> array built inside the type initializer, so the
+    /// sandbox roots were frozen at the instant some unrelated code first touched this type, and
+    /// every instance for the rest of the process inherited that snapshot. Under the API host
+    /// that is invisible — Kestrel fixes the working directory at startup and nothing moves it —
+    /// but it made a security boundary depend on class-initialization ORDER rather than on
+    /// anything about the boundary itself. Under the parallel xUnit runner that was an outright
+    /// bug: one test class called <c>Directory.SetCurrentDirectory</c>, and whichever sandbox
+    /// happened to be built during that window disagreed with every other one in the process.
+    /// Resolving per instance keeps the rules identical and makes the result deterministic.
+    /// </summary>
+    private static HashSet<string> ResolveAllowedBasePaths()
+    {
+        var contentRoot = Directory.GetCurrentDirectory();
+        return new HashSet<string>(
+            AllowedRootFolderNames.Select(name => Path.GetFullPath(Path.Combine(contentRoot, name))),
             StringComparer.OrdinalIgnoreCase);
     }
 

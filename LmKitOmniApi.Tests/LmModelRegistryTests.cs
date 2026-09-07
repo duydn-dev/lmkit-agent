@@ -6,23 +6,32 @@ namespace LmKitOmniApi.Tests;
 /// <summary>
 /// Tests for the AiModels:Models local model registry — path resolution and load
 /// branch selection. No native LM-Kit model is loaded; registry resolution is pure.
+///
+/// PROCESS-GLOBAL STATE — DO NOT REINTRODUCE: this fixture used to call
+/// <c>Directory.SetCurrentDirectory</c> so the relative-path cases would resolve under a
+/// temp folder. The current directory is per-PROCESS, xUnit runs collections in parallel,
+/// and every other test in flight saw that temp folder as its working directory for the
+/// lifetime of this class. It made
+/// <see cref="ToolSecurityPolicyTests.FileSandbox_DoesNotAcceptSiblingWithAllowedPrefix"/>
+/// fail intermittently: that test builds "&lt;cwd&gt;/Uploads/payload.txt" at assert time and
+/// expects <c>ToolSandboxService</c> to allow it, but the sandbox roots were anchored to the
+/// real working directory. Nothing here needs a particular working directory — the parse
+/// cases pass <see cref="_modelsDirectory"/> explicitly, and the three cases that build a
+/// real <c>LmModelManager</c> assert with <c>EndsWith</c> on a relative tail, which holds for
+/// any cwd. Keep it that way.
 /// </summary>
 public class LmModelRegistryTests : IDisposable
 {
     private readonly string _modelsDirectory;
-    private readonly string _previousDirectory;
 
     public LmModelRegistryTests()
     {
-        _previousDirectory = Directory.GetCurrentDirectory();
         _modelsDirectory = Path.Combine(Path.GetTempPath(), $"lmkit-registry-tests-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(Path.Combine(_modelsDirectory, "testmodel"));
-        Directory.SetCurrentDirectory(_modelsDirectory);
+        Directory.CreateDirectory(_modelsDirectory);
     }
 
     public void Dispose()
     {
-        Directory.SetCurrentDirectory(_previousDirectory);
         try { Directory.Delete(_modelsDirectory, recursive: true); }
         catch (IOException) { /* best effort cleanup */ }
     }
@@ -144,5 +153,40 @@ public class LmModelRegistryTests : IDisposable
 
         var absolute = Path.Combine(Path.GetTempPath(), "custom-models");
         Assert.Equal(absolute, LmModelManager.ResolveModelsDirectory(absolute));
+    }
+
+    /// <summary>
+    /// Registry resolution is pure string work: a relative <c>AiModels:ModelsDirectory</c> is
+    /// turned into an absolute path but NEVER created. This test exists because the fixture no
+    /// longer redirects the process working directory — the relative default now resolves under
+    /// the test output folder, so a stray <c>Directory.CreateDirectory</c> in the manager's
+    /// constructor would start littering <c>bin/</c> with empty <c>AIModels</c>/<c>Models</c>
+    /// trees on every run. Fail loudly if that ever changes.
+    /// </summary>
+    [Fact]
+    public void Constructor_WithRelativeModelsDirectory_CreatesNothingOnDisk()
+    {
+        // A GUID name so the "was it created?" check cannot be confused by anything that
+        // already lives in the test output directory.
+        var relativeName = $"lmkit-registry-probe-{Guid.NewGuid():N}";
+        var expected = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), relativeName));
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiModels:ModelsDirectory"] = relativeName,
+                ["AiModels:DefaultChat"] = "bonsai",
+                ["AiModels:Models:bonsai:Path"] = "bonsai/model.gguf"
+            })
+            .Build();
+
+        using var manager = new LmModelManager(configuration);
+
+        Assert.Equal(
+            Path.Combine(expected, "bonsai", "model.gguf"),
+            manager.ResolveRegisteredModelForTests("bonsai")!.ResolvedModelPath);
+        Assert.False(
+            Directory.Exists(expected),
+            $"LmModelManager created '{expected}'. Registry resolution must not touch the disk, " +
+            "or every test run will litter the output directory with empty model folders.");
     }
 }
