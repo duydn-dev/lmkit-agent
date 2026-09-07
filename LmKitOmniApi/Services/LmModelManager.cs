@@ -29,6 +29,13 @@ public class LmModelManager : IDisposable
     private readonly SemaphoreSlim _speechInferenceGate;
     private readonly SemaphoreSlim _rerankerInferenceGate;
     private readonly SemaphoreSlim _segmentationInferenceGate;
+
+    // The chat gate is the one every conversation, agent run, approved-tool resume and
+    // voice turn passes through, and SemaphoreLimits:Chat is 1. Waiting on it directly
+    // (`gate.WaitAsync(ct)`) is unbounded, unmeasured and silent; the queue puts a bound,
+    // metrics and a progress signal in front of it WITHOUT changing the permit primitive
+    // or the release discipline. Other gates keep the plain wait.
+    private readonly InferenceAdmissionQueue _chatQueue;
     private readonly long _maxDownloadBytes;
     private readonly TimeSpan _downloadTimeout;
     private readonly ILogger<LmModelManager> _logger;
@@ -94,6 +101,11 @@ public class LmModelManager : IDisposable
         _speechInferenceGate = new SemaphoreSlim(speechLimit, speechLimit);
         _rerankerInferenceGate = new SemaphoreSlim(rerankerLimit, rerankerLimit);
         _segmentationInferenceGate = new SemaphoreSlim(segmentationLimit, segmentationLimit);
+        _chatQueue = new InferenceAdmissionQueue(
+            _chatInferenceGate,
+            "chat",
+            InferenceQueueOptions.FromConfiguration(configuration, "InferenceQueue:Chat"),
+            _logger);
 
         LogDefaultModelAvailability();
     }
@@ -466,8 +478,34 @@ public class LmModelManager : IDisposable
         }
     }
 
-    public async ValueTask<IAsyncDisposable> AcquireChatInferenceAsync(CancellationToken ct = default)
-        => await AcquireInferenceAsync(_chatInferenceGate, ct);
+    /// <summary>
+    /// Drop-in replacement for the previous direct semaphore wait: still returns a lease the
+    /// caller MUST dispose, still throws <see cref="OperationCanceledException"/> when the
+    /// caller's own token fires, and still completes SYNCHRONOUSLY when the permit is free —
+    /// the uncontended single-user path allocates no timer and takes no queue bookkeeping.
+    /// What is new is the bound: a wait that exceeds <c>InferenceQueue:Chat:MaxWaitSeconds</c>,
+    /// or that arrives behind more than <c>MaxQueueDepth</c> others, now raises
+    /// <see cref="InferenceQueueRejectedException"/> instead of hanging indefinitely.
+    /// </summary>
+    public ValueTask<IAsyncDisposable> AcquireChatInferenceAsync(CancellationToken ct = default)
+        => _chatQueue.AcquireAsync(ct);
+
+    /// <summary>
+    /// Streaming variant of <see cref="AcquireChatInferenceAsync"/>: <c>await using</c> the
+    /// returned admission, then enumerate <see cref="InferenceAdmission.WaitForTurnAsync"/>
+    /// and forward what it yields. It yields nothing when the permit is free, and
+    /// <c>[THINKING]:</c> queue-position notices once the wait becomes user-visible.
+    /// </summary>
+    public InferenceAdmission BeginChatInference(CancellationToken ct = default)
+        => _chatQueue.Begin(ct);
+
+    /// <summary>Callers currently queued for the chat permit (holders excluded).</summary>
+    public int ChatQueueDepth => _chatQueue.QueueDepth;
+
+    /// <summary>Test/diagnostics seam over the chat queue's in-process counters.</summary>
+    public InferenceQueueSnapshot GetChatQueueSnapshot() => _chatQueue.GetSnapshot();
+
+    internal InferenceAdmissionQueue ChatQueueForTests => _chatQueue;
 
     public async ValueTask<IAsyncDisposable> AcquireVisionInferenceAsync(CancellationToken ct = default)
         => await AcquireInferenceAsync(_visionInferenceGate, ct);
@@ -589,6 +627,11 @@ public class LmModelManager : IDisposable
 
     public void Dispose()
     {
+        // Unblock anyone parked on the chat gate FIRST. SemaphoreSlim.Dispose() does not
+        // wake its waiters, so without this a shutdown while a turn is in flight leaves
+        // every queued caller hanging on a semaphore that is about to disappear.
+        _chatQueue.SignalShutdown();
+
         // Roles can now ALIAS one another (embedding + reranker share one LM when they
         // resolve to the same file), so dispose reference-distinct instances exactly once.
         var disposed = new HashSet<object>(ReferenceEqualityComparer.Instance);
@@ -613,6 +656,7 @@ public class LmModelManager : IDisposable
         _speechInferenceGate.Dispose();
         _rerankerInferenceGate.Dispose();
         _segmentationInferenceGate.Dispose();
+        _chatQueue.Dispose();
     }
 
     /// <summary>Test seam: how many distinct models are actually held in memory.</summary>
