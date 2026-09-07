@@ -253,6 +253,10 @@ builder.Services.AddScoped<IExecutionSandboxEngine, ExecutionSandboxEngine>();
 // and the run_python tool is never offered.
 builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Security.CodeInterpreterOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Security.CodeInterpreterOptions.SectionName));
 builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.ChatReasoningOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.ChatReasoningOptions.SectionName));
+// Auto-extracted memories are stored unconfirmed and are NOT recalled until a human confirms
+// them in the memory UI. RecallUnconfirmed=true relaxes only that confirmation requirement
+// (scope and expiry still apply) — a privacy-affecting change, so it ships off.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.AgentMemoryOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.AgentMemoryOptions.SectionName));
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Security.IProcessRunner, LmKitOmniApi.Infrastructure.AI.Security.ProcessRunner>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Security.IPythonCodeExecutor, LmKitOmniApi.Infrastructure.AI.Security.PythonContainerExecutor>();
 
@@ -639,6 +643,23 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0
             }));
 
+    // Anonymous widget key exchange (POST /api/widget/auth): per-IP fixed window, same shape as
+    // LoginPolicy/SharePolicy. It is unauthenticated and drives a key-hash lookup, so it must be
+    // throttled before it reaches the database. This policy deliberately reads nothing from
+    // HttpContext.Items, so it is safe on either side of UseAuthorization.
+    options.AddPolicy(LmKitOmniApi.Controllers.WidgetPublicController.AuthRateLimitPolicyName, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = httpContext.RequestServices.GetRequiredService<IConfiguration>()
+                    .GetValue("RateLimiting:WidgetAuthRequestsPerWindow", 30),
+                Window = TimeSpan.FromSeconds(httpContext.RequestServices.GetRequiredService<IConfiguration>()
+                    .GetValue("RateLimiting:WidgetAuthWindowSeconds", 60)),
+                QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0
+            }));
+
     // Public widget chat: per-tenant+origin token bucket (quota counters in the
     // controller add minute/day budgets on top of this process-local gate).
     options.AddPolicy("widget-chat", httpContext =>
@@ -731,21 +752,21 @@ app.UseAuthentication();
 // Authentication must run first so rate-limit partitions use the stable user id
 // instead of grouping every signed-in caller behind the same proxy IP.
 app.UseMiddleware<LmKitOmniApi.Infrastructure.Security.DistributedAiRateLimitMiddleware>();
-app.UseRateLimiter();
 app.UseAuthorization();
+// The rate limiter runs AFTER authorization deliberately: the widget-chat partition keys on the
+// widget principal's TenantId claim and on HttpContext.Items["Widget.RequestOrigin"], and BOTH are
+// produced DURING authorization (the widget token is a non-default scheme named by the WidgetOrigin
+// policy, and the origin item is written by WidgetOriginAuthorizationHandler). With the limiter
+// ahead of it every tenant and origin collapsed into a single "widget:unknown:unknown" bucket that
+// an anonymous caller could drain for the whole deployment. DistributedAiRateLimitMiddleware stays
+// ABOVE: it keys on the DEFAULT scheme's user, which UseAuthentication has already established.
+app.UseRateLimiter();
 
-// Kích hoạt Prometheus Scrape Endpoint cho OpenTelemetry
-app.UseWhen(
-    context => context.Request.Path.Equals("/metrics", StringComparison.OrdinalIgnoreCase),
-    metricsApp => metricsApp.Use(async (context, next) =>
-    {
-        if (context.User.Identity?.IsAuthenticated != true || !context.User.IsInRole("Admin"))
-        {
-            context.Response.StatusCode = StatusCodes.Status403Forbidden;
-            return;
-        }
-        await next(context);
-    }));
+// Prometheus scrape endpoint. The guard MUST cover the same path space the exporter claims:
+// UseOpenTelemetryPrometheusScrapingEndpoint registers through Map (prefix matching), so the old
+// exact Path.Equals("/metrics") check let GET /metrics/ and /metrics/anything reach the exporter
+// unauthenticated — a full anonymous scrape, reproduced before this fix.
+app.UseMetricsEndpointGuard();
 app.UseOpenTelemetryPrometheusScrapingEndpoint();
 
 app.MapControllers();

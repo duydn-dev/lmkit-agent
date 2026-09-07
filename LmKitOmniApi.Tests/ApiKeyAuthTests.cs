@@ -150,6 +150,24 @@ public sealed class ApiKeyAuthTests : IClassFixture<ApiKeyAuthFixture>
         // while anonymous callers stay locked out.
         Assert.Equal(HttpStatusCode.OK, metricsViaKey.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, metricsAnonymous.StatusCode);
+
+        // REGRESSION (audit): the exporter is registered with Map("/metrics"), which matches by
+        // PREFIX, while the old guard used an exact Path.Equals("/metrics"). Every path in the
+        // subtree except the bare one therefore skipped the guard and returned a FULL anonymous
+        // Prometheus scrape (reproduced: /metrics/ and /metrics/anything each returned 200 with
+        // 8555 bytes). The guard must cover the whole subtree the exporter claims.
+        foreach (var path in new[] { "/metrics", "/metrics/", "/metrics/anything" })
+        {
+            var anonymousScrape = await anonymous.GetAsync(path);
+            var adminScrape = await apiClient.GetAsync(path);
+
+            Assert.Equal(HttpStatusCode.Forbidden, anonymousScrape.StatusCode);
+            Assert.DoesNotContain(
+                "target_info",
+                await anonymousScrape.Content.ReadAsStringAsync(),
+                StringComparison.Ordinal);
+            Assert.Equal(HttpStatusCode.OK, adminScrape.StatusCode);
+        }
     }
 
     [Fact]

@@ -334,36 +334,8 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
                     provider.GetRequiredService<LmKitOmniApi.Infrastructure.AI.Filters.OutputGuardrailFilter>(),
                     provider.GetRequiredService<ILogger<LmKitOmniApi.Application.Widget.WidgetChatEngine>>()));
 
-            // TEMPORARY: mirrors the "widget-auth" policy snippet in
-            // WIDGET-FIX-INTEGRATION.md. POST /api/widget/auth carries
-            // [EnableRateLimiting("widget-auth")], which fails at request time unless
-            // the policy exists; this keeps the suite honest until the snippet is
-            // applied to Program.cs. Adding a duplicate policy name throws, so once
-            // Program.cs owns it this registration quietly no-ops (and can be deleted).
-            services.Configure<RateLimiterOptions>(options =>
-            {
-                try
-                {
-                    options.AddPolicy(
-                        LmKitOmniApi.Controllers.WidgetPublicController.AuthRateLimitPolicyName,
-                        httpContext => RateLimitPartition.GetFixedWindowLimiter(
-                            httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
-                            _ => new FixedWindowRateLimiterOptions
-                            {
-                                PermitLimit = httpContext.RequestServices.GetRequiredService<IConfiguration>()
-                                    .GetValue("RateLimiting:WidgetAuthRequestsPerWindow", 30),
-                                Window = TimeSpan.FromSeconds(
-                                    httpContext.RequestServices.GetRequiredService<IConfiguration>()
-                                        .GetValue("RateLimiting:WidgetAuthWindowSeconds", 60)),
-                                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                                QueueLimit = 0
-                            }));
-                }
-                catch (ArgumentException)
-                {
-                    // Program.cs already registers it — nothing to do.
-                }
-            });
+            // The "widget-auth" rate-limit policy that POST /api/widget/auth requires is now
+            // registered by Program.cs, so the test host no longer mirrors it here.
         });
     }
 
