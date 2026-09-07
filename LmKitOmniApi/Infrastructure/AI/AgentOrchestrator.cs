@@ -354,8 +354,14 @@ public class AgentOrchestrator : IAgentOrchestrator
         // after the first was therefore generated with no persona, no project or custom
         // instructions, no memory context, and no fullContext — i.e. without this turn's own
         // ReAct/web-search result. See ChatConversationFactory.
+        // The tool catalog is the fourth argument for the same reason the system prompt is the
+        // third: LM-Kit emits BOTH only when it builds the conversation on an empty history, so
+        // registering tools after construction was silently dead from turn 2 onward — the model
+        // stopped being told the tools exist, and (measured) started inventing their output
+        // instead. RegisterSafeDefaults below is now idempotent and kept only as a no-op guard.
         var chat = ChatConversationFactory.Create(
-            model, history, BuildSystemPrompt(fullContext, memoryContext, options?.PersonaPrompt));
+            model, history, BuildSystemPrompt(fullContext, memoryContext, options?.PersonaPrompt),
+            _defaultToolCatalog.GetSafeDefaultTools());
         chat.MaximumCompletionTokens = DefaultMaximumCompletionTokens;
         _defaultToolCatalog.RegisterSafeDefaults(chat);
 

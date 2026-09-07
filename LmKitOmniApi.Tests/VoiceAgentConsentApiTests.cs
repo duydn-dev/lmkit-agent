@@ -5,6 +5,7 @@ using LmKitOmniApi.Infrastructure.AI.Voice;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace LmKitOmniApi.Tests;
 
@@ -157,12 +158,15 @@ public sealed class VoiceAgentConsentApiTests : IClassFixture<LmKitApiFactory>
                 ["Voice:DispatcherEnabled"] = dispatcherEnabled ? "true" : "false"
             });
 
-            if (withRegistry)
+            // Program.cs now registers the consent registry, so the "with" case is simply the
+            // shipped wiring and needs nothing added here. The "without" case has to REMOVE it:
+            // it exists to prove the endpoint degrades honestly (a working token, agent=false,
+            // and a stated reason) on a host where that registration is missing, and omission
+            // can no longer produce that host.
+            if (!withRegistry)
             {
-                // The one registration Program.cs must carry — see T2-ROUND4.md. Applied here so
-                // the endpoint's behaviour with AND without it is both covered.
                 builder.ConfigureServices(services =>
-                    services.AddSingleton<IVoiceAgentConsentRegistry, VoiceAgentConsentRegistry>());
+                    services.RemoveAll<IVoiceAgentConsentRegistry>());
             }
         });
 

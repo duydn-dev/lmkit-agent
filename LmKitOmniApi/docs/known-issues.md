@@ -12,7 +12,8 @@ renumber — other files link to these anchors, and renumbering is how such link
 Fixed so far: **#0** widget frame-ancestors CSP · **#1** `ToolSandboxService` root pinning ·
 **#2** approval scope after its custom agent is deleted · **#3** guardrail patterns glued to a
 word · **#5** approving from the Approvals page losing the result · **#6** the agent-run page
-not acting on its approval · **#10** the dead `/hubs` proxy.
+not acting on its approval · **#7** a run parked on an approval gate now continues its ReAct
+loop · **#10** the dead `/hubs` proxy.
 
 ---
 
@@ -35,46 +36,65 @@ a test pins "never `AuthorRole.System`". Keep it that way.
 
 ---
 
-## 7. A run that ends at an approval gate does not resume the ReAct loop
+## 8. The multi-room voice agent is off by default and its media path is unproven
 
-By design, recorded here so it is not mistaken for a bug. An approved gated call is recorded as
-a real `AgentRunStep`, its output is appended to `AgentRun.Result` and to the run's hidden
-session, and the run moves to the terminal status `CompletedAfterApproval`
-(`LmKitOmniApi/Application/AgentRuns/AgentRunStatuses.cs`).
+`LmKitOmniApi/Infrastructure/AI/Voice/VoiceRoomDispatcher.cs`
 
-It is **not** a resume. Feeding the approved observation back into the loop would need a
-durable continuation of the streaming pass — the orchestrator's ReAct pass is an in-process
-`await foreach` whose state dies with the request. That is a redesign, not a fix. A run that
-ends after one approved tool call is a smaller answer than a resumed run would give, but it is
-a truthful one, and it ends.
+Live voice used to serve exactly one hard-configured user per deployment: the hosted service was
+a single `BackgroundService` that joined one room for the life of the process. It now has a
+second mode — `Voice:DispatcherEnabled` — that owns one bounded session per room whose owner
+explicitly opted in via `GET /api/speech/token?agent=true`, with caps on concurrent rooms, rooms
+per tenant, and (the one that matters, given `SemaphoreLimits:Chat = Speech = 1`) concurrent
+turns, plus a per-room idle timeout and per-turn budget.
 
----
+Rooms are NOT discovered from LiveKit. Webhooks need a public endpoint this deployment does not
+have, and `RoomServiceClient.ListRooms` would say a room exists without saying whether its owner
+wants a listener in it. Consent is the room list.
 
-## 8. The live voice agent serves exactly one configured user
+What remains open:
 
-`LmKitOmniApi/Infrastructure/AI/Voice/VoiceRoomAgentHostedService.cs`
-
-Rooms are scoped per user: `VoiceRoomNaming.TryScopedRoom` produces `{tenant:N}-{user:N}-{label}`
-and both `GET /api/speech/token` and the hosted agent call it, so the agent and its caller land
-in the same room. But the hosted service is a single `BackgroundService` that mints one token,
-joins one room, and runs one session loop for the lifetime of the process — it has no way to
-learn that another user just opened a room. With `Voice:LiveAgentEnabled=true` and no
-`Voice:AgentTenantId` / `Voice:AgentUserId` it stands down with an explicit warning rather than
-joining a room nobody is in.
-
-Serving every user from one deployment needs a **room dispatcher**, which is a redesign:
-discover rooms (LiveKit `room_started` / `participant_joined` webhooks, or poll
-`RoomServiceClient.ListRooms`), own a session per room keyed by room name, bound it with a
-max-concurrent-rooms cap and per-room idle timeout (each live room holds a model lease during a
-turn), and add a per-user opt-in — the dispatcher would otherwise join rooms on behalf of users
-who never consented to an agent participant.
-
-`docker-compose.prod.yml` now passes `Voice__AgentTenantId` / `Voice__AgentUserId` through as
-`VOICE_AGENT_TENANT_ID` / `VOICE_AGENT_USER_ID`, so configuring the single-user agent no longer
-requires editing the compose file. The dispatcher redesign above is still open.
+- **It is off by default** (`Voice:DispatcherEnabled=false`). Turning it on also needs
+  `Voice:LiveAgentEnabled=true` and a reachable LiveKit.
+- **The LiveKit media path is still unverified.** `LiveKitMediaSession` needs a live server and
+  the native `livekit_ffi` runtime, so the suite proves the dispatcher's caps, consent, fairness,
+  reclamation, lease release and shutdown with fakes, and proves nothing below
+  `ILiveKitMediaSession`. In particular, that one process can hold several agent participants in
+  different rooms simultaneously has not been observed.
+- **The consent ledger is process-local.** Whichever replica minted the token dispatches the agent
+  — one agent per room, no coordination needed — but a busy replica cannot hand a room to a
+  quieter one; that user simply gets no agent.
+- **`MaxConcurrentTurns` defaults to 1**, so several callers talking at once queue behind one
+  another. Raising it without raising `SemaphoreLimits:Chat`/`Speech` does nothing.
 
 ---
 
+## 11. The opt-in live model tests are a probe, not a gate
+
+`LmKitOmniApi.Tests/ChatConversationFactoryLiveTests.cs`,
+`LmKitOmniApi.Tests/AgentRunResumeLiveTests.cs`
+
+Everything behind `LMKIT_LIVE_SEAM_TEST=1` loads real weights and skips cleanly without them, so
+none of it runs in CI. Within it, two assertions are about **model behaviour** — whether a 1B
+chooses to invoke a registered tool on turn 3, and whether it repeats a number from a replayed
+observation. Neither is deterministic. Both take several attempts and one skips rather than
+fails when the model never called the tool even on turn 1 (a model too weak to testify is not
+evidence of a regression), but on a busy machine they still fail intermittently: observed green
+when run one class at a time on an idle machine, and one failure per run while four other agents
+were building.
+
+**Run them deliberately, on an otherwise idle machine, and read a failure as "the model did not
+cooperate this run" before reading it as a regression.** The properties they illustrate are each
+guarded deterministically elsewhere and those guards are the real gate:
+
+- the tool catalog reaching a rebuilt history —
+  `NonEmptyHistory_ToolCatalogIsSeededOnlyWhenToolsArePassedToTheFactory` (no sampling: the tool
+  definitions are present with the fix and absent without);
+- the system prompt reaching the rendered prompt — `NonEmptyHistory_SystemPromptReachesTheRenderedPrompt`;
+- chat answering at all, rather than `[ERROR]: Unable to generate a response.` —
+  `LiveChatSecondTurnTests`, which deliberately asserts plumbing and not obedience, and has been
+  stable.
+
+---
 ## 9. The default chat model is not shipped and its filename looks wrong
 
 `LmKitOmniApi/appsettings.json:49,60`

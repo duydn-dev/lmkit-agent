@@ -1,5 +1,6 @@
 using LMKit.Agents;
 using LMKit.Model;
+using LMKit.TextGeneration;
 using LmKitOmniApi.Application.AgentRuns;
 using LmKitOmniApi.Infrastructure.AI.Tools;
 using Xunit;
@@ -30,6 +31,10 @@ namespace LmKitOmniApi.Tests;
 /// The tool-call assertion is deliberately NOT made — a 1B model re-calling a tool is a
 /// quality regression, not a correctness one, and the step cap bounds it either way.</para>
 /// </summary>
+// Serialized with every other live test: each one loads its own multi-hundred-MB weights, and
+// running them concurrently starves the machine badly enough that a small model's tool call can
+// simply not happen. Observed: this suite green one at a time, one failure when run together.
+[Collection(LiveModelCollection.Name)]
 public class AgentRunResumeLiveTests
 {
     /// <summary>A token no pre-training corpus contains, so the answer can only come from the replay.</summary>
@@ -49,9 +54,16 @@ public class AgentRunResumeLiveTests
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "models", "lm-kit");
 
-        return Directory.Exists(cache)
-            ? Directory.EnumerateFiles(cache, "*.gguf", SearchOption.AllDirectories).FirstOrDefault()
-            : null;
+        if (!Directory.Exists(cache)) return null;
+
+        // Not FirstOrDefault: an interrupted download leaves a zero-byte .gguf in this cache
+        // (there is one on the machine this was written on), and picking it fails the load in a
+        // way that reads like a product bug.
+        return Directory.EnumerateFiles(cache, "*.gguf", SearchOption.AllDirectories)
+            .Select(path => new FileInfo(path))
+            .Where(file => file.Length > 1024 * 1024)
+            .OrderByDescending(file => file.Length)
+            .FirstOrDefault()?.FullName;
     }
 
     [SkippableFact]
@@ -93,17 +105,31 @@ public class AgentRunResumeLiveTests
             .WithMaxIterations(3)
             .Build();
 
-        // NOTE: MaximumCompletionTokens is deliberately not set here. On LM-Kit 2026.9.0
-        // the setter throws "Conversation has not been initialized" until Execute has run
-        // once — the same call order AgentOrchestrator.ExecuteNativeReActAsync uses, which
-        // is recorded in T3-ROUND4.md as a separate finding rather than fixed here.
-        using var executor = new AgentExecutor();
-        var result = executor.Execute(agent, query, CancellationToken.None);
-        var content = result.Content ?? string.Empty;
+        // The executor is now constructed WITH a conversation. T3 found, and recorded, that the
+        // parameterless ctor makes the MaximumCompletionTokens setter throw "Conversation has not
+        // been initialized"; that is fixed in AgentOrchestrator, and this probe uses the same
+        // shape so it exercises the production call order rather than tiptoeing around it.
+        //
+        // Several attempts, because a 1B at temperature is not a deterministic oracle: whether it
+        // repeats a number from the replayed observation varies run to run. What does NOT vary is
+        // whether the observation is in the prompt at all — the fix — so one success is proof and
+        // repeated silence is the honest failure signal.
+        const int Attempts = 4;
+        var lastContent = string.Empty;
 
-        // The replayed observation reached the answer: the run continued from it instead
-        // of starting over with nothing.
-        Assert.False(string.IsNullOrWhiteSpace(content), "the resumed pass produced no content");
-        Assert.Contains("42", content, StringComparison.Ordinal);
+        for (var attempt = 1; attempt <= Attempts; attempt++)
+        {
+            using var conversation = new MultiTurnConversation(model);
+            using var executor = new AgentExecutor(conversation);
+            lastContent = executor.Execute(agent, query, CancellationToken.None).Content ?? string.Empty;
+
+            // The replayed observation reached the answer: the run continued from it instead of
+            // starting over with nothing.
+            if (lastContent.Contains("42", StringComparison.Ordinal)) return;
+        }
+
+        Assert.Fail(
+            $"In {Attempts} attempts the resumed pass never carried the approved observation's stock "
+            + $"count into its answer. Last answer: \"{lastContent}\"");
     }
 }

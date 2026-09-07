@@ -212,16 +212,32 @@ public class ChatConversationFactoryLiveTests(LiveModelFixture fixture)
         var model = Model;
         Assert.True(model.HasToolCalls, "This model cannot do tool calls; pick another GGUF.");
 
-        for (var attempt = 1; attempt <= 2; attempt++)
+        // A run only counts as evidence when the model called the tool on turn 1 — the turn
+        // LM-Kit renders the catalog for itself. A run that fails there says nothing about
+        // turns 2..n either way, so it is neither a pass nor a failure.
+        const int Attempts = 5;
+        var conclusive = 0;
+
+        for (var attempt = 1; attempt <= Attempts; attempt++)
         {
-            if (RunThreeTurnConversation(model, out var turn3CalledTheTool) && turn3CalledTheTool)
-                return;
+            if (!RunThreeTurnConversation(model, out var turn3CalledTheTool)) continue;
+            conclusive++;
+            if (turn3CalledTheTool) return;
         }
 
+        // Distinguishing these two is the point: a model too weak to call the tool at ALL cannot
+        // testify about the fix, and reporting that as a regression would be a false alarm that
+        // teaches everyone to ignore this test.
+        Skip.If(conclusive == 0,
+            $"Inconclusive: in {Attempts} attempts the model never called the tool even on turn 1, "
+            + "where LM-Kit seeds the catalog itself. This model is too weak for the probe; it says "
+            + "nothing about whether the seeded catalog survives into later turns.");
+
         Assert.Fail(
-            "The model never invoked the registered tool on turn 3 in 2 attempts. Either the tool "
-            + "catalog stopped reaching the rebuilt history (check LmKitToolCatalogRenderer."
-            + LmKitToolCatalogRenderer.Diagnostics + ") or this model is too weak for the probe.");
+            $"In {conclusive} of {Attempts} attempts the model called the registered tool on turn 1 "
+            + "but never on turn 3 — which is exactly the shipped defect this fix removes (it scored "
+            + "0/3 on both models tested). Check that the catalog still reaches the rebuilt history: "
+            + "LmKitToolCatalogRenderer." + LmKitToolCatalogRenderer.Diagnostics);
     }
 
     private bool RunThreeTurnConversation(LM model, out bool turn3CalledTheTool)

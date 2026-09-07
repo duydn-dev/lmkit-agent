@@ -363,6 +363,10 @@ builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Database.DbQueryServic
 builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Voice.VoiceOptions>(
     builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Voice.VoiceOptions.SectionName));
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Voice.ISpeechSynthesizer, LmKitOmniApi.Infrastructure.AI.Voice.PiperSpeechSynthesizer>();
+// Consent ledger for the multi-room voice dispatcher. MUST be a singleton: the token endpoint
+// writes grants into it and the hosted service reads them. The dispatcher only ever joins a room
+// that appears here, so an agent never joins a call nobody invited it to.
+builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Voice.IVoiceAgentConsentRegistry, LmKitOmniApi.Infrastructure.AI.Voice.VoiceAgentConsentRegistry>();
 // Real voice-turn seams + room agent (used only when Voice:LiveAgentEnabled). The LiveKit
 // media session is transient (one Room per join) and holds the native runtime; it is
 // constructed only when the hosted service actually joins a room.
@@ -405,6 +409,9 @@ builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ScheduledT
 // Expires unanswered HITL approvals so a run parked on one reaches a terminal state
 // instead of hanging forever, and a weeks-old gated tool call can never be executed.
 LmKitOmniApi.Application.Approvals.ApprovalExpiryServiceCollectionExtensions.AddApprovalExpiry(builder.Services, builder.Configuration);
+// Continues a run that was parked on an approval gate, instead of stopping it after the one
+// approved tool call. Without this line every run keeps the old truthful stop — by design.
+LmKitOmniApi.Application.AgentRuns.AgentRunResumeServiceCollectionExtensions.AddAgentRunResume(builder.Services, builder.Configuration);
 
 // ============================================================
 // 🔄 Multi-Agent System (Phase 3)

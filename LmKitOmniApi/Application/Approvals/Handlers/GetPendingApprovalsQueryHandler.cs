@@ -33,7 +33,22 @@ public class GetPendingApprovalsQueryHandler : IRequestHandler<GetPendingApprova
                 && t.Status == "Pending"
                 && t.ExpiresAtUtc > now)
             .OrderByDescending(t => t.CreatedAtUtc)
-            .Select(t => new { t.Id, t.ActionName, t.ParametersJson, t.CreatedAtUtc, t.ExpiresAtUtc })
+            .Select(t => new
+            {
+                t.Id,
+                t.ActionName,
+                t.ParametersJson,
+                t.CreatedAtUtc,
+                t.ExpiresAtUtc,
+                t.ChatSessionId,
+                // LEFT JOIN through the navigation. The FK is DeleteBehavior.Cascade, so a null
+                // session means the row is on its way out; treat that as "not a conversation"
+                // rather than assuming it is one.
+                IsChatSession = t.ChatSession != null
+                    && !t.ChatSession.IsAgentRun
+                    && !t.ChatSession.IsEphemeral,
+                ChatSessionTitle = t.ChatSession != null ? t.ChatSession.Title : null
+            })
             .ToListAsync(cancellationToken);
 
         return rows.Select(t => new PendingApprovalDto
@@ -42,7 +57,10 @@ public class GetPendingApprovalsQueryHandler : IRequestHandler<GetPendingApprova
             ActionName = t.ActionName,
             Details = Describe(t.ParametersJson),
             CreatedAtUtc = t.CreatedAtUtc,
-            ExpiresAtUtc = t.ExpiresAtUtc
+            ExpiresAtUtc = t.ExpiresAtUtc,
+            ChatSessionId = t.ChatSessionId,
+            IsChatSession = t.IsChatSession,
+            ChatSessionTitle = t.IsChatSession ? (t.ChatSessionTitle ?? string.Empty) : string.Empty
         }).ToList();
     }
 

@@ -5,7 +5,6 @@ import {
   approvalFailureMessage,
   approvalIdFromMarkerText,
   fetchPendingApproval,
-  findApprovalChatSession,
   isApprovalId,
   isSettledStatus,
   resolveApprovalChatSession,
@@ -230,40 +229,6 @@ describe('submitApprovalDecision', () => {
   });
 });
 
-// --- Finding the conversation an approval came from -------------------------
-
-describe('findApprovalChatSession', () => {
-  it('searches session content for the approval id', async () => {
-    const { calls } = installFetch(() => json([{ id: SESSION_ID, title: 'Báo cáo doanh thu' }]));
-
-    const session = await findApprovalChatSession(APPROVAL_ID);
-
-    expect(session).toEqual({ id: SESSION_ID, title: 'Báo cáo doanh thu' });
-    expect(calls[0].url).toBe(`/api/chat/sessions/search?q=${APPROVAL_ID}`);
-  });
-
-  it('never searches with a blank term, which would return every session', async () => {
-    // SECURITY: an empty q lists all sessions, and the caller posts an approval
-    // result into whatever comes back first.
-    const { fetchMock } = installFetch(() => json([{ id: SESSION_ID, title: 'Bất kỳ' }]));
-
-    for (const value of ['', '   ', 'not-a-guid']) {
-      expect(await findApprovalChatSession(value)).toBeNull();
-    }
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('returns null when nothing matches (agent-run or temporary chat)', async () => {
-    installFetch(() => json([]));
-    expect(await findApprovalChatSession(APPROVAL_ID)).toBeNull();
-  });
-
-  it('returns null instead of throwing when the search fails', async () => {
-    installFetch(() => Promise.reject(new Error('offline')));
-    expect(await findApprovalChatSession(APPROVAL_ID)).toBeNull();
-  });
-});
-
 // --- The session the pending row itself names -------------------------------
 
 describe('approvalChatSessionFromRow', () => {
@@ -328,13 +293,14 @@ describe('resolveApprovalChatSession', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('degrades to the content search against a server without the fields', async () => {
-    const { calls } = installFetch(() => json([{ id: SESSION_ID, title: 'Tìm bằng marker' }]));
+  it('answers null — and searches for nothing — when the row says nothing usable', async () => {
+    // The content-search fallback is gone. A row without the fields now means "no
+    // conversation to write into", which the caller reports honestly, rather than a
+    // speculative lookup that could land an approved tool result in the wrong session.
+    const { fetchMock } = installFetch(() => json([{ id: SESSION_ID, title: 'Bất kỳ' }]));
 
-    const session = await resolveApprovalChatSession({ id: APPROVAL_ID });
-
-    expect(session).toEqual({ id: SESSION_ID, title: 'Tìm bằng marker' });
-    expect(calls[0].url).toBe(`/api/chat/sessions/search?q=${APPROVAL_ID}`);
+    expect(await resolveApprovalChatSession({ id: APPROVAL_ID })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

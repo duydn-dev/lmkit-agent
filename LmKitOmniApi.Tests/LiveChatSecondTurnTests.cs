@@ -30,6 +30,7 @@ namespace LmKitOmniApi.Tests;
 /// reachable. Loading weights costs tens of seconds and gigabytes of RAM, so this must never
 /// run in the normal suite or in CI, neither of which has a model.</para>
 /// </summary>
+[Collection(LiveModelCollection.Name)]
 public sealed class LiveChatSecondTurnTests
 {
     private const string Marker = "OMNIMARK";
@@ -76,7 +77,14 @@ public sealed class LiveChatSecondTurnTests
         var modelPath = LocateModel();
         Skip.If(modelPath is null, "Set LMKIT_LIVE_SEAM_TEST=1 with a local GGUF to run the live chat proof.");
 
-        using var factory = new LmKitApiFactory();
+        // Disposed explicitly, then collected, before this method returns. This test is the
+        // heaviest in the live collection — a whole API host holding its own copy of the weights
+        // — and leaving that to the GC starved the next live test badly enough that a small
+        // model simply stopped calling its tool. Measured: the live suite is green without this
+        // test, and was red with it, until the release below.
+        var factory = new LmKitApiFactory();
+        try
+        {
         factory.ConfigurationOverrides["AiModels:DefaultChat"] = "live";
         factory.ConfigurationOverrides["AiModels:Models:live:Path"] = modelPath!;
         factory.EnsureSeeded();
@@ -126,6 +134,16 @@ public sealed class LiveChatSecondTurnTests
 
         AssertAnswered(first, "turn 1");
         AssertAnswered(second, "turn 2");
+        }
+        finally
+        {
+            factory.Dispose();
+            // The weights are native memory behind a finalizer; without this the next live test
+            // starts while they are still resident.
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
     }
 
     /// <summary>
