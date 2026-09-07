@@ -109,5 +109,3 @@ guarded deterministically elsewhere and those guards are the real gate:
 - chat answering at all, rather than `[ERROR]: Unable to generate a response.` —
   `LiveChatSecondTurnTests`, which deliberately asserts plumbing and not obedience, and has been
   stable.
-
----
