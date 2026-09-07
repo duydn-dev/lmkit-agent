@@ -15,7 +15,6 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -339,24 +338,12 @@ public abstract class DocumentsApiFactoryBase : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
-        builder.UseSetting("DataProtection:KeyPath", _dataProtectionKeyPath);
-        builder.ConfigureAppConfiguration((_, configuration) =>
-        {
-            configuration.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["JwtSettings:SecretKey"] = "integration-test-secret-key-at-least-32-bytes-long",
-                ["JwtSettings:Issuer"] = "LmKitOmniApi",
-                ["JwtSettings:Audience"] = "LmKitOmniClient",
-                ["JwtSettings:ExpirationInMinutes"] = "30",
-                ["AuthCookies:Secure"] = "false",
-                ["HttpsRedirection:Enabled"] = "false",
-                ["Database:ApplyMigrations"] = "false",
-                ["BootstrapAdmin:Enabled"] = "false",
-                ["ConnectionStrings:Redis"] = "",
-                ["AiModels:WarmupChatModel"] = "false",
-                ["AiModels:RequireChatModelReady"] = "false"
-            });
-        });
+
+        // Host configuration, the same single layer LmKitApiFactory uses — see
+        // TestHostConfiguration for why this host has no ConfigureAppConfiguration layer.
+        var settings = TestHostConfiguration.SharedDefaults();
+        settings["DataProtection:KeyPath"] = _dataProtectionKeyPath;
+        TestHostConfiguration.Apply(builder, settings);
         builder.ConfigureServices(services =>
         {
             foreach (var descriptor in services

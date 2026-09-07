@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -13,7 +14,6 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -110,13 +110,24 @@ public sealed class ApiIntegrationTests : IClassFixture<LmKitApiFactory>
         Assert.True(confirmed.GetProperty("isConfirmed").GetBoolean());
     }
 
+    /// <summary>
+    /// Eleven requests against the host's budget of ten: the eleventh is refused without
+    /// reaching the model, and the refusal advertises the CONFIGURED window.
+    ///
+    /// <para>That last clause is new, and it is the point. This test host asks for a
+    /// 3600-second window; until the factory's settings became host configuration the
+    /// limiter ran on the appsettings default of 60 instead, and the old assertion
+    /// (<c>seconds &gt; 0</c>) could not tell the two apart — it passed on 60 while
+    /// claiming to have proved something about 3600. Asserting the exact value is what
+    /// makes an inert override visible.</para>
+    /// </summary>
     [Fact]
     public async Task AiRateLimit_ReturnsContractOnEleventhRequestWithoutInvokingModel()
     {
         using var client = await CreateAuthenticatedClientAsync();
         var invalidCommand = new { sessionId = Guid.Empty, message = "" };
 
-        for (var requestNumber = 1; requestNumber <= 10; requestNumber++)
+        for (var requestNumber = 1; requestNumber <= LmKitApiFactory.AiRequestsPerWindow; requestNumber++)
         {
             var validationResponse = await client.PostAsJsonAsync("/api/chat/stream", invalidCommand);
             Assert.Equal(HttpStatusCode.BadRequest, validationResponse.StatusCode);
@@ -126,7 +137,8 @@ public sealed class ApiIntegrationTests : IClassFixture<LmKitApiFactory>
 
         Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
         Assert.True(limited.Headers.TryGetValues("Retry-After", out var retryAfter));
-        Assert.True(int.TryParse(Assert.Single(retryAfter), out var seconds) && seconds > 0);
+        Assert.True(int.TryParse(Assert.Single(retryAfter), out var seconds));
+        Assert.Equal(LmKitApiFactory.AiWindowSeconds, seconds);
     }
 
     [Fact]
@@ -251,16 +263,29 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
     /// <summary>
     /// Extra configuration layered on top of the shared test settings, for a one-off
     /// host (e.g. a tighter rate-limit window). Populate it BEFORE touching
-    /// <c>Services</c>/<c>CreateClient</c> — the host is built lazily on first use.
-    /// Kept as a property rather than a constructor argument: xunit class fixtures
-    /// require this type to have exactly one public constructor.
+    /// <c>Services</c>/<c>CreateClient</c> — the host is built lazily on first use, and a
+    /// later write throws rather than being ignored. Kept as a property rather than a
+    /// constructor argument: xunit class fixtures require this type to have exactly one
+    /// public constructor. See <see cref="TestHostConfiguration"/> for why these reach
+    /// <c>Program.cs</c>'s top-level statements at all.
     /// </summary>
-    public Dictionary<string, string?> ConfigurationOverrides { get; } = [];
+    public TestHostConfigurationOverrides ConfigurationOverrides { get; } = new();
 
     public static readonly Guid TenantId = Guid.Parse("11111111-1111-1111-1111-111111111111");
     public static readonly Guid UserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     public const string Email = "integration@example.test";
     public const string Password = "Integration-2026!";
+
+    /// <summary>
+    /// The "ai-agent" budget this host actually runs on. Exposed so a test asserting on the
+    /// limiter states the same numbers the host was configured with instead of repeating a
+    /// literal that can quietly stop matching — which is precisely how the window came to
+    /// be asserted as "some positive number" while the host ran on the appsettings default.
+    /// </summary>
+    public const int AiRequestsPerWindow = 10;
+
+    /// <inheritdoc cref="AiRequestsPerWindow"/>
+    public const int AiWindowSeconds = 3600;
 
     /// <summary>
     /// Every host gets its OWN data-protection key ring. Program.cs reads
@@ -271,11 +296,10 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
     /// protected operation, which surfaces as a 500 on login and takes the whole fixture with
     /// it. Reproduced at <c>xUnit.MaxParallelThreads=32</c>.
     ///
-    /// It has to be <see cref="IWebHostBuilder.UseSetting"/>, not <see cref="ConfigurationOverrides"/>:
-    /// UseSetting writes HOST configuration, which the entry point's top-level statements can
-    /// see, while ConfigureAppConfiguration is merged at builder.Build() — too late for
-    /// anything Program.cs already read. Same reason ConfigurationOverrides silently does
-    /// nothing for settings consumed up there.
+    /// The path travels as host configuration, which is the only layer the entry point's
+    /// top-level statements can see — see <see cref="TestHostConfiguration"/>, which is now
+    /// how EVERY setting on this host is written, including
+    /// <see cref="ConfigurationOverrides"/>.
     /// </summary>
     private readonly string _dataProtectionKeyPath =
         Path.Combine(Path.GetTempPath(), $"lmkit-tests-dpkeys-{Guid.NewGuid():N}");
@@ -308,31 +332,26 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
-        builder.UseSetting("DataProtection:KeyPath", _dataProtectionKeyPath);
-        builder.ConfigureAppConfiguration((_, configuration) =>
-        {
-            configuration.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["JwtSettings:SecretKey"] = "integration-test-secret-key-at-least-32-bytes-long",
-                ["JwtSettings:Issuer"] = "LmKitOmniApi",
-                ["JwtSettings:Audience"] = "LmKitOmniClient",
-                ["JwtSettings:ExpirationInMinutes"] = "30",
-                ["AuthCookies:Secure"] = "false",
-                ["HttpsRedirection:Enabled"] = "false",
-                ["Database:ApplyMigrations"] = "false",
-                ["BootstrapAdmin:Enabled"] = "false",
-                ["ConnectionStrings:Redis"] = "",
-                ["AiModels:WarmupChatModel"] = "false",
-                ["AiModels:RequireChatModelReady"] = "false",
-                ["RateLimiting:AiRequestsPerWindow"] = "10",
-                ["RateLimiting:AiWindowSeconds"] = "3600",
-                // Generous by default so the widget suite's key exchanges never trip the
-                // limiter; the throttling test spins up its own host with a tight window.
-                ["RateLimiting:WidgetAuthRequestsPerWindow"] = "500",
-                ["RateLimiting:WidgetAuthWindowSeconds"] = "3600"
-            });
-            configuration.AddInMemoryCollection(ConfigurationOverrides);
-        });
+
+        var settings = TestHostConfiguration.SharedDefaults();
+        settings["DataProtection:KeyPath"] = _dataProtectionKeyPath;
+        // These two are read by Program.cs BEFORE builder.Build() and are the reason the
+        // seam matters: while they were layered as app configuration the window stayed at
+        // the appsettings default of 60s no matter what this said — measured through the
+        // 429's Retry-After header, which reported 60, not 3600. Now that 3600 is real the
+        // bucket does not refill during a run: a host's AI budget is 10 requests for the
+        // whole class, so a test that needs more than that must build a host of its own.
+        settings["RateLimiting:AiRequestsPerWindow"] = AiRequestsPerWindow.ToString(CultureInfo.InvariantCulture);
+        settings["RateLimiting:AiWindowSeconds"] = AiWindowSeconds.ToString(CultureInfo.InvariantCulture);
+        // Same reasoning for the widget key exchange: the throttling test spins up its own
+        // host with a tight window.
+        settings["RateLimiting:WidgetAuthRequestsPerWindow"] = "500";
+        settings["RateLimiting:WidgetAuthWindowSeconds"] = "3600";
+
+        foreach (var (key, value) in ConfigurationOverrides.Consume())
+            settings[key] = value;
+
+        TestHostConfiguration.Apply(builder, settings);
         builder.ConfigureServices(services =>
         {
             foreach (var descriptor in services
