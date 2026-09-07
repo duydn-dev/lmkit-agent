@@ -80,6 +80,47 @@ public static class VoiceRoomNaming
         $"{tenantId:N}-{userId:N}-{sanitizedLabel}";
 
     /// <summary>
+    /// Number of characters a <c>Guid:N</c> prefix occupies in a room name.
+    /// </summary>
+    private const int GuidHexLength = 32;
+
+    /// <summary>
+    /// The inverse of <see cref="ScopedRoom"/>: reads the tenant and user a room name belongs
+    /// to. Used by the multi-room dispatcher to prove — before joining anything — that a room it
+    /// was asked to serve really is the room of the identity that asked for it. Returns false
+    /// for any name that is not exactly <c>{tenant:N}-{user:N}-{label}</c>.
+    /// </summary>
+    public static bool TryParseScopedRoom(string? room, out Guid tenantId, out Guid userId, out string label)
+    {
+        tenantId = Guid.Empty;
+        userId = Guid.Empty;
+        label = string.Empty;
+
+        if (string.IsNullOrEmpty(room)) return false;
+        // 32 + '-' + 32 + '-' + at least one label character.
+        if (room.Length < (GuidHexLength * 2) + 3) return false;
+        if (room[GuidHexLength] != '-' || room[(GuidHexLength * 2) + 1] != '-') return false;
+
+        if (!Guid.TryParseExact(room[..GuidHexLength], "N", out tenantId) || tenantId == Guid.Empty)
+            return false;
+        if (!Guid.TryParseExact(room.Substring(GuidHexLength + 1, GuidHexLength), "N", out userId) || userId == Guid.Empty)
+        {
+            tenantId = Guid.Empty;
+            return false;
+        }
+
+        label = room[((GuidHexLength * 2) + 2)..];
+        if (label.Length == 0 || !TrySanitizeLabel(label, out var sanitized, out _) || !string.Equals(sanitized, label, StringComparison.Ordinal))
+        {
+            tenantId = Guid.Empty;
+            userId = Guid.Empty;
+            label = string.Empty;
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// The one call both the token endpoint and the agent use: validate the identity,
     /// sanitize the label, and produce the tenant+user scoped room name. Returns false with
     /// a human-readable reason when the identity is missing or the label is unusable.
