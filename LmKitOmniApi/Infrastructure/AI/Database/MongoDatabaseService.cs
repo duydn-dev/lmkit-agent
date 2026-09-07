@@ -18,6 +18,13 @@ namespace LmKitOmniApi.Infrastructure.AI.Database;
 /// </summary>
 public sealed class MongoDatabaseService
 {
+    /// <summary>
+    /// One <see cref="MongoClient"/> per connection string, for the life of the
+    /// process — see <see cref="Connect"/> for why.
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, MongoClient> Clients =
+        new(StringComparer.Ordinal);
+
     private readonly DbEgressValidator _egress;
     private readonly DatabaseAgentOptions _options;
     private readonly ILogger<MongoDatabaseService> _logger;
@@ -225,12 +232,23 @@ public sealed class MongoDatabaseService
         return result.IsAllowed ? null : result.Reason;
     }
 
+    /// <summary>
+    /// Resolves the (cached) client and database for a connection string.
+    /// <para>
+    /// <see cref="MongoClient"/> is designed to be long-lived: it owns a
+    /// connection pool and a background SDAM topology monitor. This service is a
+    /// DI SINGLETON, and it used to new up a client on every call and drop it on
+    /// the floor — one pool plus one monitor thread-set per query, reclaimed only
+    /// by the GC. Clients are now cached per connection string for the lifetime
+    /// of the process, which is exactly the driver's intended usage.
+    /// </para>
+    /// </summary>
     private (IMongoClient Client, IMongoDatabase Database) Connect(string connectionString)
     {
         var url = MongoUrl.Create(connectionString);
         if (string.IsNullOrWhiteSpace(url.DatabaseName))
             throw new InvalidOperationException("Chuỗi kết nối MongoDB phải chỉ định tên database (…/<database>).");
-        var client = new MongoClient(connectionString);
+        var client = Clients.GetOrAdd(connectionString, static cs => new MongoClient(cs));
         return (client, client.GetDatabase(url.DatabaseName));
     }
 

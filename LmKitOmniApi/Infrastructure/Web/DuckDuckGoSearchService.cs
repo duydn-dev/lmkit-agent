@@ -7,8 +7,22 @@ using Microsoft.Extensions.Caching.Distributed;
 
 namespace LmKitOmniApi.Infrastructure.Web;
 
+/// <summary>
+/// Legacy DuckDuckGo HTML-scraper search. Reached only through
+/// <see cref="Search.DuckDuckGoSearchProvider"/> as the LAST link of the
+/// composite chain. Honors the <see cref="WebSearchOutcome"/> contract: hits are
+/// always valid JSON, failures are reported by status.
+/// </summary>
 public class DuckDuckGoSearchService : IWebSearchService
 {
+    /// <summary>
+    /// Cache-key namespace for THIS layer only. It must stay distinct from
+    /// <see cref="Search.ResilientWebSearchService.CacheKeyPrefix"/>: both layers
+    /// hash the same <c>{query}:{count}</c> tuple, so a shared prefix made the
+    /// composite read this scraper's entry back as its own result.
+    /// </summary>
+    internal const string CacheKeyPrefix = "web-search:duckduckgo:";
+
     private readonly HttpClient _httpClient;
     private readonly ILogger<DuckDuckGoSearchService> _logger;
     private readonly IDistributedCache _cache;
@@ -23,14 +37,15 @@ public class DuckDuckGoSearchService : IWebSearchService
         _logger = logger;
     }
 
-    public async Task<string> SearchWebAsync(string query, int count = 5, CancellationToken ct = default)
+    public async Task<WebSearchOutcome> SearchWebAsync(string query, int count = 5, CancellationToken ct = default)
     {
         query = query.Trim();
-        if (query.Length is 0 or > 500) return "[Web search query is invalid.]";
+        if (query.Length is 0 or > 500)
+            return WebSearchOutcome.Empty(WebSearchStatus.InvalidQuery, "Web search query is invalid.");
         count = Math.Clamp(count, 1, 10);
-        var cacheKey = $"web-search:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{query}:{count}")))}";
+        var cacheKey = CacheKeyPrefix + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{query}:{count}")));
         var cached = await _cache.GetStringAsync(cacheKey, ct);
-        if (cached is not null) return cached;
+        if (cached is not null) return WebSearchOutcome.Success(cached);
 
         var url = $"https://html.duckduckgo.com/html/?q={Uri.EscapeDataString(query)}";
         try
@@ -38,7 +53,8 @@ public class DuckDuckGoSearchService : IWebSearchService
             using var responseMessage = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
             responseMessage.EnsureSuccessStatusCode();
             var response = await responseMessage.Content.ReadAsStringAsync(ct);
-            if (response.Length > 2_000_000) return "[Web search response exceeded the safety limit.]";
+            if (response.Length > 2_000_000)
+                return WebSearchOutcome.Empty(WebSearchStatus.Unavailable, "Web search response exceeded the safety limit.");
             var htmlDoc = new HtmlDocument();
             htmlDoc.LoadHtml(response);
 
@@ -63,18 +79,24 @@ public class DuckDuckGoSearchService : IWebSearchService
                 }
             }
 
+            // An empty scrape is NOT cached: DuckDuckGo silently serves zero
+            // results when it throttles us, and caching that would blind the
+            // caller (and, historically, the whole composite chain) for the TTL.
+            if (results.Count == 0)
+                return WebSearchOutcome.Empty(WebSearchStatus.NoResults, "Web search returned no results.");
+
             var serialized = JsonSerializer.Serialize(results);
             await _cache.SetStringAsync(cacheKey, serialized, new DistributedCacheEntryOptions
             {
                 AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
             }, ct);
-            return serialized;
+            return WebSearchOutcome.Success(serialized);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Web search failed.");
-            return "[Web search is temporarily unavailable.]";
+            return WebSearchOutcome.Empty(WebSearchStatus.Unavailable, "Web search is temporarily unavailable.");
         }
     }
 

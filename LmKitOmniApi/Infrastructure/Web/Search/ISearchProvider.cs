@@ -12,7 +12,12 @@ public sealed record WebSearchResult(string Url, string Title, string Snippet);
 /// </summary>
 public interface ISearchProvider
 {
-    /// <summary>Stable provider id used in logs/metrics ("brave", "tavily", "duckduckgo").</summary>
+    /// <summary>
+    /// Stable provider id used in logs/metrics AND for chain precedence
+    /// ("searx", "brave", "tavily", "duckduckgo" — see
+    /// <see cref="ResilientWebSearchService.Rank"/>). An unrecognized id sorts
+    /// after the known API providers but ahead of the DuckDuckGo scraper.
+    /// </summary>
     string Name { get; }
 
     /// <summary>Whether this provider is configured (e.g. an API key is present).</summary>

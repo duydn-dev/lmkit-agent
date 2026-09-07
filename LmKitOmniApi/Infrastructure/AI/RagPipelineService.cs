@@ -298,7 +298,10 @@ public class RagPipelineService : IRagPipelineService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("Keyword search failed, falling back to vector+filter: {Error}", ex.Message);
+            // Reachable again: QdrantVectorService used to swallow every sparse-search
+            // failure and return an empty list, which made this fallback dead code and
+            // hid the "hybrid search is actually dense-only" degradation.
+            _logger.LogWarning(ex, "Keyword (sparse) search failed; falling back to vector+filter retrieval.");
 
             // Fallback: original vector-based keyword filtering (graceful degradation)
             results = await PerformKeywordSearchFallbackAsync(tenantId, userId, query, documentIdAllowlist, ct);

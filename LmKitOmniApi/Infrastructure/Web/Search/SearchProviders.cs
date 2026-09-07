@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using LmKitOmniApi.Application.Abstractions;
 
 namespace LmKitOmniApi.Infrastructure.Web.Search;
 
@@ -134,25 +135,26 @@ public sealed class DuckDuckGoSearchProvider : ISearchProvider
 
     public async Task<List<WebSearchResult>> SearchAsync(string query, int count, CancellationToken ct)
     {
-        var json = await _legacy.SearchWebAsync(query, count, ct);
+        var outcome = await _legacy.SearchWebAsync(query, count, ct);
         var results = new List<WebSearchResult>();
-        try
+
+        // A scraper failure must LOOK like a failure to the composite so it falls
+        // through to nothing-was-found rather than pretending the chain succeeded.
+        if (outcome.Status is WebSearchStatus.Unavailable)
+            throw new HttpRequestException(outcome.Message ?? "DuckDuckGo scrape failed.");
+        if (!outcome.IsSuccess) return results;
+
+        // ResultsJson is contractually a JSON array — no defensive try/catch needed.
+        using var doc = JsonDocument.Parse(outcome.ResultsJson);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array) return results;
+        foreach (var item in doc.RootElement.EnumerateArray())
         {
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) return results;
-            foreach (var item in doc.RootElement.EnumerateArray())
-            {
-                if (item.ValueKind != JsonValueKind.Object) continue;
-                var url = item.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String ? urlEl.GetString() : null;
-                if (url is null) continue;
-                var title = item.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() ?? string.Empty : string.Empty;
-                var snippet = item.TryGetProperty("snippet", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() ?? string.Empty : string.Empty;
-                results.Add(new WebSearchResult(url, title, snippet));
-            }
-        }
-        catch (JsonException)
-        {
-            // Legacy service returns human-readable error strings; treat as no hits.
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var url = item.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String ? urlEl.GetString() : null;
+            if (url is null) continue;
+            var title = item.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() ?? string.Empty : string.Empty;
+            var snippet = item.TryGetProperty("snippet", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() ?? string.Empty : string.Empty;
+            results.Add(new WebSearchResult(url, title, snippet));
         }
         return results;
     }

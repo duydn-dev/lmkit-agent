@@ -438,10 +438,16 @@ public sealed class DeepResearchService
     {
         try
         {
-            var json = await _webSearch.SearchWebAsync(subQuestion, ResearchLimits.MaxUrlsPerSubQuestion, ct);
-            // Non-JSON sentinel strings ("[Web search is temporarily unavailable.]")
-            // fail deserialization and are treated as an empty result.
-            return JsonSerializer.Deserialize<List<WebSearchHit>>(json, JsonOptions) ?? [];
+            var outcome = await _webSearch.SearchWebAsync(subQuestion, ResearchLimits.MaxUrlsPerSubQuestion, ct);
+            if (!outcome.IsSuccess)
+            {
+                _logger.LogWarning(
+                    "Deep research web search returned no usable results for one sub-question ({Status}): {Message}",
+                    outcome.Status, outcome.Message);
+                return [];
+            }
+            // ResultsJson is contractually a JSON array of hits — never prose.
+            return JsonSerializer.Deserialize<List<WebSearchHit>>(outcome.ResultsJson, JsonOptions) ?? [];
         }
         catch (OperationCanceledException) when (requestCt.IsCancellationRequested)
         {
