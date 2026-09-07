@@ -88,13 +88,9 @@ jobs:
 
   fullstack-e2e:
     runs-on: ubuntu-latest
-    env:
-      POSTGRES_PASSWORD: e2e-postgres-password
-      JWT_SECRET_KEY: e2e-jwt-secret-that-is-longer-than-32-bytes
-      REDIS_PASSWORD: e2e-redis-password
-      E2E_ADMIN_EMAIL: e2e-admin@example.test
-      E2E_ADMIN_PASSWORD: E2e-Admin-2026!
-      E2E_BASE_URL: http://127.0.0.1:18080
+    # No job-level env on purpose: the throwaway secrets, ports, bootstrap admin
+    # and base URL are all defaults inside scripts/e2e-fullstack.sh. Restating
+    # any of them here would recreate the duplication this job just removed.
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -106,28 +102,22 @@ jobs:
         working-directory: LmKitOmniClient
       - run: npx playwright install --with-deps chromium
         working-directory: LmKitOmniClient
-      # Single-file e2e mode: all e2e behavior is env-var driven (see the
-      # mode-3 header comment in docker-compose.yml). Job-level env supplies
-      # the required secrets; the step env below adds the e2e-only overrides.
-      # compose up pulls the images; building them first keeps the run on the
-      # fresh commit instead of the last published Docker Hub tag.
+      # Single-file e2e mode: all e2e behavior is env-var driven (see the mode-3
+      # header comment in docker-compose.yml). compose up pulls the images;
+      # building them first keeps the run on the fresh commit instead of the last
+      # published Docker Hub tag.
       - name: Build images locally (not pushed)
         run: ./scripts/build-push.sh --no-push api client
-      - name: Start e2e stack (prod compose file)
-        run: >-
-          docker compose -f docker-compose.prod.yml --env-file .env.example -p lmkit-fullstack-e2e
-          up -d --wait --wait-timeout 180
-        env:
-          BOOTSTRAP_ADMIN_ENABLED: "true"
-          BOOTSTRAP_ADMIN_EMAIL: e2e-admin@example.test
-          BOOTSTRAP_ADMIN_PASSWORD: E2e-Admin-2026!
-          API_HOST_PORT: 15032
-          CLIENT_HOST_PORT: 18080
-          POSTGRES_HOST_PORT: 15432
-          QDRANT_HTTP_HOST_PORT: 16333
-          QDRANT_GRPC_HOST_PORT: 16334
-          REDIS_HOST_PORT: 16379
-      - run: npm run test:e2e:fullstack
-        working-directory: LmKitOmniClient
+      # ANTI-DRIFT: these three steps deliberately contain no compose flags, no
+      # port numbers and no bootstrap values. Every one of those lives in
+      # scripts/e2e-fullstack.sh, which a developer runs verbatim, so CI and a
+      # local run execute byte-identical commands and cannot diverge. The env
+      # wall used to be copy-pasted here, in README.md and in the deployment
+      # runbook — and the runbook copy had silently lost
+      # `-f docker-compose.prod.yml`, booting a stack with no api and no client.
+      - name: Start e2e stack (prod compose file, isolated project)
+        run: ./scripts/e2e-fullstack.sh up
+      - name: Run fullstack browser gate
+        run: ./scripts/e2e-fullstack.sh test
       - if: always()
-        run: docker compose -f docker-compose.prod.yml -p lmkit-fullstack-e2e down -v --remove-orphans
+        run: ./scripts/e2e-fullstack.sh down

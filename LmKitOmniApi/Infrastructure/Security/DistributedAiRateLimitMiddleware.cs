@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.RateLimiting;
@@ -51,9 +50,14 @@ public sealed class DistributedAiRateLimitMiddleware
             return;
         }
 
-        var partition = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
-            ?? context.Connection.RemoteIpAddress?.ToString()
-            ?? "anonymous";
+        // Same derivation as the in-process "ai-agent" policy in Program.cs. These are two
+        // halves of ONE logical budget, so they MUST agree: this middleware used to key on
+        // the NameIdentifier claim while the policy keyed on User.Identity.Name, and both
+        // keyed on the owning user for API-key callers instead of on the key itself.
+        // UseAuthentication has already run (see the pipeline order in Program.cs) and its
+        // ForwardDefaultSelector routes X-Api-Key requests to the ApiKey scheme, so the
+        // api_key_id claim is present here for key-authenticated callers.
+        var partition = RateLimitPartitionKey.Resolve(context);
         var window = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / _windowSeconds;
         var key = $"rate:ai:{BuildPartitionHash(partition)}:{window}";
 

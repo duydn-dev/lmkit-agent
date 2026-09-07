@@ -26,8 +26,8 @@ namespace LmKitOmniApi.Infrastructure.AI.Voice;
 /// ONE ROOM PER PROCESS: this service is a single background participant, so it occupies
 /// exactly ONE room — the one belonging to <c>Voice:AgentTenantId</c> / <c>Voice:AgentUserId</c>.
 /// It stands down (loudly) when those are unset instead of joining a room no caller will ever
-/// be in. Serving many users at once requires a room-dispatcher redesign; see
-/// <c>VOICE-CU-FIX-INTEGRATION.md</c>.
+/// be in. Serving many users at once requires a room-dispatcher redesign; tracked in
+/// <c>LmKitOmniApi/docs/known-issues.md</c>.
 ///
 /// CREDENTIALS: resolved once through <see cref="VoiceLiveKitCredentials"/>, so
 /// <c>Voice:LiveKit*</c> and the shared <c>LiveKit:*</c> block configure this agent and the

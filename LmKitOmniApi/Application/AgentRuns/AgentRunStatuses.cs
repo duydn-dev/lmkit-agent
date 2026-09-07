@@ -12,14 +12,14 @@ namespace LmKitOmniApi.Application.AgentRuns;
 /// </para>
 ///
 /// <para>
-/// <see cref="AwaitingApproval"/> is the only non-terminal resting state. It is
-/// left by <c>AgentRunApprovalReconciler</c> when the human resolves the gating
-/// <see cref="Domain.Entities.TaskApproval"/> — approve resolves to
-/// <see cref="CompletedAfterApproval"/> (or <see cref="Failed"/> when the tool
-/// throws), reject resolves to <see cref="Rejected"/>. Nothing else ever moves a
-/// run out of it, so an approval that is never answered leaves the run parked
-/// here indefinitely (see AGENTRUN-FIX-INTEGRATION.md — "expiry" is the one
-/// remaining hole and needs a background sweeper).
+/// <see cref="AwaitingApproval"/> is the only non-terminal resting state, and it is
+/// now BOUNDED. It is left by <c>AgentRunApprovalReconciler</c> when the gating
+/// <see cref="Domain.Entities.TaskApproval"/> is resolved — a human's approve
+/// resolves to <see cref="CompletedAfterApproval"/> (or <see cref="Failed"/> when the
+/// tool throws), a human's reject resolves to <see cref="Rejected"/>, and an approval
+/// that no human answers before its <c>ExpiresAtUtc</c> is swept to
+/// <see cref="Expired"/> by <c>ApprovalExpirySweeper</c>. With that last edge in
+/// place every run reaches a terminal state on its own; nothing parks here forever.
 /// </para>
 /// </summary>
 public static class AgentRunStatuses
@@ -56,4 +56,14 @@ public static class AgentRunStatuses
 
     /// <summary>Terminal: a human rejected the gated tool, so the run stops without executing it.</summary>
     public const string Rejected = "Rejected";
+
+    /// <summary>
+    /// Terminal: nobody answered the gating <see cref="Domain.Entities.TaskApproval"/>
+    /// before it expired, so the background sweeper closed the run. The gated tool did
+    /// NOT execute — semantically this is closer to <see cref="Rejected"/> than to any
+    /// success, but it is kept distinct so "a human said no" is never confused with
+    /// "nobody looked", which is an operational signal about the approval queue rather
+    /// than a decision about the action.
+    /// </summary>
+    public const string Expired = "Expired";
 }

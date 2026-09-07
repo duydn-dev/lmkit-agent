@@ -402,6 +402,9 @@ builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DataRetent
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ModelWarmupWorker>();
 // Tier 2: user-defined recurring prompts delivered as notifications.
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ScheduledTaskWorker>();
+// Expires unanswered HITL approvals so a run parked on one reaches a terminal state
+// instead of hanging forever, and a weeks-old gated tool call can never be executed.
+LmKitOmniApi.Application.Approvals.ApprovalExpiryServiceCollectionExtensions.AddApprovalExpiry(builder.Services, builder.Configuration);
 
 // ============================================================
 // 🔄 Multi-Agent System (Phase 3)
@@ -581,6 +584,14 @@ if (!string.IsNullOrWhiteSpace(redisConnectionString))
     healthChecks.AddCheck<LmKitOmniApi.Infrastructure.Health.RedisHealthCheck>("redis", tags: ["ready"]);
 
 // ============================================================
+// 🌐 Real client IP behind the reverse proxy (opt-in, explicitly trusted peers)
+// ============================================================
+// Off unless ForwardedHeaders:Enabled is true AND a trusted proxy/network is listed —
+// see ForwardedHeadersSetup. Validation runs HERE so a misconfiguration fails at
+// startup rather than silently trusting a spoofable header on the first request.
+builder.Services.AddConfiguredForwardedHeaders(builder.Configuration);
+
+// ============================================================
 // 🚦 Rate Limiting (bảo vệ tài nguyên LLM đắt đỏ)
 // ============================================================
 var aiRequestsPerWindow = builder.Configuration.GetValue("RateLimiting:AiRequestsPerWindow", 10);
@@ -608,9 +619,13 @@ builder.Services.AddRateLimiter(options =>
     
     // Local token bucket is the fallback and also protects each process. When Redis
     // is configured, DistributedAiRateLimitMiddleware adds a cross-replica atomic window.
+    // Partition: API key → JWT subject → IP, derived by RateLimitPartitionKey, which the
+    // distributed middleware calls too so both halves of this ONE budget agree. It used
+    // to key on User.Identity.Name here and on the NameIdentifier claim there, and on the
+    // owning USER for API keys — so every key a user owned shared a single budget.
     options.AddPolicy("ai-agent", httpContext =>
         RateLimitPartition.GetTokenBucketLimiter(
-            httpContext.User.Identity?.Name ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            RateLimitPartitionKey.Resolve(httpContext),
             _ => new TokenBucketRateLimiterOptions
             {
                 TokenLimit = aiRequestsPerWindow,
@@ -619,9 +634,15 @@ builder.Services.AddRateLimiter(options =>
                 AutoReplenishment = true
             }));
 
+    // DELIBERATELY pure per-IP — do NOT switch this to RateLimitPartitionKey.Resolve.
+    // /api/auth/login is where an attacker GUESSES the identity, so partitioning by any
+    // identity derived from the request would hand them a fresh 5-attempt budget per
+    // guessed account and defeat the limit outright. ResolveClientIp is used only so the
+    // address is normalised the same way everywhere (IPv4-mapped IPv6 folded, explicit
+    // "ip:" prefix); the partitioning itself is unchanged.
     options.AddPolicy("LoginPolicy", httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
-            httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            RateLimitPartitionKey.ResolveClientIp(httpContext),
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 5,
@@ -632,9 +653,11 @@ builder.Services.AddRateLimiter(options =>
 
     // Anonymous share-link reads: per-IP fixed window so a single host cannot scan
     // for tokens, while legitimate viewers stay comfortably under the limit.
+    // Same reasoning as LoginPolicy: the share token IS the guessed secret, so this
+    // stays pure per-IP and must not be partitioned by anything the caller supplies.
     options.AddPolicy("SharePolicy", httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
-            httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            RateLimitPartitionKey.ResolveClientIp(httpContext),
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 30,
@@ -647,9 +670,11 @@ builder.Services.AddRateLimiter(options =>
     // LoginPolicy/SharePolicy. It is unauthenticated and drives a key-hash lookup, so it must be
     // throttled before it reaches the database. This policy deliberately reads nothing from
     // HttpContext.Items, so it is safe on either side of UseAuthorization.
+    // Also pure per-IP on purpose: the raw widget key is the credential being brute-forced,
+    // so keying on anything derived from it would give the attacker a bucket per guess.
     options.AddPolicy(LmKitOmniApi.Controllers.WidgetPublicController.AuthRateLimitPolicyName, httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
-            httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            RateLimitPartitionKey.ResolveClientIp(httpContext),
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = httpContext.RequestServices.GetRequiredService<IConfiguration>()
@@ -723,6 +748,13 @@ if (builder.Configuration.GetValue<bool>("BootstrapAdmin:Enabled"))
         }
     }
 }
+
+// FIRST in the pipeline, and only when explicitly enabled with a trusted proxy list.
+// Everything downstream that reads Connection.RemoteIpAddress must see the real caller:
+// AuthController's failed-login record, AuditSaveChangesInterceptor, and every per-IP
+// rate-limit partition. Ahead of HTTPS redirection and HSTS too, since those depend on
+// the forwarded scheme when ForwardedHeaders:IncludeProto is turned on.
+app.UseConfiguredForwardedHeaders(builder.Configuration);
 
 if (app.Environment.IsDevelopment())
 {

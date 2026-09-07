@@ -29,8 +29,7 @@ namespace LmKitOmniApi.Tests;
 /// the end-to-end write path: a produced (filled/redacted) file lands in the caller's
 /// isolated upload root and is downloadable via /api/files/{id}.
 ///
-/// The services are registered in the TEST host (the production Program.cs wiring is
-/// the coordinator's job — see PDF-INTEGRATION.md), so these tests do not depend on
+/// The services are registered in the TEST host, so these tests do not depend on
 /// the agent tool-graph.
 /// </summary>
 public sealed class DocumentsControllerTests
@@ -306,9 +305,8 @@ public sealed class DocumentsControllerTests
 /// <summary>
 /// Test host for the documents controller. Mirrors <c>LmKitApiFactory</c>'s hardening
 /// (in-memory SQLite, no background workers, fake MCP client, disabled HTTPS/redis)
-/// and additionally registers the document services + options in the TEST host — the
-/// production Program.cs wiring is documented in PDF-INTEGRATION.md for the
-/// coordinator, so these tests never depend on it.
+/// and additionally registers the document services + options in the TEST host, so
+/// these tests never depend on the production <c>Program.cs</c> wiring.
 /// </summary>
 public abstract class DocumentsApiFactoryBase : WebApplicationFactory<Program>
 {
@@ -320,16 +318,28 @@ public abstract class DocumentsApiFactoryBase : WebApplicationFactory<Program>
     protected abstract bool DocumentToolsEnabled { get; }
     protected virtual long MaxInputBytes => 25L * 1024 * 1024;
 
-    private readonly SqliteConnection _connection = new("Data Source=:memory:");
+    /// <summary>Per-host key ring — see the note on <c>LmKitApiFactory</c>.</summary>
+    private readonly string _dataProtectionKeyPath =
+        Path.Combine(Path.GetTempPath(), $"lmkit-tests-dpkeys-{Guid.NewGuid():N}");
+
+    /// <summary>Named shared-cache in-memory db — see the note on <c>LmKitApiFactory</c>.</summary>
+    private readonly string _databaseName = $"lmkit-tests-{Guid.NewGuid():N}";
+
+    private string ConnectionString => $"Data Source={_databaseName};Mode=Memory;Cache=Shared";
+
+    private readonly SqliteConnection _connection;
     private readonly ServiceProvider _sqliteProvider = new ServiceCollection()
         .AddEntityFrameworkSqlite()
         .BuildServiceProvider();
     private readonly object _seedLock = new();
     private bool _seeded;
 
+    protected DocumentsApiFactoryBase() => _connection = new SqliteConnection(ConnectionString);
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
+        builder.UseSetting("DataProtection:KeyPath", _dataProtectionKeyPath);
         builder.ConfigureAppConfiguration((_, configuration) =>
         {
             configuration.AddInMemoryCollection(new Dictionary<string, string?>
@@ -367,13 +377,13 @@ public abstract class DocumentsApiFactoryBase : WebApplicationFactory<Program>
             _connection.Open();
             services.AddSingleton(_connection);
             services.AddDbContext<HermesDbContext>((provider, options) =>
-                options.UseSqlite(_connection)
+                options.UseSqlite(ConnectionString)
                     .UseInternalServiceProvider(_sqliteProvider)
                     .AddInterceptors(provider.GetRequiredService<AuditSaveChangesInterceptor>()));
             services.RemoveAll<IMcpProtocolClient>();
             services.AddSingleton<IMcpProtocolClient, TestMcpProtocolClient>();
 
-            // ── Document tools registration (mirrors the Program.cs snippet in PDF-INTEGRATION.md) ──
+            // ── Document tools registration (mirrors the production Program.cs wiring) ──
             services.Configure<DocumentToolsOptions>(o =>
             {
                 o.Enabled = DocumentToolsEnabled;
@@ -418,6 +428,9 @@ public abstract class DocumentsApiFactoryBase : WebApplicationFactory<Program>
         {
             _connection.Dispose();
             _sqliteProvider.Dispose();
+            try { Directory.Delete(_dataProtectionKeyPath, recursive: true); }
+            catch (DirectoryNotFoundException) { }
+            catch (IOException) { /* best effort cleanup */ }
         }
     }
 }

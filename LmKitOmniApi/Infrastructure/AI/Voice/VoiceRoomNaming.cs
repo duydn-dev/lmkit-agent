@@ -20,8 +20,8 @@ namespace LmKitOmniApi.Infrastructure.AI.Voice;
 ///
 /// A caller who wants several concurrent rooms (e.g. one per browser tab) passes a
 /// distinct label — the naming stays per-user, which is the isolation boundary that
-/// matters. See <c>VOICE-CU-FIX-INTEGRATION.md</c> for how the single-room hosted agent
-/// is pointed at one of these rooms.
+/// matters. <see cref="VoiceRoomAgentHostedService"/> documents how the single-room hosted
+/// agent is pointed at one of these rooms.
 /// </summary>
 public static class VoiceRoomNaming
 {

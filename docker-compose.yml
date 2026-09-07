@@ -1,13 +1,30 @@
 # =============================================================================
-# Local development compose — INFRASTRUCTURE ONLY.
+# THERE ARE EXACTLY TWO COMPOSE FILES IN THIS REPO, AND THREE WAYS TO RUN.
+# Never add a third file, an override file, or a second full stack behind a
+# profile — every mode below is the same two files plus environment variables.
 #
-# API and frontend run directly on the host for debugging:
-#   1) docker compose --env-file .env up -d
-#   2) Backend:  dotnet run --project LmKitOmniApi      (http://localhost:5032)
-#   3) Frontend: cd LmKitOmniClient && npm run dev      (http://localhost:5173)
+#   THIS FILE (docker-compose.yml) = dev infrastructure only. No api, no client.
+#   docker-compose.prod.yml        = the ONE full stack (api + client + infra).
 #
-# For the full containerized stack (Nginx + API + infra) use:
-#   docker compose -f docker-compose.prod.yml --env-file .env up -d
+# ── Mode 1 — dev infra only (this file) ──────────────────────────────────────
+#   API and frontend run directly on the host so they can be debugged:
+#     1) docker compose --env-file .env up -d
+#     2) Backend:  dotnet run --project LmKitOmniApi      (http://localhost:5032)
+#     3) Frontend: cd LmKitOmniClient && npm run dev      (http://localhost:5173)
+#
+# ── Mode 2 — full containerized stack (prod file) ────────────────────────────
+#     docker compose -f docker-compose.prod.yml --env-file .env up -d
+#   Nginx (client) on CLIENT_HOST_PORT, API on API_HOST_PORT, plus infra.
+#
+# ── Mode 3 — isolated fullstack e2e gate (prod file, nothing else) ───────────
+#   The SAME docker-compose.prod.yml, made side-by-side-safe purely with env
+#   vars: shifted host ports (18080/15032/15432/16333/16334/16379), a bootstrap
+#   admin for the browser tests, no GPU request, and a separate Compose project
+#   name (-p lmkit-fullstack-e2e) so its containers, network and volumes never
+#   collide with a developer's mode-1/mode-2 stack.
+#   Do not type that env wall by hand — one script owns it, and CI calls the
+#   very same script:
+#     ./scripts/e2e-fullstack.sh up | test | down     (Windows: scripts\e2e-fullstack.bat)
 # =============================================================================
 
 services:

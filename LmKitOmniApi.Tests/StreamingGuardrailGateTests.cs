@@ -29,8 +29,16 @@ namespace LmKitOmniApi.Tests;
 /// </summary>
 public sealed class StreamingGuardrailGateTests
 {
-    // Mirrors StreamingGuardrailGate.HoldbackChars (private const).
+    // Mirrors StreamingGuardrailGate.MaxHoldChars (private const): the hard upper
+    // bound on the computed hold, i.e. the flat holdback the computed rule replaced.
     private const int HoldbackChars = 512;
+
+    /// <summary>
+    /// Ceiling for "how much of a clean-prose answer is still unreleased when the
+    /// stream ends": the computed hold on prose (11, from the bounded SSN pattern)
+    /// plus at most one 32-char emit stride of batching.
+    /// </summary>
+    private const int MaxCleanProseHold = 48;
 
     // Clean carrier text: no credential keyword, no SSN/email shape, so it can never
     // itself trip a hold rule or a detector.
@@ -226,60 +234,118 @@ public sealed class StreamingGuardrailGateTests
         Assert.Equal(outcome.Final, outcome.Emitted + outcome.Tail);
     }
 
-    // ── The holdback's cost: short answers never stream at all ────────────
+    // ── Short answers really stream (the defect this class used to have) ──
 
     /// <summary>
-    /// Documented finding (see AGENTRUN-FIX-INTEGRATION.md). The emission cap is
-    /// <c>view.Length - HoldbackChars</c>, so NOTHING is released until the answer
-    /// passes 512 characters — despite the call site advertising "TRUE token
-    /// streaming". Typical chat answers are shorter than that, so they arrive in a
-    /// single burst at the end of the stream.
+    /// Regression pin for the defect fixed in round 2: the emission cap used to be
+    /// <c>view.Length - 512</c>, so NOTHING was released until an answer passed 512
+    /// characters — and most chat answers never do, which made the advertised "TRUE
+    /// token streaming" arrive as a single end-of-stream burst.
     ///
-    /// <para>NOT fixed: the holdback is what makes the redaction correct. Shrinking it
-    /// re-opens the exact leak these tests pin — the email pattern's local part is
-    /// unbounded, so a match can begin arbitrarily far behind the live edge and a
-    /// shorter window would let its head stream out before the '@' proves it was an
-    /// address. This test pins the behaviour so the trade-off stays visible and any
-    /// future change to it is deliberate.</para>
+    /// <para>The flat 512 is now a computed hold: the earliest index at or after which
+    /// a redaction pattern could still claim text once more characters arrive. On
+    /// clean prose that is a couple of dozen characters, so a short answer streams.
+    /// These lengths all FAIL on the pre-fix gate (they emit nothing).</para>
     /// </summary>
     [Theory]
     [InlineData(64)]
+    [InlineData(120)]
     [InlineData(200)]
     [InlineData(511)]
-    [InlineData(512)]
-    public async Task AnswerShorterThanTheHoldbackWindow_StreamsNothingAtAll(int length)
+    public async Task ShortAnswer_StreamsBeforeEndOfStream(int length)
     {
         var document = Filler(60)[..length];
 
         var outcome = await RunAsync(SplitEvery(document, 8), secretMarkers: []);
 
-        Assert.Empty(outcome.Emitted);
-        // The whole answer is released in one burst by the end-of-stream tail.
-        Assert.Equal(document, outcome.Tail);
+        Assert.NotEmpty(outcome.Emitted);
+        // Almost all of it: the hold on clean prose is a small constant, not 512.
+        Assert.True(
+            outcome.Tail.Length <= MaxCleanProseHold,
+            $"Held back {outcome.Tail.Length} chars of a {length}-char answer; expected <= {MaxCleanProseHold}.");
+        Assert.Equal(document, outcome.Emitted + outcome.Tail);
     }
 
+    /// <summary>
+    /// The first flush arrives early, not after 512 characters. 32 characters is the
+    /// steady-state emit stride; the first attempt uses a shorter one so a two-line
+    /// answer is not swallowed whole.
+    /// </summary>
     [Fact]
-    public async Task AnswerJustPastTheHoldbackWindow_StartsStreaming()
+    public async Task FirstChunk_ArrivesWellBeforeFiveHundredCharacters()
     {
-        // 513 chars is the first length that can release anything, and only the single
-        // character beyond the window.
-        var outcome = await RunAsync([Filler(60)[..513]], secretMarkers: []);
+        var document = Filler(60);
+        var firstEmitAt = -1;
+        var rawSoFar = 0;
 
-        Assert.Equal(1, outcome.Emitted.Length);
-        Assert.Equal(513 - HoldbackChars, outcome.Emitted.Length);
+        await RunAsync(
+            SplitEvery(document, 4),
+            secretMarkers: [],
+            beforeEach: chunk => rawSoFar += chunk.Length,
+            afterEach: (chunk, _) =>
+            {
+                if (firstEmitAt < 0 && chunk.Length > 0) firstEmitAt = rawSoFar;
+            });
+
+        Assert.InRange(firstEmitAt, 1, 64);
     }
 
     [Fact]
     public async Task EmitStride_DefersReleaseUntilEnoughNewTextArrives()
     {
-        // A final partial chunk smaller than the 32-char stride is not even evaluated,
-        // so an answer can exceed the holdback and STILL stream nothing.
+        // Batching is still real: a final partial chunk smaller than the steady-state
+        // stride is not evaluated, so the tail carries it plus the computed hold.
         var document = Filler(60)[..520];
 
         var outcome = await RunAsync(SplitEvery(document, 32), secretMarkers: []);
 
+        Assert.NotEmpty(outcome.Emitted);
+        // 520 = 16*32 + 8; the trailing 8-char chunk never triggers an attempt.
+        Assert.InRange(outcome.Tail.Length, 8, 8 + MaxCleanProseHold);
+        Assert.Equal(document, outcome.Emitted + outcome.Tail);
+    }
+
+    /// <summary>
+    /// The documented cost of an exact (unclamped) hold: an unbroken run of
+    /// email-legal characters is held whole, because any character of it could still
+    /// turn out to be the local part of an address. Such an answer streams nothing
+    /// and is delivered by the end-of-stream flush — a stall, never a divergence.
+    ///
+    /// <para>The old flat-512 rule released text here and DID diverge on the same
+    /// input past ~530 characters, which makes the caller suppress the tail; that is
+    /// the regression this exactness buys out.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("aaaaaaaa")]          // an unbroken run of email-legal characters
+    [InlineData("a.b-c_d+e%f")]       // ditto, every legal punctuation
+    public async Task UnbrokenRunOfEmailLegalCharacters_IsHeldWhole_AndNeverDiverges(string unit)
+    {
+        var document = string.Concat(Enumerable.Repeat(unit, 400));
+        Assert.True(document.Length > HoldbackChars);
+
+        var outcome = await RunAsync([document], secretMarkers: []);
+
         Assert.Empty(outcome.Emitted);
+        // Tail is asserted through StreamOutcome.Tail, which checks the prefix invariant.
         Assert.Equal(document, outcome.Tail);
+    }
+
+    /// <summary>
+    /// The same run, once a space ends it: the hold collapses back to the prose
+    /// constant and everything before the run streams immediately.
+    /// </summary>
+    [Fact]
+    public async Task OnceAnUnbrokenRunEnds_TheHoldCollapsesAndEmissionResumes()
+    {
+        var run = new string('a', 900);
+        var document = Filler(2) + run + " " + Filler(2);
+
+        var outcome = await RunAsync(SplitEvery(document, 16), secretMarkers: []);
+
+        Assert.True(
+            outcome.Emitted.Length > Filler(2).Length + run.Length,
+            $"Emission did not resume past the run: only {outcome.Emitted.Length} of {document.Length} chars.");
+        Assert.Equal(document, outcome.Emitted + outcome.Tail);
     }
 
     // ── harness ───────────────────────────────────────────────────────────
@@ -312,13 +378,15 @@ public sealed class StreamingGuardrailGateTests
     private static async Task<StreamOutcome> RunAsync(
         IEnumerable<string> chunks,
         string[] secretMarkers,
-        Action<string, string>? afterEach = null)
+        Action<string, string>? afterEach = null,
+        Action<string>? beforeEach = null)
     {
         var guard = new PromptGuardService(NullLogger<PromptGuardService>.Instance);
         var gate = new StreamingGuardrailGate(guard);
 
         foreach (var chunk in chunks)
         {
+            beforeEach?.Invoke(chunk);
             var emittedChunk = await gate.AppendAndTryEmitAsync(chunk, CancellationToken.None);
             var emittedSoFar = gate.EmittedText;
 

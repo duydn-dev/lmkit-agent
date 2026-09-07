@@ -6,6 +6,28 @@
 
 **Điểm trưởng thành sau remediation:** **7,4/10** (trung bình không trọng số của 23 nhóm, làm tròn một chữ số)
 
+> **Đây là ảnh chụp tại ngày 2026-08-20, không phải hiện trạng.** Điểm số, số lượng test và mô tả
+> bên dưới đúng với commit của ngày đó và **không** được cập nhật theo các thay đổi sau này. Đọc
+> [ai-agent-capabilities.md](../ai-agent-capabilities.md) để biết hiện trạng, và
+> [known-issues.md](../known-issues.md) để biết defect còn mở.
+>
+> Những mục đã bị thay đổi rõ rệt kể từ ảnh chụp này:
+>
+> - **#18 Embeddable chat widget (4,5)** — credential/origin contract nay đã có thật:
+>   `WidgetPublicController` với `POST /api/widget/auth` (`[AllowAnonymous]`), widget key hash
+>   at rest + rotate, origin allowlist, token ngắn hạn và quota phút/ngày. Việc nhúng thật đã
+>   chạy được sau khi sửa `auth_request` trong `nginx.conf`, có test e2e trên stack thật.
+> - **#19 Notification / API key (4,5)** — không còn là schema kế thừa: `ApiKeysController`
+>   (`X-Api-Key`, hash SHA-256, không tự quản lý được bằng chính key đó) và
+>   `NotificationsController` + `ScheduledTaskWorker` ghi notification thật đều đang chạy.
+>   Riêng graph runtime thì đã bị gỡ hẳn — không còn entity graph nào trong `Domain/Entities`.
+> - **#13 Speech và LiveKit voice (5,8)** — `livekit` service chạy ở cả hai profile
+>   `development` và `production`, và đã có hosted voice-room agent thật (tắt mặc định).
+> - **#16 Web search (6,5)** — SearXNG self-hosted là provider đầu chuỗi, DuckDuckGo scraper
+>   tụt xuống cuối làm fallback.
+> - **#22 Test và CI/CD (8,9)** — các con số "102 backend / 16 frontend / 4 browser / 1 full-stack"
+>   là của ngày đó và đã lạc hậu; suite hiện lớn hơn nhiều. Đừng trích lại chúng.
+
 ## Cách chấm điểm
 
 - **0-2:** placeholder hoặc không có đường dùng end-to-end.

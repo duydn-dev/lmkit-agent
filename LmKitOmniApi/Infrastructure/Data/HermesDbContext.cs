@@ -204,6 +204,13 @@ public class HermesDbContext : DbContext
             .HasOne(t => t.User).WithMany().HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<TaskApproval>()
             .HasOne(t => t.ChatSession).WithMany().HasForeignKey(t => t.ChatSessionId).OnDelete(DeleteBehavior.Cascade);
+        // The expiry sweeper's only query: WHERE Status = 'Pending' AND ExpiresAtUtc <= now
+        // ORDER BY ExpiresAtUtc. Status first (equality) then ExpiresAtUtc (range + sort) is
+        // the column order that lets one index serve both the filter and the ordering, so a
+        // sweep stays a bounded index scan instead of reading every approval ever created.
+        // It serves the pending-list query's deadline predicate too.
+        modelBuilder.Entity<TaskApproval>()
+            .HasIndex(t => new { t.Status, t.ExpiresAtUtc });
 
         modelBuilder.Entity<TenantApiCryptoKey>()
             .HasOne(t => t.Tenant).WithMany().HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);

@@ -35,7 +35,7 @@ public sealed class WidgetPublicController(
     /// LoginPolicy/SharePolicy shape used by the other unauthenticated endpoints.
     /// The exchange is a credential-presenting endpoint that drives an indexed
     /// key-hash lookup, so it must be throttled before it reaches the database.
-    /// Registered in <c>Program.cs</c> — see <c>WIDGET-FIX-INTEGRATION.md</c>.
+    /// Registered in <c>Program.cs</c> alongside the other rate-limit policies.
     /// </summary>
     public const string AuthRateLimitPolicyName = "widget-auth";
 

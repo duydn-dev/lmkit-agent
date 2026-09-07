@@ -85,8 +85,8 @@ public sealed class VoiceOptions
     // occupy ONE room. Because rooms are now scoped per user, the operator must name the
     // tenant/user whose room that is. Empty (the default) ⇒ the hosted service stands down
     // with a clear message rather than silently joining a room no caller will ever be in.
-    // Serving many users concurrently needs a room-dispatcher redesign — see
-    // VOICE-CU-FIX-INTEGRATION.md.
+    // Serving many users concurrently needs a room-dispatcher redesign — tracked in
+    // LmKitOmniApi/docs/known-issues.md.
 
     /// <summary>Tenant id (GUID) whose voice room the hosted agent joins. Empty ⇒ stand down.</summary>
     public string AgentTenantId { get; set; } = string.Empty;

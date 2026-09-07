@@ -4,6 +4,10 @@
 **Chuẩn tham chiếu:** WCAG 2.1 AA  
 **Phạm vi:** login, app shell/navigation, chat, widget, document, memory, user management và voice controls
 
+> **Ảnh chụp tại ngày 2026-08-20.** Các phát hiện và cách khắc phục vẫn đúng, nhưng số lượng test
+> ở mục "Bằng chứng tự động" là của ngày đó và đã lạc hậu — đừng trích lại chúng. Suite hiện tại
+> chạy ở `.github/workflows/ci.yml` (job `frontend`: `npm run test:unit` rồi `npm run test:e2e`).
+
 ## Kết luận
 
 Đợt remediation đã đóng các lỗi accessibility có thể xác minh ở source/build/browser: thiếu landmark, control không semantic, form thiếu label, icon button thiếu accessible name, focus indicator không nhất quán, target nhỏ hơn 44×44 px, animation không tôn trọng reduced-motion, trạng thái động không được thông báo và theme có contrast không nhất quán. Source guardrails và axe WCAG browser scan đều chạy trong CI.

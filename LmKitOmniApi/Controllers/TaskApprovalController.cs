@@ -52,6 +52,11 @@ public class TaskApprovalController : ApiControllerBase
         if (outcome.Outcome == ApproveTaskOutcome.Conflict)
             return Conflict("Task is no longer pending.");
 
+        // 410 rather than 409: the request was well-formed and nothing raced it — the
+        // task simply stopped being answerable, permanently. Nothing executed.
+        if (outcome.Outcome == ApproveTaskOutcome.Expired)
+            return StatusCode(StatusCodes.Status410Gone, "Task approval has expired and was not executed.");
+
         if (outcome.Outcome == ApproveTaskOutcome.Failed)
         {
             return StatusCode(StatusCodes.Status500InternalServerError, new

@@ -95,6 +95,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly AgentTelemetryService _telemetry;
     private readonly AgentToolAuditService _toolAudit;
     private readonly TaskApprovalPayloadProtector _approvalPayloads;
+    private readonly LmKitOmniApi.Application.Approvals.ApprovalExpiryOptions _approvalExpiry;
 
     // ── Resilience ──
     private readonly AgentResiliencePolicy _resilience;
@@ -166,6 +167,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         AgentTelemetryService telemetry,
         AgentToolAuditService toolAudit,
         TaskApprovalPayloadProtector approvalPayloads,
+        Microsoft.Extensions.Options.IOptions<LmKitOmniApi.Application.Approvals.ApprovalExpiryOptions> approvalExpiry,
         AgentResiliencePolicy resilience,
         PromptTemplateEngine promptTemplate,
         LmKitDefaultToolCatalog defaultToolCatalog,
@@ -191,6 +193,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         _telemetry = telemetry;
         _toolAudit = toolAudit;
         _approvalPayloads = approvalPayloads;
+        _approvalExpiry = approvalExpiry.Value;
         _resilience = resilience;
         _promptTemplate = promptTemplate;
         _defaultToolCatalog = defaultToolCatalog;
@@ -864,6 +867,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             if (permResult.RequiresApproval)
             {
                 var taskId = Guid.NewGuid();
+                var requestedAt = DateTime.UtcNow;
                 var approval = new LmKitOmniApi.Domain.Entities.TaskApproval
                 {
                     Id = taskId,
@@ -872,7 +876,12 @@ public class AgentOrchestrator : IAgentOrchestrator
                     ChatSessionId = sessionId,
                     ActionName = action, // Store original action (e.g. MCP)
                     ParametersJson = _approvalPayloads.Protect(query),
-                    Status = "Pending"
+                    Status = "Pending",
+                    CreatedAtUtc = requestedAt,
+                    // The payload above is a snapshot of THIS moment; past the deadline it
+                    // describes a situation that no longer exists, so the approve endpoint
+                    // refuses it and a sweeper releases the agent run parked on it.
+                    ExpiresAtUtc = requestedAt + _approvalExpiry.TimeToLive
                 };
                 _dbContext.TaskApprovals.Add(approval);
                 await _dbContext.SaveChangesAsync(ct);
@@ -1052,8 +1061,8 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// session's binding to it (<c>ChatSession.CustomAgentId</c>,
     /// <c>DeleteBehavior.SetNull</c>), so a pending approval from that session then
     /// resolves as unbound and executes unscoped. Closing that case needs the scope
-    /// snapshotted onto the approval row itself (a schema change) — see
-    /// CORE-FIX-INTEGRATION.md.
+    /// snapshotted onto the approval row itself (a schema change) — tracked in
+    /// LmKitOmniApi/docs/known-issues.md.
     ///
     /// Internal (not private) so the approval-scoping contract is directly testable
     /// without constructing the full orchestrator dependency graph; static and
