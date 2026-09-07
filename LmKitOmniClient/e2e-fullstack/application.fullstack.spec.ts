@@ -113,7 +113,39 @@ test('real stack supports auth, sessions, documents, user admin and logout', asy
 
   const embeddedWidget = await page.request.get(`/widget/chat?key=${encodeURIComponent(widgetKey)}`);
   expect(embeddedWidget.status()).toBe(200);
-  expect(embeddedWidget.headers()['content-security-policy']).toContain(`frame-ancestors ${embedOrigin}`);
+  const embeddedCsp = embeddedWidget.headers()['content-security-policy'] ?? '';
+  expect(embeddedCsp).toContain(`frame-ancestors ${embedOrigin}`);
+  // The allowlisted origin must REPLACE the fail-closed default, not sit beside it.
+  expect(embeddedCsp).not.toContain("frame-ancestors 'none'");
+  expect(embeddedCsp).not.toContain("frame-ancestors 'self'");
+  // The API->nginx handoff header is internal plumbing; it must not reach the browser.
+  expect(embeddedWidget.headers()['x-widget-frame-ancestors']).toBeUndefined();
+
+  // Fail-closed, re-checked now that a tenant IS configured with an allowlist. The
+  // anonymous check at the top of this test ran before any widget existed, so it
+  // could pass for the wrong reason; these prove the KEY is what opens the frame.
+  // frame-ancestors is a clickjacking control, so every input gets its own case —
+  // including hostile ?key= values, which nginx splices into the internal
+  // auth_request's query string and which must never widen the directive.
+  const failClosed: Array<[string, string]> = [
+    ['no key at all', ''],
+    ['empty key', '?key='],
+    ['bogus key', '?key=not-a-real-widget-key'],
+    ['truncated real key', `?key=${encodeURIComponent(widgetKey.slice(0, -1))}`],
+    ['origin appended to a real key', `?key=${encodeURIComponent(`${widgetKey} https://evil.example.com`)}`],
+    ['CSP directive smuggling', `?key=${encodeURIComponent('x; frame-ancestors https://evil.example.com')}`],
+    ['CRLF header injection', `?key=${encodeURIComponent('x\r\nX-Widget-Frame-Ancestors: https://evil.example.com')}`],
+    ['encoded & smuggling a 2nd key', `?key=${encodeURIComponent(widgetKey)}%26key=x`],
+    ['over-long key', `?key=${'A'.repeat(300)}`]
+  ];
+  for (const [label, query] of failClosed) {
+    const denied = await page.request.get(`/widget/chat${query}`);
+    expect(denied.status(), label).toBe(200);
+    const deniedCsp = denied.headers()['content-security-policy'] ?? '';
+    expect(deniedCsp, label).toContain("frame-ancestors 'none'");
+    expect(deniedCsp, label).not.toContain('evil.example.com');
+    expect(deniedCsp, label).not.toContain(embedOrigin);
+  }
 
   // The shipped loader must forward that key into the iframe URL; without it the
   // frame boots the authenticated path, 401s, and redirects the customer's visitors
