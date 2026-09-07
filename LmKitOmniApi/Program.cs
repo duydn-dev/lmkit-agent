@@ -33,10 +33,11 @@ builder.Host.UseSerilog((context, configuration) =>
     configuration.ReadFrom.Configuration(context.Configuration)
                  .WriteTo.Console());
 
-// Khởi tạo LM-Kit.NET License
-var lmKitLicenseKey = builder.Configuration["LMKit:LicenseKey"];
-if (!string.IsNullOrWhiteSpace(lmKitLicenseKey))
-    LMKit.Licensing.LicenseManager.SetLicenseKey(lmKitLicenseKey);
+// No LM-Kit licensing call: LicenseManager.SetLicenseKey is [Obsolete] on 2026.9.0 with the
+// message "LM-Kit.NET no longer requires a license key. This call is unnecessary and will be
+// removed in a future release; remove it from your application." It was the last warning in
+// the build. The LMKit:LicenseKey / LMKit:RequireLicense settings went with it — the first fed
+// only this call, and the second was never read by anything.
 
 // Cấu hình giới hạn kích thước upload lớn
 builder.WebHost.ConfigureKestrel(options =>
@@ -412,6 +413,9 @@ LmKitOmniApi.Application.Approvals.ApprovalExpiryServiceCollectionExtensions.Add
 // Continues a run that was parked on an approval gate, instead of stopping it after the one
 // approved tool call. Without this line every run keeps the old truthful stop — by design.
 LmKitOmniApi.Application.AgentRuns.AgentRunResumeServiceCollectionExtensions.AddAgentRunResume(builder.Services, builder.Configuration);
+// Only makes the share-link deadline TUNABLE. Omitting this line cannot remove the deadline:
+// IOptions<ShareLinkOptions> still resolves to ChatShareLink.DefaultTimeToLiveDays.
+LmKitOmniApi.Application.Share.ShareLinkServiceCollectionExtensions.AddShareLinks(builder.Services, builder.Configuration);
 
 // ============================================================
 // 🔄 Multi-Agent System (Phase 3)

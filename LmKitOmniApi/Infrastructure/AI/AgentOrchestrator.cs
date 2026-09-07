@@ -290,7 +290,28 @@ public class AgentOrchestrator : IAgentOrchestrator
         // behavior — not a bug.
         // ── Step 3-4: LM-Kit native tool discovery + ReAct planning ──
         yield return "[THINKING]: 📋 Khởi tạo LM-Kit ReAct agent với công cụ có cấu trúc...\n";
-        await using var inferenceLease = await _modelManager.AcquireChatInferenceAsync(cancellationToken);
+        // The chat permit is SemaphoreLimits:Chat = 1, so a busy box makes this the point where
+        // a turn silently stalls. Taking it through the admission queue keeps that wait bounded
+        // and lets it report itself: WaitForTurnAsync yields NOTHING when the permit is free (so
+        // an uncontended stream is byte-identical to before) and [THINKING]: queue-position
+        // notices once the wait becomes user-visible. On a refusal it sets Rejection instead of
+        // throwing, because C# forbids catching around a `yield return` — a throw here would
+        // escape to ChatController's blanket catch and become the generic
+        // "[ERROR]: Unable to generate a response." this codebase spent four rounds killing.
+        //
+        // `await using` comes FIRST, before the enumeration: that is what returns the permit on
+        // every path, including a client disconnect mid-wait. Do not reorder these two lines.
+        await using var inferenceLease = _modelManager.BeginChatInference(cancellationToken);
+        await foreach (var queueNotice in inferenceLease.WaitForTurnAsync())
+            yield return queueNotice;
+        if (inferenceLease.Rejection is { } queueRejection)
+        {
+            _telemetry.RecordError(activity, queueRejection);
+            yield return $"⚠️ {queueRejection.Message}";
+            yield break;
+        }
+
+
         // LoRA hot-swap: apply the custom agent's adapter to the shared chat model for the
         // whole inference (ReAct tool pass + synthesis pass), then remove it before the lease
         // is released. `using` disposes loraScope BEFORE inferenceLease (reverse declaration
