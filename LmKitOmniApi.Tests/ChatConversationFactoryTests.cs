@@ -1,3 +1,4 @@
+using LMKit.Agents.Tools;
 using LMKit.TextGeneration.Chat;
 using LmKitOmniApi.Application.Widget;
 using LmKitOmniApi.Infrastructure.AI;
@@ -72,6 +73,41 @@ public class ChatConversationFactoryTests
         Assert.Equal(
             ChatConversationFactory.SystemPromptDelivery.Property,
             ChatConversationFactory.PlanDelivery(0, Prompt));
+    }
+
+    // ── PlanToolCatalog: the same rule, for the tool catalog ────────────────
+
+    /// <summary>
+    /// LM-Kit injects the registered tool catalog inside the very same
+    /// <c>MessageCount == 0</c> branch that renders the system prompt, so the catalog was lost
+    /// from turn 2 onward exactly like the persona was. On an empty history LM-Kit still renders
+    /// it — seeding there would SUPPRESS it — so the rule is "seed only when non-empty".
+    /// </summary>
+    [Theory]
+    [InlineData(0, 6, true, ChatConversationFactory.ToolCatalogDelivery.LmKitRenders)]
+    [InlineData(0, 6, false, ChatConversationFactory.ToolCatalogDelivery.LmKitRenders)]
+    [InlineData(1, 6, true, ChatConversationFactory.ToolCatalogDelivery.SeededMessages)]
+    [InlineData(40, 1, true, ChatConversationFactory.ToolCatalogDelivery.SeededMessages)]
+    [InlineData(1, 6, false, ChatConversationFactory.ToolCatalogDelivery.Unavailable)]
+    [InlineData(0, 0, true, ChatConversationFactory.ToolCatalogDelivery.NotNeeded)]
+    [InlineData(9, 0, true, ChatConversationFactory.ToolCatalogDelivery.NotNeeded)]
+    public void PlanToolCatalog_SeedsOnlyOnANonEmptyHistoryWithTools(
+        int messageCount, int toolCount, bool rendererAvailable, ChatConversationFactory.ToolCatalogDelivery expected)
+    {
+        Assert.Equal(expected, ChatConversationFactory.PlanToolCatalog(messageCount, toolCount, rendererAvailable));
+    }
+
+    /// <summary>
+    /// The renderer being unavailable must degrade to the PRE-FIX behaviour (persona seeded, no
+    /// catalog) rather than to something new — a prompt advertising a hand-rolled catalog the
+    /// model's format cannot express would be worse than one advertising none.
+    /// </summary>
+    [Fact]
+    public void PlanToolCatalog_WithoutARenderer_IsUnavailableRatherThanSeeded()
+    {
+        Assert.Equal(
+            ChatConversationFactory.ToolCatalogDelivery.Unavailable,
+            ChatConversationFactory.PlanToolCatalog(historyMessageCount: 4, toolCount: 6, rendererAvailable: false));
     }
 
     // ── BuildHistory: pass-through cases ────────────────────────────────────
@@ -209,6 +245,64 @@ public class ChatConversationFactoryTests
         Assert.Equal(3, history.MessageCount);
     }
 
+    /// <summary>
+    /// A previously seeded catalog must be dropped along with the previously seeded persona.
+    /// LM-Kit emits the catalog as a <see cref="AuthorRole.Developer"/> or
+    /// <see cref="AuthorRole.ToolsCatalog"/> message on templates that support them, so those two
+    /// roles are prompt scaffolding here, never conversation — if they survived a rebuild, every
+    /// turn would carry one more stale copy of the tool definitions.
+    /// </summary>
+    [Fact]
+    public void BuildHistory_DropsPreviouslySeededCatalogRolesToo()
+    {
+        var previouslySeeded = HistoryOf(
+            (AuthorRole.ToolsCatalog, "STALE tool catalog from the previous turn"),
+            (AuthorRole.System, "STALE prompt from the previous turn"),
+            (AuthorRole.User, "turn 1"),
+            (AuthorRole.Developer, "STALE developer block"),
+            (AuthorRole.Assistant, "answer 1"));
+
+        var result = ChatConversationFactory.BuildHistory(null, previouslySeeded, Prompt);
+
+        Assert.Equal(
+            [
+                (AuthorRole.System, Prompt),
+                (AuthorRole.User, "turn 1"),
+                (AuthorRole.Assistant, "answer 1"),
+            ],
+            Shape(result));
+        Assert.DoesNotContain(result.Messages, m => m.Text.Contains("STALE"));
+    }
+
+    /// <summary>
+    /// Without a model there is no chat template, so no catalog can be rendered. Passing tools
+    /// must then behave exactly as passing none — this is the seam's fail-closed path, and it is
+    /// what keeps every weightless test in this file meaningful.
+    /// </summary>
+    [Fact]
+    public void BuildHistory_WithoutAModel_IgnoresToolsAndSeedsThePlainPrompt()
+    {
+        var source = HistoryOf((AuthorRole.User, "turn 1"), (AuthorRole.Assistant, "answer 1"));
+
+        var withTools = ChatConversationFactory.BuildHistory(
+            null, source, Prompt, [new NoOpTool()]);
+
+        Assert.Equal(Shape(ChatConversationFactory.BuildHistory(null, source, Prompt)), Shape(withTools));
+        Assert.Equal(AuthorRole.System, withTools.Messages[0].AuthorRole);
+        Assert.Equal(Prompt, withTools.Messages[0].Text);
+    }
+
+    /// <summary>Empty tool list is not "seed an empty catalog" — it is the no-tools path.</summary>
+    [Fact]
+    public void BuildHistory_EmptyToolList_IsIdenticalToNoTools()
+    {
+        var source = HistoryOf((AuthorRole.User, "turn 1"));
+
+        Assert.Equal(
+            Shape(ChatConversationFactory.BuildHistory(null, source, Prompt)),
+            Shape(ChatConversationFactory.BuildHistory(null, source, Prompt, [])));
+    }
+
     // ── Content preservation ────────────────────────────────────────────────
 
     [Fact]
@@ -299,5 +393,14 @@ public class ChatConversationFactoryTests
         Assert.Equal(
             ChatConversationFactory.SystemPromptDelivery.Property,
             ChatConversationFactory.PlanDelivery(0, WidgetChatEngine.SystemPrompt));
+    }
+
+    private sealed class NoOpTool : ITool
+    {
+        public string Name => "no_op_tool";
+        public string Description => "does nothing";
+        public string InputSchema => """{"type":"object","properties":{}}""";
+        public Task<string> InvokeAsync(string arguments, CancellationToken cancellationToken = default)
+            => Task.FromResult("{}");
     }
 }
