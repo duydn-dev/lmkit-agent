@@ -21,7 +21,18 @@ public sealed class VoiceRoomDispatcherTests
 {
     private static readonly Guid TenantA = Guid.Parse("aaaaaaaa-0000-0000-0000-00000000000a");
     private static readonly Guid TenantB = Guid.Parse("bbbbbbbb-0000-0000-0000-00000000000b");
-    private static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
+    /// <summary>
+    /// The fake clock every Tick-driven test reasons against. It is anchored to the REAL clock
+    /// on purpose: three tests here drive <c>RunAsync</c>, whose loop calls
+    /// <c>Tick(DateTimeOffset.UtcNow, …)</c>, while <c>Grants()</c> expires its grants 60 minutes
+    /// after this value. With a fixed date those grants were all expired the moment the calendar
+    /// passed it, the dispatcher saw an empty ledger, and the three tests timed out
+    /// deterministically — a green suite on the day the file was written, red from the next
+    /// afternoon on, with no code change in between.
+    /// </summary>
+    private static readonly DateTimeOffset Now = new(
+        DateTimeOffset.UtcNow.Year, DateTimeOffset.UtcNow.Month, DateTimeOffset.UtcNow.Day,
+        DateTimeOffset.UtcNow.Hour, DateTimeOffset.UtcNow.Minute, 0, TimeSpan.Zero);
 
     /// <summary>Longest any of these tests will wait for a background condition before failing.</summary>
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
