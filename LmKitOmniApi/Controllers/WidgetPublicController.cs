@@ -1,3 +1,5 @@
+using System.Text.Json;
+using LmKitOmniApi.Services;
 using System.Threading.RateLimiting;
 using LmKitOmniApi.Application.Widget;
 using LmKitOmniApi.Infrastructure.Security;
@@ -199,6 +201,18 @@ public sealed class WidgetPublicController(
         {
             // Client disconnected mid-stream — nothing to persist (widget never
             // persists anything), so just stop writing.
+        }
+        catch (InferenceQueueRejectedException refused) when (Response.HasStarted)
+        {
+            // The chat permit is taken inside OpenAsync, BEFORE the first chunk, so today a
+            // refusal surfaces before the response starts and the global handler answers it
+            // as a 503. This branch is the guard for the day that ordering changes: a stream
+            // that has already started cannot become a 503, and ending it silently left the
+            // embedded widget showing nothing at all.
+            await Response.WriteAsync("data: ", ct);
+            await Response.WriteAsync(JsonSerializer.Serialize(new { done = true, answer = refused.Message }), ct);
+            await Response.WriteAsync("\n\n", ct);
+            await Response.Body.FlushAsync(ct);
         }
 
         return new EmptyResult();

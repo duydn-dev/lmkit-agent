@@ -1,3 +1,4 @@
+using LmKitOmniApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -76,6 +77,15 @@ public sealed class ResearchController : ApiControllerBase
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             return;
+        }
+        catch (InferenceQueueRejectedException refused)
+        {
+            // Capacity, not a fault: the person gets the queue's reason instead of the
+            // generic error below. Not logged at Error -- a busy afternoon is not an outage.
+            _logger.LogWarning(
+                "Research turned away by the {Gate} inference queue ({Reason}) after {Waited}.",
+                refused.Gate, refused.Reason, refused.Waited);
+            await WriteSseAsync($"⚠️ {refused.Message}", ct);
         }
         catch (Exception ex)
         {

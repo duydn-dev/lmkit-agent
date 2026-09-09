@@ -1,5 +1,6 @@
 using System.Text.Json;
 using LmKitOmniApi.Infrastructure.Exceptions;
+using LmKitOmniApi.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Logging;
@@ -35,6 +36,40 @@ public sealed class GlobalExceptionHandlerTests
         var exception = (Exception)Activator.CreateInstance(exceptionType)!;
 
         Assert.Equal(expectedStatus, GlobalExceptionHandler.Classify(exception).Status);
+    }
+
+    /// <summary>
+    /// A refusal from the inference admission queue used to fall through to the 500 arm: "the
+    /// model is busy" answered as "the server is broken", with a stack trace at Error. Every
+    /// non-streaming handler that takes the chat permit -- text analysis, the content pipeline,
+    /// the public widget's key-then-chat -- surfaced it here.
+    /// </summary>
+    [Fact]
+    public async Task CapacityRefusal_Is503WithRetryAfter_AndAWarningNotAnError()
+    {
+        var logger = new RecordingLogger<GlobalExceptionHandler>();
+        var handler = new GlobalExceptionHandler(logger);
+        var context = CreateContext(out var body);
+        var refused = new InferenceQueueRejectedException(
+            "chat", InferenceQueueRejectionReason.WaitTimeout, TimeSpan.FromSeconds(300), 7,
+            "He thong dang ban, vui long thu lai sau.");
+
+        var handled = await handler.TryHandleAsync(context, refused, CancellationToken.None);
+
+        Assert.True(handled);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
+        // The literal, not the constant: a constant compared with itself proves nothing about
+        // the value a client will actually see.
+        Assert.Equal("30", context.Response.Headers.RetryAfter.ToString());
+
+        var problem = JsonSerializer.Deserialize<JsonElement>(ReadBody(body));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, problem.GetProperty("status").GetInt32());
+        // The queue's message is user-facing by design and is the one thing worth relaying.
+        Assert.Equal(refused.Message, problem.GetProperty("detail").GetString());
+
+        // Capacity is not a fault. A busy afternoon must not read like an outage in the logs.
+        Assert.DoesNotContain(logger.Entries, entry => entry.Level >= LogLevel.Error);
+        Assert.Contains(logger.Entries, entry => entry.Level == LogLevel.Warning);
     }
 
     [Fact]

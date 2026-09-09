@@ -1,3 +1,4 @@
+using LmKitOmniApi.Services;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 
@@ -56,7 +57,12 @@ public class GlobalExceptionHandler : IExceptionHandler
         var problemDetails = Classify(exception);
         var status = problemDetails.Status!.Value;
 
-        if (status >= StatusCodes.Status500InternalServerError)
+        // A capacity refusal is a 5xx to the caller but not a fault of the server: the single
+        // chat permit was busy past the queue's bound. Logged as a warning, never with the
+        // stack of a crash, or a busy afternoon reads like an outage.
+        var isCapacityRefusal = exception is InferenceQueueRejectedException;
+
+        if (status >= StatusCodes.Status500InternalServerError && !isCapacityRefusal)
         {
             _logger.LogError(
                 exception,
@@ -90,6 +96,7 @@ public class GlobalExceptionHandler : IExceptionHandler
         }
 
         httpContext.Response.StatusCode = status;
+        if (isCapacityRefusal) httpContext.Response.Headers.RetryAfter = CapacityRetryAfterSeconds;
 
         try
         {
@@ -124,8 +131,27 @@ public class GlobalExceptionHandler : IExceptionHandler
     /// exception is logged server-side, and messages leak internal detail (file paths, SQL
     /// fragments, config values, invariant text).
     /// </summary>
+    /// <summary>
+    /// Retry-After sent with a 503 capacity refusal. The queue's own notice cadence is 5 s and
+    /// its wait bound is 300 s; a client that comes back in 30 s lands somewhere sensible
+    /// between "hammer it" and "give up".
+    /// </summary>
+    internal const string CapacityRetryAfterSeconds = "30";
+
     internal static ProblemDetails Classify(Exception exception) => exception switch
     {
+        // The inference admission queue turned the request away: wait bound exceeded or queue
+        // full. Every non-streaming handler that takes the chat permit surfaces this here, and
+        // it used to fall through to the 500 below -- so "the model is busy" read as "the
+        // server is broken". 503 is the truthful status, and the message is the queue's own
+        // user-facing text, which carries no internals.
+        InferenceQueueRejectedException refused => new ProblemDetails
+        {
+            Status = StatusCodes.Status503ServiceUnavailable,
+            Title = "Service Unavailable",
+            Detail = refused.Message
+        },
+
         UnauthorizedAccessException => new ProblemDetails
         {
             Status = StatusCodes.Status401Unauthorized,

@@ -8,6 +8,9 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using LmKitOmniApi.Services;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace LmKitOmniApi.Tests;
@@ -309,6 +312,53 @@ public sealed class WidgetPublicApiTests : IClassFixture<WidgetApiFixture>
         }
 
         Assert.Equal([HttpStatusCode.OK, HttpStatusCode.OK, HttpStatusCode.TooManyRequests], statuses);
+    }
+
+    /// <summary>
+    /// The public widget under load. Its LM boundary takes the single chat permit inside
+    /// <c>OpenAsync</c>, so a refusal surfaces BEFORE the SSE response starts -- and it used to
+    /// reach the global handler as an unknown exception: a 500 "unexpected error", logged as a
+    /// crash, for what was really "the model is busy". Now a 503 with Retry-After and the
+    /// queue's own message, the same shape as the 429 this endpoint already answers for quota.
+    /// </summary>
+    [Fact]
+    public async Task Chat_WhenTheInferenceQueueRefuses_Is503WithRetryAfter_NotA500()
+    {
+        var key = await _fixture.SeedActiveWidgetAsync(allowedOrigins: [WidgetApiFixture.DefaultOrigin]);
+
+        // A derived host whose LM boundary refuses admission. Both the key exchange and the
+        // chat go through it, so its data-protection ring signs and validates the same token.
+        using var refusing = _fixture.Factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<IWidgetInferenceSessionFactory>();
+                services.AddSingleton<IWidgetInferenceSessionFactory>(new RefusingSessionFactory());
+            }));
+
+        var client = refusing.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Widget-Origin", WidgetApiFixture.DefaultOrigin);
+        var exchange = await PostWithHeadersAsync(
+            client, "/api/widget/auth", new { origin = WidgetApiFixture.DefaultOrigin }, widgetKey: key);
+        exchange.EnsureSuccessStatusCode();
+        var token = (await exchange.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("accessToken").GetString()!;
+
+        var chat = refusing.CreateClient();
+        chat.DefaultRequestHeaders.Add("X-Widget-Origin", WidgetApiFixture.DefaultOrigin);
+        using var response = await PostWithHeadersAsync(chat, "/api/widget/chat", new { message = "xin chao" }, widgetToken: token);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.NotNull(response.Headers.RetryAfter);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(RefusingSessionFactory.Message, problem.GetProperty("detail").GetString());
+    }
+
+    private sealed class RefusingSessionFactory : IWidgetInferenceSessionFactory
+    {
+        public const string Message = "He thong dang ban, vui long thu lai sau.";
+
+        public ValueTask<IWidgetInferenceSession> OpenAsync(WidgetTurnRequest request, CancellationToken ct)
+            => throw new InferenceQueueRejectedException(
+                "chat", InferenceQueueRejectionReason.WaitTimeout, TimeSpan.FromSeconds(300), 3, Message);
     }
 
     // ── helpers ─────────────────────────────────────────────────────────
