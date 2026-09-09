@@ -412,6 +412,11 @@ builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ScheduledT
 LmKitOmniApi.Application.Approvals.ApprovalExpiryServiceCollectionExtensions.AddApprovalExpiry(builder.Services, builder.Configuration);
 // Continues a run that was parked on an approval gate, instead of stopping it after the one
 // approved tool call. Without this line every run keeps the old truthful stop — by design.
+// The history seam both agent-run passes build their ChatHistory through. Registered here,
+// not only inside AddAgentRunResume, because the FIRST pass needs it too: removing the
+// resume line below must not make POST /api/agent-runs fail to resolve its handler.
+Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions
+    .TryAddSingleton<LmKitOmniApi.Application.AgentRuns.IAgentRunHistoryFactory, LmKitOmniApi.Application.AgentRuns.LmKitAgentRunHistoryFactory>(builder.Services);
 LmKitOmniApi.Application.AgentRuns.AgentRunResumeServiceCollectionExtensions.AddAgentRunResume(builder.Services, builder.Configuration);
 // Only makes the share-link deadline TUNABLE. Omitting this line cannot remove the deadline:
 // IOptions<ShareLinkOptions> still resolves to ChatShareLink.DefaultTimeToLiveDays.

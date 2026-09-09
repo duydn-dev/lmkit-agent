@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using LmKitOmniApi.Services;
 using LMKit.TextGeneration.Chat;
 
@@ -118,7 +119,10 @@ public static class AgentRunResumeServiceCollectionExtensions
     {
         services.Configure<AgentRunResumeOptions>(configuration.GetSection(AgentRunResumeOptions.SectionName));
         services.AddSingleton<AgentRunResumeQueue>();
-        services.AddSingleton<IAgentRunHistoryFactory, LmKitAgentRunHistoryFactory>();
+        // TryAdd: StreamAgentRunCommandHandler needs this seam whether or not resume is wired,
+        // so Program.cs registers it on its own; this is only the fallback for a host that
+        // calls AddAgentRunResume without that line.
+        services.TryAddSingleton<IAgentRunHistoryFactory, LmKitAgentRunHistoryFactory>();
         services.AddScoped<AgentRunResumeService>();
         services.AddHostedService<AgentRunResumeWorker>();
         return services;

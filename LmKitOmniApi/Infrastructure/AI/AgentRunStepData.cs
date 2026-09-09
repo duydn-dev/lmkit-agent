@@ -8,4 +8,15 @@ namespace LmKitOmniApi.Infrastructure.AI;
 /// stream marker. Only populated when the caller supplies a sink (agent runs);
 /// ordinary chat passes none, so its behavior is unchanged.
 /// </summary>
-public sealed record AgentRunStepData(string Action, string Input, string Observation);
+public sealed record AgentRunStepData(string Action, string Input, string Observation)
+{
+    /// <summary>
+    /// <see cref="Action"/> of the step the orchestrator records when the inference admission
+    /// queue REFUSES a run (wait bound exceeded, or queue full). It is written for the run's
+    /// timeline, so the agent-run page can say why the run stopped, and it is the one step
+    /// <c>AgentRunResumeService</c> drops before requeueing: a refusal is capacity, not prior
+    /// progress, and replaying it into the next attempt's prompt would read as something the
+    /// agent did.
+    /// </summary>
+    public const string AdmissionRefusedAction = "admission_refused";
+}

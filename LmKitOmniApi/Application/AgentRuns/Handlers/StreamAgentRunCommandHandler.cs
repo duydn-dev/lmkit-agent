@@ -23,14 +23,14 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
 {
     private readonly IAgentOrchestrator _orchestrator;
     private readonly HermesDbContext _dbContext;
-    private readonly LmModelManager _modelManager;
+    private readonly IAgentRunHistoryFactory _historyFactory;
 
     public StreamAgentRunCommandHandler(
-        IAgentOrchestrator orchestrator, HermesDbContext dbContext, LmModelManager modelManager)
+        IAgentOrchestrator orchestrator, HermesDbContext dbContext, IAgentRunHistoryFactory historyFactory)
     {
         _orchestrator = orchestrator;
         _dbContext = dbContext;
-        _modelManager = modelManager;
+        _historyFactory = historyFactory;
     }
 
     public async IAsyncEnumerable<string> Handle(
@@ -74,8 +74,10 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
         var contentBuilder = new StringBuilder();
         // A fresh run carries no prior turns; the history object still needs the
         // chat model (same construction the chat handler uses).
-        var model = await _modelManager.GetChatModelAsync(ct: cancellationToken);
-        var history = new ChatHistory(model);
+        // Through the same seam the resume worker uses, so this handler can be driven
+        // without weights (ChatHistory tolerates a null model) and both passes build their
+        // history the same way.
+        var history = await _historyFactory.CreateAsync(cancellationToken);
         var completed = false;
         var awaitingApproval = false;
 
@@ -125,7 +127,15 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
         run.Status = awaitingApproval ? AgentRunStatuses.AwaitingApproval
             : completed ? AgentRunStatuses.Completed
             : AgentRunStatuses.Failed;
-        if (!completed && !awaitingApproval) run.Error = "Thực thi bị dừng hoặc thất bại.";
+        if (!completed && !awaitingApproval)
+        {
+            // The one stop that has a specific reason on record: the inference queue turned
+            // the run away, and the orchestrator left that reason as the last step.
+            var refusal = steps.Count > 0 && steps[^1].Action == AgentRunStepData.AdmissionRefusedAction
+                ? steps[^1].Observation
+                : null;
+            run.Error = string.IsNullOrWhiteSpace(refusal) ? "Thực thi bị dừng hoặc thất bại." : refusal;
+        }
         run.CompletedAtUtc = awaitingApproval ? null : DateTime.UtcNow;
 
         await _dbContext.SaveChangesAsync(CancellationToken.None);

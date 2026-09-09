@@ -307,6 +307,21 @@ public class AgentOrchestrator : IAgentOrchestrator
         if (inferenceLease.Rejection is { } queueRejection)
         {
             _telemetry.RecordError(activity, queueRejection);
+            if (stepSink is not null)
+            {
+                // An agent run has no person reading the stream who could tell a refusal from
+                // an answer. Its handler records whatever the enumeration ends with as the
+                // run's RESULT, and an enumeration that ends without an exception is a
+                // Completed run -- so ending here with a warning line stored the overload
+                // notice as the answer of a run shown with a green pill. For a run the refusal
+                // is therefore a timeline step (the page can say why), a status line (the live
+                // view shows why), and then an EXCEPTION: that is what turns the run Failed,
+                // and what lets the resume worker requeue instead of failing.
+                stepSink.Add(new AgentRunStepData(
+                    AgentRunStepData.AdmissionRefusedAction, queueRejection.Gate, queueRejection.Message));
+                yield return $"[THINKING]: ⚠️ {queueRejection.Message}\n";
+                throw queueRejection;
+            }
             yield return $"⚠️ {queueRejection.Message}";
             yield break;
         }

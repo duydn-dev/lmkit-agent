@@ -1,3 +1,4 @@
+using LmKitOmniApi.Services;
 using System.Text.Json;
 using LmKitOmniApi.Application.AgentRuns.Commands;
 using LmKitOmniApi.Application.AgentRuns.Queries;
@@ -86,6 +87,17 @@ public sealed class AgentRunsController : ApiControllerBase
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             return;
+        }
+        catch (InferenceQueueRejectedException ex)
+        {
+            // Capacity, not a failure of the run or the server: the deployment's single chat
+            // permit stayed busy past the queue's bound. The run is already recorded as Failed
+            // with this same reason; the person watching gets the reason too, rather than the
+            // generic error below.
+            _logger.LogWarning(
+                "Agent run turned away by the {Gate} inference queue ({Reason}) after {Waited}.",
+                ex.Gate, ex.Reason, ex.Waited);
+            await WriteSseAsync($"⚠️ {ex.Message}", ct);
         }
         catch (Exception ex)
         {

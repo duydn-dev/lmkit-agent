@@ -1,3 +1,4 @@
+using LmKitOmniApi.Services;
 using System.Text;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Domain.Entities;
@@ -120,7 +121,13 @@ public sealed class AgentRunResumeService
             var token = candidate.ResumeCount + 1;
             if (!await TryClaimAsync(candidate.Id, candidate.ResumeCount, nowUtc, ct)) continue;
 
-            await DriveAsync(candidate.Id, token, ct);
+            if (await DriveAsync(candidate.Id, token, ct))
+            {
+                // The gate turned this attempt away; see DriveAsync. Ending the pass here is
+                // what keeps a persistently busy permit from burning every queued run's
+                // budget in seconds -- the next poll retries after the interval.
+                break;
+            }
             resumed++;
 
             nowUtc = DateTime.UtcNow;
@@ -246,13 +253,19 @@ public sealed class AgentRunResumeService
 
     // ── the continuation itself ───────────────────────────────────────────
 
-    private async Task DriveAsync(Guid runId, int token, CancellationToken ct)
+    /// <returns>
+    /// <c>true</c> when the inference admission queue turned this attempt away. The caller
+    /// ends its sweep on that: every other candidate would meet the same busy permit, and the
+    /// run just requeued is Pending again -- re-picking it in the same pass would spend its
+    /// whole resume budget in one hot loop.
+    /// </returns>
+    private async Task<bool> DriveAsync(Guid runId, int token, CancellationToken ct)
     {
         var run = await _db.AgentRuns.AsNoTracking().FirstOrDefaultAsync(r => r.Id == runId, ct);
         if (run is null)
         {
             _logger.LogWarning("Agent run {RunId} vanished between claim and resume.", runId);
-            return;
+            return false;
         }
 
         // Authority is re-checked at continuation time, exactly like the approve path
@@ -267,7 +280,7 @@ public sealed class AgentRunResumeService
             _logger.LogWarning("Not resuming agent run {RunId}: its user is inactive or no longer in the tenant.", runId);
             await FinishAsync(runId, token, AgentRunStatuses.Failed, steps: [], appendToResult: null,
                 error: "Không thể tiếp tục: tài khoản không còn hoạt động trong tổ chức này.");
-            return;
+            return false;
         }
         var agentRole = storedRole.Equals("Admin", StringComparison.OrdinalIgnoreCase) ? "Admin" : "User";
 
@@ -294,6 +307,7 @@ public sealed class AgentRunResumeService
         var gated = false;
         var completed = false;
         var cancelled = false;
+        var capacityRefused = false;
         string? failure = null;
 
         try
@@ -313,6 +327,17 @@ public sealed class AgentRunResumeService
             // it back in the queue rather than to fail it.
             cancelled = true;
         }
+        catch (InferenceQueueRejectedException ex)
+        {
+            // Capacity, not failure: the single chat permit stayed busy past the queue's
+            // bound. The run did nothing wrong, so it goes back in the queue rather than to
+            // Failed. The claim already spent one resume, and MaxResumesPerRun is what bounds
+            // sustained overload -- past that budget the run closes truthfully, saying why.
+            _logger.LogWarning(
+                "Resume of agent run {RunId} turned away by the {Gate} inference queue ({Reason}); requeueing.",
+                runId, ex.Gate, ex.Reason);
+            capacityRefused = true;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Resuming agent run {RunId} failed.", runId);
@@ -321,15 +346,21 @@ public sealed class AgentRunResumeService
 
         var answer = AgentRunMarkers.StripMarkers(content.ToString());
 
-        if (cancelled && !gated)
+        if ((cancelled || capacityRefused) && !gated)
         {
             // Steps that really happened are kept; the pass is re-queued and replays them
             // as prior progress next time. ResumeCount was already spent by the claim, so
             // this cannot loop forever.
-            await FinishAsync(runId, token, AgentRunStatuses.Running, sink,
+            // The refusal step is the orchestrator telling the TIMELINE why this attempt
+            // stopped; it is not prior progress, and replaying it into the next attempt's
+            // prompt would read as something the agent did.
+            var progress = capacityRefused
+                ? sink.Where(step => step.Action != AgentRunStepData.AdmissionRefusedAction).ToList()
+                : sink;
+            await FinishAsync(runId, token, AgentRunStatuses.Running, progress,
                 appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer,
                 error: null, requeue: true);
-            return;
+            return capacityRefused;
         }
 
         if (gated)
@@ -340,18 +371,19 @@ public sealed class AgentRunResumeService
             // it. Approving again queues another continuation, budget permitting.
             await FinishAsync(runId, token, AgentRunStatuses.AwaitingApproval, sink,
                 appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer, error: null);
-            return;
+            return false;
         }
 
         if (!completed)
         {
             await FinishAsync(runId, token, AgentRunStatuses.Failed, sink,
                 appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer, error: failure);
-            return;
+            return false;
         }
 
         await FinishAsync(runId, token, AgentRunStatuses.Completed, sink,
             appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer, error: null);
+        return false;
     }
 
     /// <summary>

@@ -8,6 +8,7 @@ using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.AI;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Infrastructure.Security;
+using LmKitOmniApi.Services;
 using LMKit.TextGeneration.Chat;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.Sqlite;
@@ -195,6 +196,53 @@ public sealed class AgentRunResumeTests : IDisposable
         var run = verify.AgentRuns.AsNoTracking().Single(r => r.Id == runId);
         Assert.Equal(AgentRunStatuses.Completed, run.Status);
         Assert.Equal(2, run.ResumeCount);
+    }
+
+    // ── 2b. capacity is not failure ────────────────────────────────────────
+
+    [Fact]
+    public async Task Resume_RefusedByTheInferenceQueue_IsRequeued_NotFailed()
+    {
+        // The single chat permit stayed busy past the queue's bound. That is the deployment's
+        // capacity, not the run's doing. Before this fix the generic catch turned it into a
+        // permanent Failed -- and the worse variant, the orchestrator ENDING the stream with a
+        // warning line instead of throwing, turned it into Completed with the overload notice
+        // stored as the run's answer.
+        var (runId, _, approvalId) = SeedParkedRun();
+        _orchestrator.Script = ResumeScript.RefusedByQueue();
+
+        await ApproveHandler().Handle(Approve(approvalId), CancellationToken.None);
+
+        // Zero resumed, and the sweep ENDS on the refusal. The first version of this fix
+        // requeued the run as Pending and let the same sweep pick it straight back up: three
+        // refusals in one pass, the whole resume budget gone in under a second.
+        Assert.Equal(0, await ResumeService().ResumePendingAsync(DateTime.UtcNow, CancellationToken.None));
+
+        using (var afterRefusal = NewContext())
+        {
+            var run = afterRefusal.AgentRuns.AsNoTracking().Single(r => r.Id == runId);
+            Assert.Equal(AgentRunStatuses.Running, run.Status);
+            Assert.Equal(AgentRunResumeStates.Pending, run.ResumeState);
+            Assert.Null(run.CompletedAtUtc);
+            Assert.Null(run.Error);
+            Assert.Equal(1, run.ResumeCount);
+
+            // A refusal is not prior progress. Persisting it would replay
+            // "admission_refused: ..." into the next attempt's prompt as if the agent did it.
+            Assert.DoesNotContain(
+                afterRefusal.AgentRunSteps.AsNoTracking().Where(s => s.AgentRunId == runId).ToList(),
+                s => s.Action == AgentRunStepData.AdmissionRefusedAction);
+        }
+
+        // Capacity came back: the same queued run completes on the next pass, and the budget
+        // it spent on the refused attempt is the ONLY thing that bounds sustained overload.
+        _orchestrator.Script = ResumeScript.Answer("Xong.");
+        Assert.Equal(1, await ResumeService().ResumePendingAsync(DateTime.UtcNow, CancellationToken.None));
+
+        using var verify = NewContext();
+        var completed = verify.AgentRuns.AsNoTracking().Single(r => r.Id == runId);
+        Assert.Equal(AgentRunStatuses.Completed, completed.Status);
+        Assert.Equal(2, completed.ResumeCount);
     }
 
     // ── 3. resolving twice never double-steps ──────────────────────────────
@@ -665,6 +713,11 @@ public sealed class AgentRunResumeTests : IDisposable
 
         public string GateAction { get; init; } = string.Empty;
         public string GateInput { get; init; } = string.Empty;
+
+        /// <summary>The inference queue turned the pass away: capacity, not failure.</summary>
+        public bool RefuseAdmission { get; init; }
+
+        public static ResumeScript RefusedByQueue() => new([], null, null, false) { RefuseAdmission = true };
     }
 
     /// <summary>
@@ -679,6 +732,7 @@ public sealed class AgentRunResumeTests : IDisposable
         private int _directCalls;
         private int _streams;
 
+        public const string RefusalMessage = "He thong dang ban, vui long thu lai sau.";
         public SemaphoreSlim Lease { get; } = new(1, 1);
         public TaskCompletionSource<bool> StreamStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public List<string> Queries { get; } = [];
@@ -709,6 +763,16 @@ public sealed class AgentRunResumeTests : IDisposable
             try
             {
                 StreamStarted.TrySetResult(true);
+
+                if (Script.RefuseAdmission)
+                {
+                    // Exactly the real orchestrator's shape for a sink caller: a timeline step,
+                    // a visible status line, then the exception -- never a warning-as-answer.
+                    stepSink?.Add(new AgentRunStepData(AgentRunStepData.AdmissionRefusedAction, "chat", RefusalMessage));
+                    yield return "[THINKING]: " + RefusalMessage + "\n";
+                    throw new InferenceQueueRejectedException(
+                        "chat", InferenceQueueRejectionReason.WaitTimeout, TimeSpan.FromSeconds(1), 1, RefusalMessage);
+                }
 
                 yield return "[THINKING]: tiếp tục\n";
 
