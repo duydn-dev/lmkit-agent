@@ -18,7 +18,7 @@ public class PromptTemplateEngineTests
     public void Render_UnknownTemplate_ReturnsFallback()
     {
         var result = _engine.Render("unknown_template", new Dictionary<string, string>());
-        Assert.Contains("trợ lý AI", result); // Checks the default fallback
+        Assert.Contains("Trung tâm thông tin lưu trữ", result); // Checks the default fallback
     }
 
     [Fact]

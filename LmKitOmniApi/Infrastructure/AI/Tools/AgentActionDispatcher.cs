@@ -670,7 +670,7 @@ public sealed class AgentActionDispatcher
         var summaryChat = new MultiTurnConversation(summaryModel);
         summaryChat.SystemPrompt = _promptTemplate.Render("summarize", new Dictionary<string, string>
         {
-            ["agent_name"] = "Hermes",
+            ["agent_name"] = "CILA Agent",
             ["context"] = query.Length > SummarizeContextMaxChars ? query.Substring(0, SummarizeContextMaxChars) : query
         });
         var summaryResult = summaryChat.Submit("Hãy tóm tắt nội dung trên.", ct);
