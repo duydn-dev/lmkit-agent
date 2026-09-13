@@ -38,16 +38,15 @@ public class LmModelManager : IDisposable
     private readonly InferenceAdmissionQueue _chatQueue;
     private readonly long _maxDownloadBytes;
     private readonly TimeSpan _downloadTimeout;
+    private readonly string _modelsDirectory;
     private readonly ILogger<LmModelManager> _logger;
 
-    // Local model registry (AiModels:Models): adding a model later means dropping its
-    // files under the models directory and editing appsettings — no code changes.
+    // LM-Kit catalog IDs are the normal configuration. The optional legacy registry is still
+    // understood for compatibility with existing test/deployment overrides, but appsettings
+    // does not need an AiModels:Models block.
     private readonly IReadOnlyDictionary<string, RegisteredModel> _registeredModels;
 
-    // One loaded LM per RESOLVED model file, shared across roles. appsettings ships
-    // DefaultEmbedding and DefaultReranker both pointing at "bge-m3", which used to
-    // materialize the same weights twice (two full copies in RAM/VRAM) because each role
-    // kept its own field and loaded independently.
+    // One loaded LM per RESOLVED model file, shared across roles.
     private readonly SharedInstanceCache<LM> _sharedModels = new();
 
     public string DefaultChatModelId { get; set; }
@@ -65,11 +64,11 @@ public class LmModelManager : IDisposable
     {
         _logger = logger ?? NullLogger<LmModelManager>.Instance;
         var config = configuration.GetSection("AiModels");
-        DefaultChatModelId = config["DefaultChat"] ?? "qwen3.5:2b";
-        DefaultVisionModelId = config["DefaultVision"] ?? "paddleocr-vl-1.6:0.9b";
-        DefaultEmbeddingModelId = config["DefaultEmbedding"] ?? "gemma3:270m";
+        DefaultChatModelId = config["DefaultChat"] ?? "gemma4:e4b";
+        DefaultVisionModelId = config["DefaultVision"] ?? "glm-ocr";
+        DefaultEmbeddingModelId = config["DefaultEmbedding"] ?? "bge-m3";
         DefaultSpeechModelId = config["DefaultSpeech"] ?? "whisper-tiny";
-        DefaultRerankerModelId = config["DefaultReranker"] ?? "bge-reranker-v2-m3";
+        DefaultRerankerModelId = config["DefaultReranker"] ?? "bge-m3-reranker";
         DefaultSegmentationModelId = config["DefaultSegmentation"] ?? "u2net";
         _maxDownloadBytes = config.GetValue<long>("MaxDownloadBytes", 8L * 1024 * 1024 * 1024);
         if (_maxDownloadBytes <= 0)
@@ -79,8 +78,8 @@ public class LmModelManager : IDisposable
             throw new InvalidOperationException("AiModels:DownloadTimeoutMinutes must be between 1 and 180.");
         _downloadTimeout = TimeSpan.FromMinutes(timeoutMinutes);
 
-        var modelsDirectory = ResolveModelsDirectory(config["ModelsDirectory"]);
-        _registeredModels = ParseRegisteredModels(modelsDirectory, config.GetSection("Models"));
+        _modelsDirectory = ResolveModelsDirectory(config["ModelsDirectory"]);
+        _registeredModels = ParseRegisteredModels(_modelsDirectory, config.GetSection("Models"));
 
         var limits = configuration.GetSection("SemaphoreLimits");
         var chatLimit = GetPositiveLimit(limits, "Chat", 1);
@@ -150,27 +149,38 @@ public class LmModelManager : IDisposable
     }
 
     /// <summary>
-    /// Static resolvability check for one configured default. Only entries declared under
-    /// <c>AiModels:Models</c> can be judged from disk; a bare LM-Kit catalog id or an https
-    /// URL resolves at load time, so those return null rather than a false alarm.
+    /// Static resolvability check for one configured default. A direct local path is checked
+    /// against the filesystem; a bare LM-Kit catalog id or an https URL resolves at load time.
     /// </summary>
     private string? DescribeDefaultModelProblem(string configKey, string modelId)
     {
         var registered = ResolveRegisteredModel(modelId);
-        if (registered is null) return null;
-
-        if (!File.Exists(registered.ResolvedModelPath))
+        if (registered is not null)
         {
-            return $"Model '{registered.Key}' (configured by {configKey}) has no weights file at " +
-                $"'{registered.ResolvedModelPath}'. Place the file there, or point " +
-                $"AiModels:Models:{registered.Key}:Path / {configKey} at a model that exists.";
+            if (!File.Exists(registered.ResolvedModelPath))
+            {
+                return $"Model '{registered.Key}' (configured by {configKey}) has no weights file at " +
+                    $"'{registered.ResolvedModelPath}'. Place the file there, or point {configKey} " +
+                    "at a model path that exists.";
+            }
+
+            if (registered.ResolvedMmprojPath is not null && !File.Exists(registered.ResolvedMmprojPath))
+            {
+                return $"Model '{registered.Key}' (configured by {configKey}) is missing its multimodal " +
+                    $"projector at '{registered.ResolvedMmprojPath}'. Place the file there, or clear " +
+                    $"AiModels:Models:{registered.Key}:Mmproj.";
+            }
+
+            return null;
         }
 
-        if (registered.ResolvedMmprojPath is not null && !File.Exists(registered.ResolvedMmprojPath))
+        // Direct local paths are the preferred configuration. Unlike a catalog id such as
+        // "qwen3.5:4b", a path is statically checkable before the first request.
+        var remoteModelPath = ResolveLocalModelPath(modelId);
+        if (remoteModelPath is not null && !File.Exists(remoteModelPath))
         {
-            return $"Model '{registered.Key}' (configured by {configKey}) is missing its multimodal " +
-                $"projector at '{registered.ResolvedMmprojPath}'. Place the file there, or clear " +
-                $"AiModels:Models:{registered.Key}:Mmproj.";
+            return $"Model configured by {configKey} has no weights file at '{remoteModelPath}'. " +
+                $"Place the model there or point {configKey} at an existing LM-Kit model path.";
         }
 
         return null;
@@ -231,6 +241,60 @@ public class LmModelManager : IDisposable
     /// <summary>Test seam: exposes registry lookup on a built manager instance.</summary>
     internal RegisteredModel? ResolveRegisteredModelForTests(string? modelId) => ResolveRegisteredModel(modelId);
 
+    /// <summary>
+    /// Resolves an explicit local model path for compatibility without requiring a registry entry.
+    /// Catalog IDs (for example <c>qwen3.5:4b</c>) return null and are passed to LM-Kit with
+    /// <c>storagePath: _modelsDirectory</c>, allowing the catalog to resolve/download them.
+    /// </summary>
+    internal string? ResolveLocalModelPath(string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId)) return null;
+        var candidate = modelId.Trim();
+
+        if (Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
+            && !uri.IsFile)
+            return null;
+
+        if (uri?.IsFile == true)
+            return Path.GetFullPath(uri.LocalPath);
+
+        var workingDirectoryPath = Path.GetFullPath(candidate);
+        if (File.Exists(workingDirectoryPath)) return workingDirectoryPath;
+
+        var modelsDirectoryPath = Path.GetFullPath(Path.Combine(_modelsDirectory, candidate));
+        if (File.Exists(modelsDirectoryPath)) return modelsDirectoryPath;
+
+        // When the configured models directory is itself the application-relative AIModels
+        // folder, a value such as "AIModels/Qwen...lmk" would otherwise become
+        // "AIModels/AIModels/Qwen...lmk" on the second lookup. Accept both the repo-root
+        // form and the models-directory-relative form.
+        var modelsDirectoryName = Path.GetFileName(
+            _modelsDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        if (!string.IsNullOrWhiteSpace(modelsDirectoryName)
+            && (candidate.StartsWith(modelsDirectoryName + "/", StringComparison.OrdinalIgnoreCase)
+                || candidate.StartsWith(modelsDirectoryName + "\\", StringComparison.OrdinalIgnoreCase)))
+        {
+            var relativeModelName = candidate[(modelsDirectoryName.Length + 1)..];
+            var prefixedPath = Path.GetFullPath(Path.Combine(_modelsDirectory, relativeModelName));
+            if (File.Exists(prefixedPath)) return prefixedPath;
+        }
+
+        // A missing explicit path must still be reported by readiness. Catalog ids use the
+        // LM-Kit convention (qwen3.5:4b) and intentionally do not enter this branch.
+        var looksLikePath = Path.IsPathRooted(candidate)
+            || candidate.Contains('/')
+            || candidate.Contains('\\')
+            || candidate.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase)
+            || candidate.EndsWith(".lmk", StringComparison.OrdinalIgnoreCase)
+            || candidate.EndsWith(".bin", StringComparison.OrdinalIgnoreCase);
+        if (!looksLikePath) return null;
+
+        return workingDirectoryPath;
+    }
+
+    /// <summary>Test seam for the direct path resolver.</summary>
+    internal string? ResolveLocalModelPathForTests(string? modelId) => ResolveLocalModelPath(modelId);
+
     private static string ResolveConfiguredPath(string modelsDirectory, string entryKey, string settingName, string configuredPath)
     {
         if (Path.IsPathRooted(configuredPath))
@@ -241,18 +305,9 @@ public class LmModelManager : IDisposable
         return Path.GetFullPath(Path.Combine(modelsDirectory, configuredPath));
     }
 
+
     private async Task<LM> LoadRegisteredModelAsync(RegisteredModel registered, CancellationToken ct)
     {
-        if (!File.Exists(registered.ResolvedModelPath))
-            throw new FileNotFoundException(
-                $"Registered model '{registered.Key}' was not found at '{registered.ResolvedModelPath}'. " +
-                "Place the file under the configured models directory or update AiModels:Models.",
-                registered.ResolvedModelPath);
-        if (registered.ResolvedMmprojPath is not null && !File.Exists(registered.ResolvedMmprojPath))
-            throw new FileNotFoundException(
-                $"Registered model '{registered.Key}' references a missing multimodal projector at '{registered.ResolvedMmprojPath}'.",
-                registered.ResolvedMmprojPath);
-
         _logger.LogInformation(
             "Loading registered model {ModelKey} from {ModelPath}{ProjectorInfo}",
             registered.Key,
@@ -274,9 +329,7 @@ public class LmModelManager : IDisposable
         return value;
     }
     /// <summary>
-    /// Cache key for one loaded LM. Two roles that resolve to the SAME file (appsettings
-    /// points DefaultEmbedding and DefaultReranker at "bge-m3") must produce the same key so
-    /// they share one instance; a model paired with a projector must NOT alias the bare file.
+    /// Cache key for one loaded LM. Roles that resolve to the same file share one instance;
     /// </summary>
     internal static string BuildSharedModelKey(RegisteredModel registered) =>
         registered.ResolvedMmprojPath is null
@@ -291,6 +344,18 @@ public class LmModelManager : IDisposable
             return await _sharedModels.GetOrLoadAsync(
                 BuildSharedModelKey(registered),
                 token => LoadRegisteredModelAsync(registered, token),
+                ct);
+        }
+
+        var downloadedPath = ResolveLocalModelPath(id);
+        if (downloadedPath is not null)
+        {
+            if (!File.Exists(downloadedPath))
+                throw new FileNotFoundException($"Local model file was not found: {downloadedPath}", downloadedPath);
+
+            return await _sharedModels.GetOrLoadAsync(
+                downloadedPath,
+                token => Task.Run(() => new LM(downloadedPath), token),
                 ct);
         }
 
@@ -309,11 +374,11 @@ public class LmModelManager : IDisposable
             fileName = string.Concat(fileName.Select(character =>
                 Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
             
-            var modelsDir = Path.Combine(Directory.GetCurrentDirectory(), "Models");
+            var modelsDir = _modelsDirectory;
             Directory.CreateDirectory(modelsDir);
-            var localPath = Path.Combine(modelsDir, fileName);
+            var remoteModelPath = Path.Combine(modelsDir, fileName);
 
-            if (!File.Exists(localPath))
+            if (!File.Exists(remoteModelPath))
             {
                 _logger.LogInformation("Downloading configured model from {ModelUri}", sourceUri);
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -328,7 +393,7 @@ public class LmModelManager : IDisposable
                 var canReportProgress = totalBytes != -1 && totalBytes != 0;
 
                 await using var contentStream = await response.Content.ReadAsStreamAsync(timeout.Token);
-                var temporaryPath = localPath + $".{Guid.NewGuid():N}.download";
+                var temporaryPath = remoteModelPath + $".{Guid.NewGuid():N}.download";
 
                 try
                 {
@@ -360,33 +425,150 @@ public class LmModelManager : IDisposable
                         await fileStream.FlushAsync(timeout.Token);
                     }
 
-                    File.Move(temporaryPath, localPath);
+                    File.Move(temporaryPath, remoteModelPath);
                 }
                 finally
                 {
                     if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
                 }
-                _logger.LogInformation("Configured model download completed at {LocalPath}", localPath);
+                _logger.LogInformation("Configured model download completed at {LocalPath}", remoteModelPath);
             }
             else
             {
-                _logger.LogInformation("Using existing configured model at {LocalPath}", localPath);
+                _logger.LogInformation("Using existing configured model at {LocalPath}", remoteModelPath);
             }
             
-            id = localPath; // Gán lại ID bằng đường dẫn local
+            id = remoteModelPath; // Keep downloaded artifacts under the configured AIModels directory.
         }
 
         var resolvedId = id;
+        var cachedCatalogFile = FindCachedCatalogModelFile(resolvedId);
+        if (cachedCatalogFile is not null)
+        {
+            // The catalog weights are already on disk. Loading the file directly skips
+            // LM-Kit's remote origin check inside LoadFromModelID, which fails hard
+            // (HTTP 416 Range Not Satisfiable) when its resume bookkeeping disagrees
+            // with a locally-seeded cache — leaving chat unservable with the model
+            // physically present. Cache-first, catalog-download only when missing.
+            return await _sharedModels.GetOrLoadAsync(
+                cachedCatalogFile,
+                token => Task.Run(
+                    () =>
+                    {
+                        _logger.LogInformation(
+                            "Loading cached catalog model {ModelId} from {ModelPath}",
+                            resolvedId,
+                            cachedCatalogFile);
+                        return new LM(cachedCatalogFile);
+                    },
+                    token),
+                ct);
+        }
+
         return await _sharedModels.GetOrLoadAsync(
             resolvedId,
             async token =>
             {
-                _logger.LogInformation("Loading model {ModelId}", resolvedId);
-                var model = await Task.Run(() => LM.LoadFromModelID(resolvedId), token);
+                _logger.LogInformation("Loading model {ModelId} from {ModelsDirectory}", resolvedId, _modelsDirectory);
+                var model = await Task.Run(
+                    () => LM.LoadFromModelID(resolvedId, storagePath: _modelsDirectory),
+                    token);
                 _logger.LogInformation("Model loaded successfully");
                 return model;
             },
             ct);
+    }
+
+    /// <summary>
+    /// Locates an already-downloaded catalog model inside <see cref="_modelsDirectory"/>.
+    ///
+    /// <para>
+    /// LM-Kit caches a catalog download under a per-model subdirectory named after the
+    /// HF repository — NOT the model ID — e.g. id <c>qwen3.5:4b</c> lands in
+    /// <c>qwen3.5-4b-lmk/</c>. Older layouts kept weights flat in the root. Matching on
+    /// <c>Path.Combine(dir, modelId)</c> alone therefore never hit, the loader fell through
+    /// to <c>LoadFromModelID</c>, and a flat-root file belonging to a DIFFERENT model
+    /// (GLM-OCR) could be picked up instead — an OCR model served as the chat model.
+    /// </para>
+    /// <para>
+    /// Matching is by normalized ID tokens against the subdirectory name, and the base
+    /// weights are chosen over the vision projector (<c>mmproj-*</c>) or the
+    /// <c>.origin</c> marker. Returns null when nothing matches so the caller falls back
+    /// to a real catalog download.
+    /// </para>
+    /// </summary>
+    private string? FindCachedCatalogModelFile(string modelId)
+    {
+        try
+        {
+            if (!Directory.Exists(_modelsDirectory))
+                return null;
+
+            // Compare on the alphanumeric-only form so separator differences between the
+            // catalog ID and the HF repository name never break the match:
+            //   id  "gemma4:e4b"  -> "gemma4e4b"
+            //   dir "gemma-4-e4b-instruct-lmk" -> "gemma4e4binstructlmk"  (contains)
+            var idKey = ToMatchKey(modelId);
+            if (idKey.Length < 3)
+                return null;
+
+            // 1) LM-Kit's per-repository subdirectory (the normal case).
+            foreach (var directory in Directory.EnumerateDirectories(_modelsDirectory))
+            {
+                if (!ToMatchKey(Path.GetFileName(directory)).Contains(idKey, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var cached = SelectBaseWeights(directory);
+                if (cached is not null)
+                    return cached;
+            }
+
+            // 2) Legacy flat layout: only a file whose own name carries the model ID.
+            return Directory
+                .EnumerateFiles(_modelsDirectory, "*.*", SearchOption.TopDirectoryOnly)
+                .FirstOrDefault(file =>
+                    ToMatchKey(Path.GetFileName(file)).Contains(idKey, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "Catalog cache scan failed for {ModelId}; falling back to LoadFromModelID",
+                modelId);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Lower-cases and strips every separator so a catalog ID and the corresponding HF
+    /// repository directory compare equal regardless of punctuation.
+    /// </summary>
+    private static string ToMatchKey(string value) =>
+        new string(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+
+    /// <summary>
+    /// Picks the base weights out of one cached model directory: the largest model file,
+    /// never the vision projector (<c>mmproj-*</c>), the <c>.origin</c> download marker
+    /// or a partial <c>.download</c>.
+    /// </summary>
+    private static string? SelectBaseWeights(string directory)
+    {
+        return Directory
+            .EnumerateFiles(directory, "*.*", SearchOption.TopDirectoryOnly)
+            .Where(file =>
+            {
+                var name = Path.GetFileName(file);
+                if (name.StartsWith("mmproj-", StringComparison.OrdinalIgnoreCase)) return false;
+                if (name.EndsWith(".origin", StringComparison.OrdinalIgnoreCase)) return false;
+                if (name.EndsWith(".download", StringComparison.OrdinalIgnoreCase)) return false;
+
+                var extension = Path.GetExtension(file);
+                return extension.Equals(".lmk", StringComparison.OrdinalIgnoreCase)
+                    || extension.Equals(".gguf", StringComparison.OrdinalIgnoreCase);
+            })
+            .OrderByDescending(file => new FileInfo(file).Length)
+            .FirstOrDefault();
     }
 
     private static async Task<HttpResponseMessage> SendWithValidatedRedirectsAsync(

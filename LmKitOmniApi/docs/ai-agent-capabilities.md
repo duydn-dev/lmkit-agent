@@ -185,20 +185,12 @@ Hệ thống dùng official MCP C# SDK và Streamable HTTP. Client ưu tiên pro
    so sánh `Path.Equals("/metrics")` từng để lộ toàn bộ Prometheus exposition cho request ẩn danh
    ở mọi path con.
 2. **`UseRateLimiter()` chạy SAU `UseAuthorization()`.**
-   Policy `widget-chat` partition theo claim `TenantId` và `Items["Widget.RequestOrigin"]`. Widget
-   token là auth scheme **không mặc định** nên principal của nó do `AuthorizationMiddleware` tạo,
-   không phải `UseAuthentication()`; còn origin thì do `WidgetOriginRequirement` ghi vào
-   `HttpContext.Items`. Chạy limiter trước sẽ gộp mọi tenant và mọi origin vào đúng một partition
-   `widget:unknown:unknown`. Đánh đổi đã chấp nhận: request bị từ chối sẽ được authorize trước khi
-   bị throttle — `LoginPolicy`/`SharePolicy` gác endpoint `[AllowAnonymous]` và partition theo IP
-   nên không đổi về bản chất.
-
-`/health/ready` báo **Unhealthy** khi `AiModels:DefaultChat` trỏ vào một model đã đăng ký trong
-`AiModels:Models` mà file weights không có trên đĩa; `LmModelManager` log Critical kèm đúng đường
-dẫn lúc khởi động. `/health` và `/health/live` không đổi (`/health/live` lọc
-`Predicate = _ => false`) — restart process không tạo ra file weights, nên thiếu model không được
-phép giết container đang sống. Model id **không** nằm trong registry (catalog id kiểu `qwen3.5:2b`
-hoặc URL `https://`) không bị coi là thiếu, vì chỉ có thể biết khi thử load.
+`/health/ready` treats LM-Kit catalog IDs as load-time resolvable. `LmModelManager` passes
+`AiModels:ModelsDirectory` as `storagePath` to `LM.LoadFromModelID`, so LM-Kit reuses or
+downloads the selected catalog artifact there. A catalog download can therefore make the
+first request slower; storage must be writable and sufficiently large. Direct local paths
+and HTTPS URLs remain supported as explicit compatibility/advanced inputs, but the shipped
+configuration uses catalog IDs and has no `AiModels:Models` registry.
 
 `MongoDatabaseService` cache một `MongoClient` cho mỗi connection string (`ConcurrentDictionary`,
 sống suốt process) — trước đây mỗi query tạo và vứt một client từ một **singleton**, tức là một

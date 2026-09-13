@@ -139,12 +139,16 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
 
         var (historyMessages, trimResult) = await LoadHistoryAsync(request, mode, cacheKey, historyCutoffUtc, cancellationToken);
 
-        // Build ChatHistory with trimmed messages
+        // Build ChatHistory with trimmed messages. Assistant rows keep [THINKING]/
+        // [WEB_SEARCH] markers IN STORAGE for the UI, but the model must never see
+        // them: a small model treats the marker lines as part of the answer style and
+        // starts imitating them mid-response (inventing its own "[THINKING]:" lines and
+        // drifting into degenerate loops). Strip them to the clean answer text only.
         var history = new ChatHistory(model);
         foreach (var msg in trimResult.Messages)
         {
             if (msg.Role == "user") history.AddMessage(AuthorRole.User, msg.Content);
-            else if (msg.Role == "assistant") history.AddMessage(AuthorRole.Assistant, msg.Content);
+            else if (msg.Role == "assistant") history.AddMessage(AuthorRole.Assistant, StripProtocolMarkers(msg.Content));
             // A "system" row is not a system prompt: it is the rolling conversation
             // summary ITokenManagementService splices in at the head of the trimmed
             // window when older turns had to be dropped. See AppendSummaryEndMarker
@@ -244,6 +248,10 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         {
             await foreach (var text in _orchestrator.StreamProcessQueryAsync(session.TenantId, session.Id, request.UserId, agentRole, effectiveMessage, history, options, cancellationToken))
             {
+                // Heartbeat progress lines stream to the client but never enter the
+                // persisted body — the history loader would otherwise replay a dozen
+                // stale "(Ns)" lines on reload.
+                if (IsTransientProgressLine(text)) continue;
                 fullResponseBuilder.Append(text);
                 yield return text;
             }
@@ -604,6 +612,21 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
     private static readonly Regex ReasoningMarker =
         new Regex(@"\[REASONING\]:[^\n\r]+[\n\r]*", RegexOptions.Compiled);
 
+    // Transient ReAct heartbeat progress ("Agent đang suy luận... (Ns)") emitted while
+    // the blocking ReAct pass runs. Live progress for the streaming panel only — it is
+    // stripped from the PERSISTED body so a slow turn does not entomb a dozen
+    // stale elapsed-seconds lines in the database. The history loader filters any that
+    // were persisted by older builds.
+    private static readonly Regex ReActHeartbeatMarker =
+        new Regex(@"\[THINKING\]:[^\n\r]*Agent đang suy luận\.\.\.[^\n\r]*[\n\r]*", RegexOptions.Compiled);
+
+    private static string StripTransientProgress(string raw) =>
+        string.IsNullOrEmpty(raw) ? raw : ReActHeartbeatMarker.Replace(raw, string.Empty);
+
+    /// <summary>True when the streamed fragment is a transient heartbeat progress line.</summary>
+    private static bool IsTransientProgressLine(string text) =>
+        !string.IsNullOrEmpty(text) && text.StartsWith("[THINKING]:") && text.Contains("Agent đang suy luận...");
+
     private static string StripProtocolMarkers(string raw)
     {
         if (string.IsNullOrEmpty(raw)) return string.Empty;
@@ -611,6 +634,7 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         stripped = ThinkingMarker.Replace(stripped, string.Empty);
         stripped = WebSearchMarker.Replace(stripped, string.Empty);
         stripped = ReasoningMarker.Replace(stripped, string.Empty);
+        stripped = StripTransientProgress(stripped);
         return stripped;
     }
 }

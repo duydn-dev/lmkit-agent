@@ -7,12 +7,12 @@ Use this runbook for Docker/VM rollout of LM-Kit Omni Agent.
 - PostgreSQL backup completed and restore tested.
 - TLS terminates before the browser; `AuthCookies:Secure=true`.
 - JWT secret, PostgreSQL password, LM-Kit license and LiveKit credentials come from a secrets manager.
-- Persistent volumes exist for `/var/lib/lmkit/keys`, `/app/Models` and `/app/Uploads`.
-- Target host has enough RAM for the configured models. The default chat model is
-  `bonsai` (`AiModels:DefaultChat` in `appsettings.json`); its weights must exist under
-  the directory bound to `/app/AIModels`, or `/health` and `/health/ready` report
-  Unhealthy — deliberately, so a deployment that cannot answer a single chat message
-  never passes as ready.
+- Persistent volumes exist for `/var/lib/lmkit/keys`, `/app/AIModels` and `/app/Uploads`.
+- Target host has enough RAM/VRAM for the configured models. The default chat model ID is
+  `gemma4:e4b` (`AiModels:DefaultChat` in `appsettings.json`) — ~4.5 GB of weights, chosen to
+  fit a 6 GB GPU (measured ~4.9 GB used on an RTX 2060). LM-Kit.NET resolves/downloads it
+  using `AiModels:ModelsDirectory` as `storagePath`; `/health/ready` reports the catalog ID as
+  load-time resolvable and the first request may perform the download.
 - GPU hosts need `nvidia-container-toolkit`. On a CPU-only host set `API_GPU_COUNT=0`,
   otherwise the API container fails to start with "could not select device driver".
 - Production sets `LMKIT_REQUIRE_LICENSE=true`, `AI_WARMUP_CHAT_MODEL=true` and

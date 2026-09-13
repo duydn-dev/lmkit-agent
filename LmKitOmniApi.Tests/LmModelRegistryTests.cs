@@ -128,6 +128,42 @@ public class LmModelRegistryTests : IDisposable
     }
 
     [Fact]
+    public void DirectLocalPath_ResolvesWithoutRegistryEntry()
+    {
+        var modelPath = Path.Combine(_modelsDirectory, "qwen.lmk");
+        File.WriteAllText(modelPath, string.Empty);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiModels:ModelsDirectory"] = _modelsDirectory,
+                ["AiModels:DefaultChat"] = modelPath
+            })
+            .Build();
+        using var manager = new LmModelManager(configuration);
+
+        Assert.Equal(Path.GetFullPath(modelPath), manager.ResolveLocalModelPathForTests(modelPath));
+        Assert.Null(manager.ResolveRegisteredModelForTests(modelPath));
+    }
+
+    [Fact]
+    public void BareLocalFilename_ResolvesInsideModelsDirectoryWithoutRegistryEntry()
+    {
+        var modelName = "qwen.lmk";
+        var modelPath = Path.Combine(_modelsDirectory, modelName);
+        File.WriteAllText(modelPath, string.Empty);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiModels:ModelsDirectory"] = _modelsDirectory,
+                ["AiModels:DefaultChat"] = modelName
+            })
+            .Build();
+        using var manager = new LmModelManager(configuration);
+
+        Assert.Equal(Path.GetFullPath(modelPath), manager.ResolveLocalModelPathForTests(modelName));
+    }
+
+    [Fact]
     public void ResolveRegisteredModel_UnknownOrEmptyIdReturnsNull()
     {
         var configuration = new ConfigurationBuilder()

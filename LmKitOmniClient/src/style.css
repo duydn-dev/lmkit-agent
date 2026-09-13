@@ -1,6 +1,11 @@
 @import "tailwindcss";
 
 @theme {
+  /* Toàn app dùng một font duy nhất. Tailwind v4 mặc định gán --font-sans
+     = -apple-system/Segoe UI/Roboto, và các view gốc bọc trang bằng class
+     font-sans — nên không override ở đây thì mọi chữ trong app rời khỏi Inter.
+     PrimeVue để fontFamily: "inherit" nên tự theo được ngay khi biến này đúng. */
+  --font-sans: 'InterVariable', 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --color-chatgpt-dark: #f8fafc;
   --color-chatgpt-light: #e2e8f0;
   --color-chatgpt-text: #111827;
@@ -17,16 +22,30 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
+  color-scheme: light;
   background-color: var(--color-chatgpt-dark);
   color: var(--color-chatgpt-text);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
   overflow: hidden;
 }
 
-@supports (font-variation-settings: normal) {
-  html, body {
-    font-family: 'InterVariable', 'Inter', system-ui, -apple-system, sans-serif;
-  }
+/* The application is intentionally light-themed. PrimeVue's system dark mode
+   must not turn native/component inputs dark when the OS/browser is dark. */
+.login-page input,
+.login-page textarea,
+.login-page select,
+.login-page .p-inputtext {
+  color-scheme: light;
+  background-color: #ffffff;
+  color: #111827;
+  border-color: #cbd5e1;
+}
+
+.login-page input::placeholder,
+.login-page textarea::placeholder,
+.login-page .p-inputtext::placeholder {
+  color: #6b7280;
+  opacity: 1;
 }
 
 #app {

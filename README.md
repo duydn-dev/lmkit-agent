@@ -106,7 +106,7 @@ Sửa các giá trị bắt buộc trong `.env`:
 | `REDIS_PASSWORD` | ✅ | Không chứa dấu phẩy |
 | `JWT_SECRET_KEY` | ✅ | Tối thiểu 32 ký tự |
 | `BOOTSTRAP_ADMIN_ENABLED=true` + `BOOTSTRAP_ADMIN_EMAIL` + `BOOTSTRAP_ADMIN_PASSWORD` | Lần đầu | Tạo tài khoản admin lúc khởi động (không có admin mặc định). Đăng nhập xong nên xóa 3 dòng này và restart |
-| `AI_DEFAULT_CHAT` / `AI_DEFAULT_VISION` / `AI_DEFAULT_EMBEDDING` / `AI_DEFAULT_RERANKER` | Không | Mặc định đã trỏ hết vào model local: `bonsai`, `glm-ocr`, `bge-m3` (dùng chung cho cả embedding lẫn reranker) |
+| `AiModels__DefaultChat` / `AiModels__DefaultVision` / `AiModels__DefaultEmbedding` / `AiModels__DefaultReranker` | Không | Model ID trong LM-Kit catalog; mặc định đã có trong `appsettings.json` |
 
 ### Bước 2 — Build image (lần đầu)
 
@@ -124,7 +124,7 @@ Target mặc định là `final-slim`: `ubuntu:22.04` + ASP.NET 10 runtime + th�
 
 ### Bước 3 — Đặt model vào `AIModels`
 
-**Repo không kèm file model** (`AIModels/` bị gitignore) và không có script download. Nếu chưa có model, `/health/ready` sẽ báo `Unhealthy` và tin nhắn chat đầu tiên sẽ lỗi — xem [Model AI local](#model-ai-local-thư-mục-aimodels).
+**Repo không kèm weights model** (`AIModels/` bị gitignore). Với catalog ID, LM-Kit sẽ tải model vào `AiModels:ModelsDirectory` khi cần; bật warm-up + `AI_REQUIRE_CHAT_MODEL_READY=true` nếu muốn health chỉ ready sau khi chat model đã load.
 
 ### Bước 4 — Chạy stack
 
@@ -169,12 +169,17 @@ Model local được đọc từ `/app/AIModels` trong container, bind mount t�
    ```bash
    scp -r models/ user@server:/opt/lmkit/LmKitOmniApi/AIModels/
    ```
-2. Tham chiếu theo 1 trong 2 cách:
-   - Đăng ký entry trong `AiModels:Models` (appsettings.json) với `"Path"` tính tương đối từ `/app/AIModels`, rồi đặt `AiModels__DefaultChat=<key>` — cách mặc định đang dùng (`bonsai`, `glm-ocr`, `bge-m3`).
-   - Hoặc trỏ thẳng đường dẫn trong container: `AI_DEFAULT_CHAT=/app/AIModels/<file>.gguf`.
-3. Restart API để áp dụng cho mọi slot: `docker compose -f docker-compose.prod.yml --env-file .env up -d api`.
+2. Cấu hình các slot bằng **model ID của LM-Kit catalog** — không khai báo filename và không tạo `AiModels:Models`:
+   - `qwen3.5:4b` — chat.
+   - `glm-ocr` — vision/OCR.
+   - `whisper-tiny` — speech-to-text.
+   - `bge-m3` — embeddings.
+   - `bge-m3-reranker` — reranking.
+   - `u2net` — segmentation.
+   LM-Kit.NET tự tải hoặc tái sử dụng model trong `AiModels:ModelsDirectory` (`AIModels`) qua `LM.LoadFromModelID(modelId, storagePath: ...)`.
+3. Restart API để áp dụng: `docker compose -f docker-compose.prod.yml --env-file .env up -d api`.
 
-Model tải từ xa (HTTP(S)/catalog id) lưu vào volume `models` (`/app/Models`); đặt `AI_MODELS_CACHE_HOST_DIR=<thư-mục>` để bind mount ra host nếu muốn giữ qua các lần deploy. Download chỉ qua HTTPS, kiểm tra host tin cậy, giới hạn kích thước và thời gian.
+Model tải từ xa qua HTTPS (nếu cấu hình URL thay vì catalog ID) dùng cache `AIModels`; đặt `AI_MODELS_HOST_DIR=<thư-mục>` để bind mount cache ra host. Catalog ID do LM-Kit quản lý trực tiếp trong `AiModels:ModelsDirectory`.
 
 Muốn warm-up chat model lúc khởi động (tránh chờ load ở chat đầu tiên): `AI_WARMUP_CHAT_MODEL=true`.
 
@@ -288,9 +293,9 @@ Script là **nguồn duy nhất** của bộ env var này — đừng chép lạ
 | `Database__ApplyMigrations` | Tự chạy EF migration khi API start |
 | `DataProtection__KeyPath` | Vị trí persistent key ring cho mã hóa approval/MCP header |
 | `DataProtection__CertificatePath` | Tùy chọn: chứng chỉ PKCS#12 mã hóa key ring at rest |
-| `AiModels__DefaultChat` | Model ID do server kiểm soát (chat/vision/embedding/reranker có slot riêng) |
-| `AI_MODELS_HOST_DIR` | Thư mục host bind mount vào `/app/AIModels` (model local) |
-| `AI_MODELS_CACHE_HOST_DIR` | Tùy chọn: thư mục host cho cache download `/app/Models` |
+| `AiModels__DefaultChat` | Model ID trong LM-Kit catalog, ví dụ `qwen3.5:4b` |
+| `AiModels__ModelsDirectory` | Thư mục cache/storage truyền vào `LM.LoadFromModelID(..., storagePath: ...)` |
+| `AI_MODELS_HOST_DIR` | Thư mục host bind mount vào `/app/AIModels` (catalog model cache) |
 | `VectorStore__ApiKey` | Tùy chọn: api-key gửi kèm khi Qdrant có xác thực (`VectorStore__BaseUrl` hỗ trợ `https://`) |
 | `SemaphoreLimits__Chat` | Số luồng inference chat đồng thời (mỗi slot model có limit riêng) |
 
@@ -315,7 +320,8 @@ Tool mặc định an toàn bật cho ReAct: arithmetic, date/time, JSON, CSV, X
 
 ## Giới hạn hiện tại
 
-- Toàn bộ 4 slot model (chat/vision/embedding/reranker) mặc định trỏ file local trong `AIModels`, nhưng **repo không kèm file nào** — phải tự đặt vào. Chỉ khi chọn catalog id hoặc URL thì model mới được tải về volume `models` ở lần dùng đầu.
+- Các slot model mặc định dùng model ID LM-Kit catalog và lưu/tải cache trong `AIModels`; repo không kèm weights, nên lần dùng đầu tiên có thể cần internet và đủ dung lượng.
+- Có thể đặt `AI_MODELS_HOST_DIR` để bind mount thư mục cache catalog vào `/app/AIModels`. Không khai báo `AiModels:Models` và không dùng `AI_DEFAULT_*` làm filename.
 - Output chat đi qua output guardrail trước khi phát, nên phần đầu câu trả lời bị giữ lại một khoảng rồi mới stream — không phải nhỏ giọt từng token ngay từ đầu.
 - Chưa có quota token per-user (hiện chỉ giới hạn số request/phút) và chưa đo chất lượng model bằng eval có model thật trong CI.
 - Widget: API/quota/origin-allowlist đã xong nhưng **chưa nhúng được vào site khác** vì lỗi nginx nói ở trên; cũng chưa có portal tự đăng ký cho khách hàng.

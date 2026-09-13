@@ -1,6 +1,9 @@
+using System.Text;
+using System.Threading.Channels;
 using LMKit.TextGeneration;
 using LMKit.TextGeneration.Chat;
 using LMKit.Agents;
+using LMKit.Agents.Streaming;
 using LMKit.Agents.Tools;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Infrastructure.AI.Agents;
@@ -119,6 +122,43 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// persisted with the message, so this caps both the row size and the chip.
     /// </summary>
     private const int MaxWebReferenceCount = 12;
+
+    /// <summary>
+    /// How often a [THINKING] heartbeat is emitted while the blocking ReAct executor
+    /// runs. Long enough not to spam the panel, short enough that the page never looks
+    /// frozen: at 8s the user sees the pipeline ticking within two breaths.
+    /// </summary>
+    internal static readonly TimeSpan ReActHeartbeatInterval = TimeSpan.FromSeconds(8);
+
+    /// <summary>
+    /// How many characters of planner reasoning to accumulate before emitting one
+    /// <c>[REASONING]</c> line. Reasoning arrives token by token; one line per token would
+    /// bury the panel (and the persisted message) in fragments, so fragments are batched to
+    /// about a sentence.
+    /// </summary>
+    private const int ReasoningFlushThreshold = 160;
+
+    /// <summary>
+    /// Hard cap on a single emitted reasoning line. Both the streamed and the persisted
+    /// form are line-oriented, so one runaway fragment must not become one huge entry.
+    /// </summary>
+    private const int MaxReasoningLineLength = 600;
+
+    /// <summary>
+    /// Cap on how many <c>ReasoningTrace</c> lines the post-execution fallback forwards,
+    /// so a verbose planner trace can never dominate the thinking panel.
+    /// </summary>
+    private const int MaxReasoningTraceLines = 24;
+
+    /// <summary>
+    /// How many tool results are carried from the agent pass into the synthesis context, and
+    /// how much of each. Enough for the evidence a normal turn gathers, capped so a chatty tool
+    /// cannot crowd the history out of the context window.
+    /// </summary>
+    private const int MaxRetainedToolEvidenceCount = 4;
+
+    /// <inheritdoc cref="MaxRetainedToolEvidenceCount"/>
+    private const int MaxRetainedToolEvidenceChars = 1500;
 
     // C3 Fix: Map ReAct action names → tool permission names for correct RBAC checks.
     // Internal (not private) because AgentActionDispatcher applies the same mapping
@@ -334,11 +374,42 @@ public class AgentOrchestrator : IAgentOrchestrator
         // semaphore = 1), and even if inference throws. BeginApplyForAgent returns null (a
         // no-op) when the feature is off, no adapter is bound, or the registration is
         // missing/inactive/file-gone, so this is safe unconditionally.
+        // Cold-start notice: the first chat request after boot pays the model load
+        // (tens of seconds for a 4B). Without this line the thinking panel freezes on
+        // "Khởi tạo ReAct agent" and the silence reads as a hang.
+        var chatModelAlreadyLoaded = _modelManager.IsChatModelLoaded;
+        if (!chatModelAlreadyLoaded)
+            yield return "[THINKING]: ⏳ Đang nạp mô hình (lần đầu có thể mất ~1 phút)...\n";
         var loraModel = await _modelManager.GetChatModelAsync(ct: cancellationToken);
+        if (!chatModelAlreadyLoaded)
+            yield return "[THINKING]: ✅ Mô hình đã sẵn sàng\n";
         using var loraScope = _loraService.BeginApplyForAgent(loraModel, tenantId, options?.LoraAdapterId, cancellationToken);
         _telemetry.RecordReActIteration(activity, 1, "native-react", query);
-        var nativeRun = await ExecuteNativeReActAsync(
-            tenantId, userId, userRole, sessionId, query, memoryContext, options, cancellationToken, stepSink);
+
+        // The ReAct pass below is a blocking executor call that can run 30–90s with no
+        // natural yield point. Run it as a task and drain a heartbeat channel alongside:
+        // every ReActHeartbeatInterval a [THINKING] progress line flows to the client so
+        // the thinking panel visibly ticks instead of the page looking frozen. The chat
+        // handler strips these transient lines before persisting.
+        var reactProgress = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = true
+        });
+        var reactTask = ExecuteNativeReActAsync(
+            tenantId, userId, userRole, sessionId, query, memoryContext, options, cancellationToken, stepSink, reactProgress);
+        // If the drain below aborts (client disconnect / cancellation), the ReAct task may
+        // still fault afterwards; observe its exception so it never surfaces as an
+        // unobserved-task-event noise.
+        _ = reactTask.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
+
+        await foreach (var heartbeat in reactProgress.Reader.ReadAllAsync(cancellationToken))
+            yield return heartbeat;
+        var nativeRun = await reactTask;
 
         if (nativeRun.PendingApprovalId is Guid approvalId)
         {
@@ -412,9 +483,71 @@ public class AgentOrchestrator : IAgentOrchestrator
             yield return FormatWebSearchMarker(nativeRun.WebReferences);
         }
 
-        string fullContext = string.IsNullOrWhiteSpace(nativeRun.Content)
-            ? string.Empty
-            : $"[LM-Kit ReAct result]:\n{nativeRun.Content}";
+        // Both halves matter to the answering pass and they are not interchangeable: the ReAct
+        // result is the agent's own reading of the turn, the evidence is what the tools actually
+        // returned. Passing only the former let a summary lose the fact the user asked for.
+        var fullContextParts = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(nativeRun.Content))
+            fullContextParts.Add($"[LM-Kit ReAct result]:\n{nativeRun.Content}");
+        if (nativeRun.ToolEvidence.Count > 0)
+        {
+            fullContextParts.Add("[Kết quả công cụ trong lượt này]:\n"
+                + string.Join("\n\n", nativeRun.ToolEvidence));
+            // Sizes only — never the evidence itself, which is untrusted web content.
+            _logger.LogInformation(
+                "Passing {Count} tool result(s) ({Chars} chars) into the synthesis context.",
+                nativeRun.ToolEvidence.Count, nativeRun.ToolEvidence.Sum(e => e.Length));
+        }
+        var fullContext = string.Join("\n\n", fullContextParts);
+
+        // ── Direct-answer fast path ──
+        // The ReAct pass already produced a complete answer WITHOUT any tool call
+        // (small talk, simple factual turns). Running the history-aware synthesis
+        // pass on top used to make a small model re-ask itself: the user saw their
+        // own question echoed back ("tự hỏi tự trả lời") or degenerate fragments —
+        // plus the doubled inference latency. The pass-1 answer already passed the
+        // model's own ReAct guardrails, so it still goes through the streaming
+        // guardrail gate + output filters below before reaching the client.
+        if (nativeRun.IsDirectAnswer && stepSink is null)
+        {
+            _telemetry.RecordReActIteration(activity, 1, "direct-answer-fast-path", query);
+            yield return "[THINKING]: ✅ Đã có câu trả lời trực tiếp\n";
+
+            var directGate = new StreamingGuardrailGate(_promptGuard);
+            var directChunk = await directGate.AppendAndTryEmitAsync(nativeRun.Content, cancellationToken);
+            var directFiltered = await _filterPipeline.RunOutputFiltersAsync(
+                new AgentFilterContext
+                {
+                    TenantId = tenantId,
+                    OriginalInput = query,
+                    ProcessedInput = query,
+                    Output = directGate.RawText
+                },
+                cancellationToken);
+
+            var directFinal = directFiltered.ProcessedContent ?? string.Empty;
+            if (directFinal.StartsWith(directChunk, StringComparison.Ordinal) && directChunk.Length > 0)
+                yield return directChunk;
+            var directRemainder = directFinal.StartsWith(directChunk, StringComparison.Ordinal)
+                ? directFinal[directChunk.Length..]
+                : directFinal;
+            if (directRemainder.Length > 0)
+                yield return directRemainder;
+
+            // Memory extraction still benefits: facts can be learned from direct turns too.
+            try
+            {
+                await _memoryService.ExtractAndStoreFactsAsync(
+                    tenantId, userId, query, directFinal, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to persist user-scoped agent memory (direct answer path).");
+            }
+
+            _telemetry.RecordTokenUsage(_tokenManagement.EstimateTokenCount(directFinal));
+            yield break;
+        }
 
         // ── Step 5: Generate Response with Template ──
         yield return "[THINKING]: ✍️ Đang tổng hợp và tạo câu trả lời...\n";
@@ -449,8 +582,13 @@ public class AgentOrchestrator : IAgentOrchestrator
         // separate [REASONING] channel — never mixed into the answer or its guardrail
         // gate, so the persisted answer and memory extraction stay reasoning-free.
         var showReasoning = options?.ShowReasoning == true;
-        if (showReasoning)
-            chat.ReasoningLevel = ReasoningLevel.Medium;
+        // Both directions matter. The gate decides whether reasoning is DISPLAYED, and the
+        // synthesis conversation has to be told whether reasoning is WANTED — otherwise a
+        // reasoning-capable template keeps thinking by default and "thinks" its whole output
+        // away: measured on a live search turn, the pass emitted 133 InternalReasoning segments
+        // and ZERO UserVisible ones, so the client received no answer at all. With the gate off
+        // the model is asked for a direct answer (the documented use of ReasoningLevel.None).
+        chat.ReasoningLevel = showReasoning ? ReasoningLevel.Medium : ReasoningLevel.None;
 
         chat.AfterTextCompletion += (sender, e) =>
         {
@@ -575,6 +713,33 @@ public class AgentOrchestrator : IAgentOrchestrator
         // chunks + this tail concatenate to exactly ProcessedContent; nothing is
         // emitted twice.
         var finalContent = outputResult.ProcessedContent ?? string.Empty;
+
+        // ── Empty-answer fallback ──
+        // A synthesis pass can end with nothing in the user-visible channel even though the turn
+        // is not an error: the model spent its output on internal reasoning or on a tool call and
+        // never wrote prose (observed live: 133 InternalReasoning segments, zero UserVisible, and
+        // an empty bubble). The ReAct pass already produced an answer for exactly this query, so
+        // falling back to it beats shipping silence. It goes through the same guardrail gate and
+        // output filters as any other answer, and sharing the tail-emission path below means the
+        // persisted message and the memory extraction see it too.
+        if (string.IsNullOrWhiteSpace(finalContent) && !string.IsNullOrWhiteSpace(nativeRun.Content))
+        {
+            _logger.LogWarning(
+                "Synthesis pass returned no user-visible content; falling back to the ReAct result.");
+            var fallbackGate = new StreamingGuardrailGate(_promptGuard);
+            await fallbackGate.AppendAndTryEmitAsync(nativeRun.Content, cancellationToken);
+            var fallbackFiltered = await _filterPipeline.RunOutputFiltersAsync(
+                new AgentFilterContext
+                {
+                    TenantId = tenantId,
+                    OriginalInput = query,
+                    ProcessedInput = query,
+                    Output = fallbackGate.RawText
+                },
+                cancellationToken);
+            finalContent = fallbackFiltered.ProcessedContent ?? string.Empty;
+        }
+
         var emittedContent = streamGate.EmittedText;
         if (finalContent.StartsWith(emittedContent, StringComparison.Ordinal))
         {
@@ -613,10 +778,26 @@ public class AgentOrchestrator : IAgentOrchestrator
         string existingContext,
         AgentRequestOptions? options,
         CancellationToken ct,
-        IList<AgentRunStepData>? stepSink = null)
+        IList<AgentRunStepData>? stepSink = null,
+        Channel<string>? progress = null)
     {
         var model = await _modelManager.GetChatModelAsync(ct: ct);
         Guid? pendingApprovalId = null;
+        // Periodic progress while the blocking ReAct executor runs. Written by a timer
+        // loop, read by the streaming enumerator; the channel is completed in finally so
+        // the drain always ends.
+        // Timestamp of the last reasoning fragment forwarded to the client. The heartbeat
+        // consults it so "still working" filler is only emitted while the stream is
+        // genuinely silent — never interleaved with live reasoning.
+        long lastReasoningFlushTicks = 0;
+        await using var heartbeatScope = progress is null
+            ? null
+            : new ReActHeartbeat(progress, ct, () =>
+            {
+                var last = Volatile.Read(ref lastReasoningFlushTicks);
+                return last == 0
+                    || System.Diagnostics.Stopwatch.GetElapsedTime(last) >= ReActHeartbeatInterval;
+            });
         // Per-request sink for files a tool (currently run_python) produced. Captured
         // by the InvokeActionAsync closure — the same pattern as pendingApprovalId —
         // so files ride a side channel out of the blocking ReAct pass, bypassing the
@@ -631,11 +812,37 @@ public class AgentOrchestrator : IAgentOrchestrator
         // turn made, because the client shows one reference list per message.
         var webReferences = new List<string>();
         var seenWebReferences = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Whether the ReAct pass actually invoked a tool. When it answered directly
+        // (zero tool calls — most small-talk and simple factual turns), the caller can
+        // stream that answer instead of running the second synthesis pass, which for a
+        // small model just re-asks the question and degrades into echo loops.
+        var toolInvocationCount = 0;
+        // Raw output of each tool this turn, bounded. The synthesis pass used to receive ONLY
+        // the ReAct model's paraphrase of these results, so concrete facts (a price, a date, a
+        // number) had to survive a summary written by a small model to ever reach the answer —
+        // measured on a live search turn: the snippet carried "143,6 – 146,6 triệu đồng/lượng"
+        // while the answer claimed the model has no access to real-time data. The evidence now
+        // travels to the answering pass verbatim (truncated), under the same untrusted-data
+        // framing the prompt template already applies to context.
+        var toolEvidence = new List<string>();
 
         async Task<string> InvokeActionAsync(string action, string toolQuery, CancellationToken toolCt)
         {
+            toolInvocationCount++;
             var output = await ExecuteActionWithResilienceAsync(
                 tenantId, userId, userRole, sessionId, toolQuery, action, options, toolCt, producedFiles);
+
+            // Approval requests and empty results are not evidence; a file descriptor is not
+            // either (the bytes are served separately and the descriptor is only a pointer).
+            if (toolEvidence.Count < MaxRetainedToolEvidenceCount
+                && !string.IsNullOrWhiteSpace(output)
+                && !output.StartsWith("[HITL_APPROVAL_REQUIRED:", StringComparison.Ordinal))
+            {
+                var slice = output.Length > MaxRetainedToolEvidenceChars
+                    ? output[..MaxRetainedToolEvidenceChars] + "…"
+                    : output;
+                toolEvidence.Add($"[{action}]\n{slice}");
+            }
 
             const string approvalPrefix = "[HITL_APPROVAL_REQUIRED:";
             if (output.StartsWith(approvalPrefix, StringComparison.Ordinal)
@@ -702,32 +909,161 @@ public class AgentOrchestrator : IAgentOrchestrator
             .WithMaxIterations(MaxReActIterations)
             .Build();
 
-        // The parameterless AgentExecutor defers creating its conversation until Execute(), and
-        // MaximumCompletionTokens THROWS until one exists:
-        //   InvalidOperationException: Conversation has not been initialized.
-        //   Call ExecuteAsync first or provide a conversation in the constructor.
-        // So this line faulted every single ReAct pass, the controller caught it after the SSE
-        // headers were already sent, and every chat request in the product answered
-        // "[ERROR]: Unable to generate a response." — from the very first message.
+        // The ReAct pass used to run through the blocking AgentExecutor.Execute, which
+        // reasons internally and hands back only the final answer — the thinking panel could
+        // therefore show nothing but the 8s heartbeat while the model was in fact reasoning
+        // the entire time. StreamingAgentExecutor with StreamThinking raises the planner's own
+        // reasoning text as it is produced; we forward it as [REASONING] fragments, which the
+        // client renders live (and persists, so a reload replays the same reasoning).
         //
-        // Nothing caught it because every test fakes the model boundary; only a run against real
-        // weights reaches this line. LiveChatSecondTurnTests is that run.
-        //
-        // Supplying the conversation up front is the alternative the exception itself names. It
-        // is created empty, exactly like the one Execute() would have built, so the ReAct pass
-        // still starts from the query alone and only the token cap changes — from silently
-        // unapplied to applied.
-        using var executorConversation = new MultiTurnConversation(model);
-        using var executor = new AgentExecutor(executorConversation);
-        executor.MaximumCompletionTokens = DefaultMaximumCompletionTokens;
-        var result = executor.Execute(agent, query, ct);
+        // MaximumCompletionTokens THROWS until a conversation exists, which is exactly why the
+        // old code built a MultiTurnConversation up front. AgentExecutionOptions carries the
+        // same caps declaratively, so no pre-built conversation is needed here.
+        var executionOptions = new AgentExecutionOptions
+        {
+            MaxCompletionTokens = DefaultMaximumCompletionTokens,
+            MaxIterations = MaxReActIterations,
+            // Without this the agent pass runs at the conversation default and reasoning-capable
+            // models (Qwen3.5, GLM-4.7, Magistral, GPT-OSS) never emit their <think> block, so
+            // the panel had nothing to show. The synthesis pass already asks for Medium; the
+            // agent pass has to ask for it too.
+            ReasoningLevel = ReasoningLevel.Medium
+        };
+
+        using var streamingExecutor = new StreamingAgentExecutor
+        {
+            StreamThinking = true,
+            StreamStatus = true,
+            // Needed as the turn separator: a tool call is the only signal that proves the
+            // text just generated was a Thought rather than the final answer (see below).
+            StreamToolCalls = true
+        };
+
+        // Text of the turn currently being generated. Content tokens cannot be forwarded the
+        // moment they arrive: the final turn's content IS the answer, and showing it as
+        // reasoning would duplicate it in the panel and in the persisted message. So a turn's
+        // text is held until a tool call/result proves it was a Thought, which is where it is
+        // released; whatever is still buffered when the pass ends is the answer and is
+        // dropped. Tokens LM-Kit itself labels as reasoning are exempt — they are reasoned
+        // text by declaration, so they are released as they arrive.
+        var turnBuffer = new StringBuilder();
+        var reasoningCharsEmitted = 0;
+
+        void EmitReasoning(string text)
+        {
+            if (progress is null || text.Length == 0) return;
+            var remaining = text.AsSpan().Trim();
+            while (!remaining.IsEmpty)
+            {
+                var take = Math.Min(MaxReasoningLineLength, remaining.Length);
+                if (take < remaining.Length)
+                {
+                    // Prefer a word boundary; never split a chunk mid-word unless the text has
+                    // no usable space at all.
+                    var cut = remaining[..take].LastIndexOf(' ');
+                    if (cut > MaxReasoningLineLength / 2) take = cut;
+                }
+                var chunk = remaining[..take].Trim().ToString();
+                remaining = remaining[take..].TrimStart();
+                if (chunk.Length == 0) continue;
+                // Single-line by contract: every client stripper is line-anchored, so a real
+                // newline inside a fragment would swallow the text that follows it.
+                progress.Writer.TryWrite("[REASONING]: " + chunk + "\n");
+                Interlocked.Add(ref reasoningCharsEmitted, chunk.Length);
+            }
+            Volatile.Write(ref lastReasoningFlushTicks, System.Diagnostics.Stopwatch.GetTimestamp());
+        }
+
+        void CommitBufferedThought()
+        {
+            var text = turnBuffer.ToString().Trim();
+            turnBuffer.Clear();
+            EmitReasoning(text);
+        }
+
+        void AppendBufferedFragment(string raw)
+        {
+            var fragment = raw.ReplaceLineEndings(" ");
+            if (fragment.Length == 0) return;
+            turnBuffer.Append(fragment);
+            // Declared reasoning still batches to a readable line while it streams.
+            var buffered = turnBuffer.ToString();
+            if (buffered.Length >= ReasoningFlushThreshold || EndsReasoningSegment(buffered))
+                CommitBufferedThought();
+        }
+
+        var streamHandler = new DelegateStreamHandler(onToken: token =>
+        {
+            switch (token.Type)
+            {
+                case AgentStreamTokenType.Thinking:
+                case AgentStreamTokenType.PlanningStep:
+                case AgentStreamTokenType.Status:
+                    AppendBufferedFragment(token.Text);
+                    return;
+                case AgentStreamTokenType.ToolCall:
+                case AgentStreamTokenType.ToolResult:
+                    // The turn that just ended produced an action, so its text was reasoning.
+                    CommitBufferedThought();
+                    return;
+                case AgentStreamTokenType.Content:
+                    // Held back: committed by the next tool signal, dropped at the end of the
+                    // pass when it turns out to have been the answer.
+                    AppendBufferedFragment(token.Text);
+                    return;
+                default:
+                    return;
+            }
+        });
+
+        var result = await streamingExecutor
+            .ExecuteStreamingAsync(agent, query, streamHandler, executionOptions, ct)
+            .ConfigureAwait(false);
+
+        // Deliberately NOT committed: the last buffered turn is the answer, which the caller
+        // streams separately through the guardrail gate.
+        heartbeatScope?.Stop();
+
+        // The trace fallback. Measured against real weights: gemma4:e4b and qwen3.5:4b both
+        // stream ONLY Content tokens from an agent pass (no Thinking/PlanningStep/Status) —
+        // gemma's trace is empty, but qwen3.5 fills ReasoningTrace once ReasoningLevel is set
+        // above, and that trace is genuine chain-of-thought the client would otherwise never
+        // see. Forward it: an empty thinking panel is the failure this path exists to prevent.
+        if (Interlocked.CompareExchange(ref reasoningCharsEmitted, 0, 0) == 0
+            && !string.IsNullOrWhiteSpace(result.ReasoningTrace)
+            && progress is not null)
+        {
+            var lines = result.ReasoningTrace
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Take(MaxReasoningTraceLines);
+            foreach (var line in lines)
+            {
+                var trimmed = line.Length > MaxReasoningLineLength
+                    ? line[..MaxReasoningLineLength] + "…"
+                    : line;
+                progress.Writer.TryWrite("[REASONING]: " + trimmed + "\n");
+            }
+        }
 
         return new NativeReActResult(
             result.Content ?? string.Empty,
             result.InferenceCount,
             pendingApprovalId,
             producedFiles,
-            webReferences);
+            webReferences,
+            toolInvocationCount,
+            toolEvidence);
+    }
+
+    /// <summary>
+    /// True when buffered reasoning text has reached a natural boundary, so a flush splits
+    /// lines at sentence ends rather than mid-word. Accepts the CJK/Latin enders a model may
+    /// mix into Vietnamese output.
+    /// </summary>
+    private static bool EndsReasoningSegment(string text)
+    {
+        if (text.Length == 0) return false;
+        return text[^1] is '.' or '!' or '?' or ':' or ';' or '…' or '。' or '！' or '？';
     }
 
     /// <summary>
@@ -1014,7 +1350,12 @@ public class AgentOrchestrator : IAgentOrchestrator
         // offered to the ReAct planner for this request. The tool list is built
         // fresh per request, so no shared/singleton state is mutated here. The
         // switch composes with the whitelist: web search requires BOTH.
-        if (profile.HasFlag(AgentToolProfile.Research) && allowWebSearch && ActionAllowed("WEB_SEARCH"))
+        // Web search is a user-controlled capability, not only a keyword heuristic.
+        // The resolver still keeps the other expensive/specialized tools narrow, but
+        // hiding search for a query such as "Vue.js" made the ON toggle appear broken:
+        // the planner could not call a tool that was never registered. When the user
+        // enables search, expose it; RBAC and the per-agent whitelist still narrow it.
+        if (allowWebSearch && ActionAllowed("WEB_SEARCH"))
         {
             tools.Add(new DelegatedActionTool("search_web", "Search approved web sources for current external information.",
                 (q, ct) => invoke("WEB_SEARCH", q, ct)));
@@ -1045,7 +1386,22 @@ public class AgentOrchestrator : IAgentOrchestrator
         int InferenceCount,
         Guid? PendingApprovalId,
         IReadOnlyList<ProducedFile> ProducedFiles,
-        IReadOnlyList<string> WebReferences);
+        IReadOnlyList<string> WebReferences,
+        int ToolInvocationCount,
+        IReadOnlyList<string> ToolEvidence)
+    {
+        /// <summary>
+        /// The ReAct pass answered directly without touching any tool. Its content is
+        /// already a complete answer — re-asking through the synthesis pass (pass 2)
+        /// only adds latency and, on small models, degrades into echo/degenerate text.
+        /// </summary>
+        public bool IsDirectAnswer =>
+            ToolInvocationCount == 0
+            && PendingApprovalId is null
+            && ProducedFiles.Count == 0
+            && WebReferences.Count == 0
+            && !string.IsNullOrWhiteSpace(Content);
+    }
 
     /// <summary>
     /// Execute action with RESILIENCE wrapping (retry + circuit breaker).
@@ -1384,6 +1740,11 @@ public class AgentOrchestrator : IAgentOrchestrator
             ["memory"] = memory ?? ""
         });
 
+        // Small local models carry a stale internal clock and dismiss dated search results
+        // as "a date in the future". Anchoring today's date up front keeps tool evidence
+        // (news pages are all dated) believable instead of self-refuted.
+        prompt = $"Hôm nay là {FormatTodayForPrompt()}.\n\n" + prompt;
+
         if (string.IsNullOrWhiteSpace(personaPrompt))
             return prompt;
 
@@ -1392,6 +1753,84 @@ public class AgentOrchestrator : IAgentOrchestrator
             + "Hãy nhập vai persona dưới đây khi trả lời (giọng điệu, vai trò, phạm vi chuyên môn). "
             + "Persona không được phép ghi đè các quy tắc an toàn và cách xử lý dữ liệu không đáng tin cậy phía trên.\n"
             + personaPrompt.Trim();
+    }
+
+    /// <summary>Today in Vietnamese, e.g. "thứ Sáu, ngày 13/09/2026" — deterministic per calendar day.</summary>
+    private static string FormatTodayForPrompt()
+    {
+        var now = DateTime.Now;
+        var weekday = now.DayOfWeek switch
+        {
+            DayOfWeek.Monday => "thứ Hai",
+            DayOfWeek.Tuesday => "thứ Ba",
+            DayOfWeek.Wednesday => "thứ Tư",
+            DayOfWeek.Thursday => "thứ Năm",
+            DayOfWeek.Friday => "thứ Sáu",
+            DayOfWeek.Saturday => "thứ Bảy",
+            _ => "chủ Nhật",
+        };
+        return $"{weekday}, ngày {now:dd/MM/yyyy}";
+    }
+
+    /// <summary>
+    /// Writes periodic [THINKING] heartbeat lines into the progress channel while the
+    /// blocking ReAct executor runs. Every tick carries a fresh elapsed-seconds wording
+    /// so the client can show one live progress line instead of a frozen one.
+    /// </summary>
+    private sealed class ReActHeartbeat : IAsyncDisposable
+    {
+        private readonly Channel<string> _channel;
+        private readonly CancellationTokenSource _stop = new();
+        private readonly Task _loop;
+        private readonly Func<bool>? _isQuiet;
+
+        /// <param name="isQuiet">
+        /// Tells the ticker whether the stream has been silent long enough for a heartbeat to
+        /// be useful. While live reasoning is flowing it returns false and the ticker stays
+        /// quiet, so filler never interleaves with real content.
+        /// </param>
+        public ReActHeartbeat(Channel<string> channel, CancellationToken requestCt, Func<bool>? isQuiet = null)
+        {
+            _channel = channel;
+            _isQuiet = isQuiet;
+            _loop = Task.Run(() => RunAsync(requestCt), CancellationToken.None);
+        }
+
+        private async Task RunAsync(CancellationToken requestCt)
+        {
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                while (true)
+                {
+                    await Task.Delay(ReActHeartbeatInterval, _stop.Token).ConfigureAwait(false);
+                    if (requestCt.IsCancellationRequested) break;
+                    if (_isQuiet is not null && !_isQuiet()) continue;
+                    _channel.Writer.TryWrite(
+                        $"[THINKING]: 🤔 Agent đang suy luận... ({(int)sw.Elapsed.TotalSeconds}s)\n");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal shutdown: Stop() after the executor finished, or disposal on an
+                // exception path.
+            }
+        }
+
+        /// <summary>Stops the ticker on success and completes the channel so the drain ends.</summary>
+        public void Stop()
+        {
+            _channel.Writer.TryComplete();
+            _stop.Cancel();
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _channel.Writer.TryComplete();
+            _stop.Cancel();
+            try { await _loop.ConfigureAwait(false); } catch { /* loop observes cancellation */ }
+            _stop.Dispose();
+        }
     }
 }
 

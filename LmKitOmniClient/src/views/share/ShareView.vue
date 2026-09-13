@@ -8,8 +8,8 @@
           <i class="pi pi-sparkles text-lg text-white" aria-hidden="true"></i>
         </div>
         <div class="min-w-0">
-          <div class="font-semibold text-gray-900">Trợ lý AI — LM-Kit.NET</div>
-          <div class="text-xs text-gray-500">Đoạn chat được chia sẻ công khai (chỉ xem)</div>
+          <div class="font-semibold text-gray-900">CILA - AI Agent</div>
+          <div class="text-xs text-gray-500">Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi trường quốc gia</div>
         </div>
       </header>
 
@@ -88,7 +88,7 @@
                 </div>
               </div>
               <div class="flex flex-col flex-1 min-w-0">
-                <div class="font-semibold mb-1 text-sm text-gray-700">Trợ lý AI</div>
+                <div class="font-semibold mb-1 text-sm text-gray-700">CILA - AI Agent</div>
                 <GenerativeUiRenderer :content="msg.content" />
               </div>
             </div>
@@ -96,7 +96,7 @@
         </div>
 
         <footer class="mt-10 pt-4 border-t border-gray-200 text-center text-xs text-gray-500">
-          Nội dung do Trợ lý AI tạo ra có thể chứa sai sót. Vui lòng kiểm tra lại các thông tin quan trọng.
+          Nội dung do CILA - AI Agent tạo ra có thể chứa sai sót. Vui lòng kiểm tra lại các thông tin quan trọng.
         </footer>
       </template>
     </div>

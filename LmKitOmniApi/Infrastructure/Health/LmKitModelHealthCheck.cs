@@ -6,18 +6,10 @@ namespace LmKitOmniApi.Infrastructure.Health;
 /// <summary>
 /// Readiness for the LM-Kit side of the app.
 ///
-/// The gap this closes: <c>AiModels:DefaultChat</c> can name a registered model whose weights
-/// file simply is not on disk. With <c>WarmupChatModel=false</c> and
-/// <c>RequireChatModelReady=false</c> — the shipped defaults — startup succeeded and
-/// <c>/health/ready</c> reported healthy, so an orchestrator happily routed traffic to an
-/// instance that could not answer a single chat message. The failure only surfaced on the
-/// first user turn.
-///
-/// Now a chat model that CANNOT BE RESOLVED is unhealthy regardless of the
-/// <c>RequireChatModelReady</c> switch: that flag governs whether the model must already be
-/// LOADED (a warmup concern), not whether the deployment is coherent. Liveness
-/// (<c>/health</c>, <c>/health/live</c>) is untouched — the process is alive either way, and
-/// restarting it would not conjure a missing file.
+/// The default configuration uses an LM-Kit catalog ID. The model is downloaded/reused by
+/// LM-Kit at load time using AiModels:ModelsDirectory as storagePath, so this check must not
+/// pretend a catalog ID is a local filename. With WarmupChatModel=false and
+/// RequireChatModelReady=false, startup can be healthy before the first model load.
 /// </summary>
 public sealed class LmKitModelHealthCheck : IHealthCheck
 {

@@ -61,7 +61,7 @@
         // and redirect the embedding page. Nothing is added to the host DOM.
         if (window.console && window.console.error) {
             window.console.error(
-                '[LM-Kit widget] Thiếu khóa widget. Thêm data-widget-key="<WIDGET_KEY>" vào thẻ <script> nhúng widget.js.'
+                '[CILA-AI widget] Thiếu khóa widget. Thêm data-widget-key="<WIDGET_KEY>" vào thẻ <script> nhúng widget.js.'
             );
         }
         return;
@@ -185,7 +185,7 @@
     // The key is what switches the frame to the anonymous public flow
     // (POST /api/widget/auth → widget token → POST /api/widget/chat).
     iframe.src = baseUrl + '/widget/chat?key=' + encodeURIComponent(widgetKey);
-    iframe.title = 'Trợ lý AI';
+    iframe.title = 'CILA - AI Agent';
     iframe.allow = "clipboard-write; clipboard-read"; // Allow permissions if needed
     
     iframeContainer.appendChild(iframe);

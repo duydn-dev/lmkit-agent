@@ -2,6 +2,34 @@ import { createRouter, createWebHistory } from 'vue-router';
 import AppLayout from '../layout/AppLayout.vue';
 import { useAuthStore } from '@/store/auth.store';
 
+const APP_NAME = 'CILA AI';
+const PAGE_TITLES: Record<string, string> = {
+  Chat: 'Trò chuyện',
+  Documents: 'Tài liệu',
+  Memory: 'Bộ nhớ',
+  Agents: 'Agents',
+  Schedules: 'Lịch trình',
+  Research: 'Nghiên cứu',
+  Projects: 'Dự án',
+  ApiKeys: 'API Keys',
+  CustomInstructions: 'Hướng dẫn tùy chỉnh',
+  TextTools: 'Công cụ văn bản',
+  VisionTools: 'Công cụ thị giác',
+  AgentMode: 'Chế độ Agent',
+  Approvals: 'Phê duyệt',
+  AdminHub: 'Quản trị',
+  AdminUsers: 'Quản lý người dùng',
+  AdminMcpServers: 'MCP Servers',
+  AdminKnowledge: 'Cơ sở kiến thức',
+  AdminDatabases: 'Cơ sở dữ liệu',
+  AdminAudit: 'Nhật ký kiểm toán',
+  AdminWidget: 'Widget Settings',
+  ContentCreation: 'Tạo nội dung',
+  Login: 'Đăng nhập',
+  SharedChat: 'Đoạn chat chia sẻ',
+  WidgetChat: 'Widget Chat',
+};
+
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -189,6 +217,11 @@ router.beforeEach(async (to, _from, next) => {
   } else {
     next();
   }
+
+  // Dynamic page title
+  const pageName = to.name as string | undefined;
+  const pageTitle = pageName && PAGE_TITLES[pageName];
+  document.title = pageTitle ? `${pageTitle} | ${APP_NAME}` : APP_NAME;
 });
 
 export default router;

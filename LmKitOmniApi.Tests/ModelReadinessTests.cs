@@ -7,15 +7,11 @@ using Microsoft.Extensions.Logging;
 namespace LmKitOmniApi.Tests;
 
 /// <summary>
-/// Honest readiness for the configured chat model, plus the load-once cache that stops two
-/// roles pointing at one file from allocating the weights twice.
+/// Honest readiness for LM-Kit catalog IDs and the load-once cache that stops
+/// roles resolving to one artifact from allocating the weights twice.
 ///
-/// The defect: appsettings ships <c>AiModels:DefaultChat = "bonsai"</c> whose .gguf lives in
-/// a gitignored directory with nothing committed and no download script. With
-/// <c>WarmupChatModel=false</c> and <c>RequireChatModelReady=false</c> the process started
-/// clean and <c>/health/ready</c> answered healthy, so the deployment looked fine right up
-/// until the first user message failed. Readiness now reflects reality; liveness does not
-/// change, because restarting the process cannot conjure a missing file.
+/// Legacy registry cases remain only as compatibility coverage for explicit test/deployment
+/// overrides; the shipped appsettings uses catalog IDs and has no AiModels:Models block.
 /// </summary>
 public sealed class ModelReadinessTests : IDisposable
 {
@@ -30,6 +26,10 @@ public sealed class ModelReadinessTests : IDisposable
         catch (IOException) { /* best effort */ }
     }
 
+    /// <summary>
+    /// A legacy explicit local model path must still be reported when its configured file is
+    /// missing. Catalog IDs are handled separately by LM-Kit at load time.
+    /// </summary>
     [Fact]
     public async Task Readiness_IsUnhealthy_WhenTheConfiguredChatModelFileIsMissing()
     {
@@ -102,11 +102,9 @@ public sealed class ModelReadinessTests : IDisposable
         Assert.Contains("projector", result.Description!, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// A model id that is not in the local registry (an LM-Kit catalog id such as
-    /// "qwen3.5:2b", or an https URL) can only be resolved by attempting a load, so it must
-    /// NOT be reported as a missing file.
-    /// </summary>
+    /// A catalog model ID cannot be judged by checking for a local filename before LM-Kit
+    /// resolves it. Readiness remains healthy until an optional warm-up/load is required.
+
     [Fact]
     public async Task Readiness_DoesNotFalselyFail_ForUnregisteredModelIds()
     {

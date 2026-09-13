@@ -1,58 +1,61 @@
 <template>
-  <div class="flex-1 flex flex-col relative w-full h-full">
-    <!-- Session Header: agent badge + canvas / share actions for the active session -->
-    <div v-if="currentSessionId" class="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-gray-200 bg-chatgpt-dark">
+  <div class="flex-1 flex flex-col relative w-full min-h-0">
+    <!-- Session Header: agent badge on the left, quiet icon actions on the right.
+         Deliberately low-chrome — the transcript is the page, so canvas/share read as
+         icon buttons with tooltips rather than labelled pills stacked across the top. -->
+    <div v-if="currentSessionId" class="flex items-center justify-between gap-2 px-4 py-1.5 border-b border-gray-200 bg-white">
       <div class="flex items-center min-w-0">
         <span
           v-if="activeAgentName"
           role="note"
-          class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-violet-50 border border-violet-200 text-sm text-violet-700 max-w-[240px]"
+          class="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-xs text-violet-700 max-w-[220px]"
           :title="`Đang chat với agent ${activeAgentName}`"
           :aria-label="`Đang chat với agent ${activeAgentName}`">
           <span aria-hidden="true">{{ activeAgentIcon || '🤖' }}</span>
           <span class="truncate font-medium">{{ activeAgentName }}</span>
         </span>
       </div>
-      <div class="flex flex-wrap items-center gap-2">
+      <div class="flex items-center gap-0.5">
         <button
           @click="toggleCanvasPanel"
           aria-label="Mở Canvas"
+          :title="canvasCount > 0 ? `Canvas (${canvasCount} phiên bản)` : 'Canvas'"
           :aria-expanded="canvasPanelOpen"
-          class="min-h-11 px-3 flex items-center gap-2 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-900 transition-colors">
-          <i class="pi pi-palette text-sm" aria-hidden="true"></i>
-          <span>Canvas</span>
-          <span v-if="canvasCount > 0" class="min-w-5 h-5 px-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold flex items-center justify-center">{{ canvasCount }}</span>
+          class="relative w-9 h-9 flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+          :class="canvasPanelOpen ? 'bg-sky-50 text-sky-700' : ''">
+          <i class="pi pi-palette text-base" aria-hidden="true"></i>
+          <span v-if="canvasCount > 0" class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-sky-600 text-white text-[10px] font-semibold leading-4 flex items-center justify-center">{{ canvasCount > 9 ? '9+' : canvasCount }}</span>
         </button>
         <button
           @click="shareSession"
           :disabled="shareBusy"
-          class="min-h-11 px-3 flex items-center gap-2 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-50 transition-colors"
-          aria-label="Chia sẻ đoạn chat">
-          <i class="pi pi-share-alt text-sm" aria-hidden="true"></i>
-          <span>Chia sẻ</span>
+          class="w-9 h-9 flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-50 transition-colors"
+          aria-label="Tạo liên kết chia sẻ"
+          title="Chia sẻ đoạn chat (tạo liên kết mới và sao chép)">
+          <i class="pi pi-share-alt text-base" aria-hidden="true"></i>
         </button>
         <button
           @click="revokeShare"
           :disabled="shareBusy"
-          class="min-h-11 px-3 flex items-center gap-2 rounded-lg text-sm font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
-          aria-label="Thu hồi liên kết chia sẻ">
-          <i class="pi pi-link text-sm" aria-hidden="true"></i>
-          <span>Thu hồi liên kết</span>
+          class="w-9 h-9 flex items-center justify-center rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+          aria-label="Thu hồi liên kết chia sẻ"
+          title="Thu hồi liên kết chia sẻ (liên kết cũ sẽ ngừng hoạt động)">
+          <i class="pi pi-link text-base rotate-45" aria-hidden="true"></i>
         </button>
       </div>
     </div>
 
     <!-- Chat History -->
-    <div ref="chatContainer" class="flex-1 overflow-y-auto scroll-smooth" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Lịch sử trò chuyện">
+    <div ref="chatContainer" class="flex-1 min-h-0 overflow-y-auto scroll-smooth" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Lịch sử trò chuyện">
       <div v-if="messages.length === 0" class="h-full flex flex-col items-center justify-center text-center px-4">
         <div class="w-16 h-16 rounded-full bg-chatgpt-brand flex items-center justify-center mb-6 shadow-lg shadow-chatgpt-brand/20">
           <i class="pi pi-sparkles text-2xl text-white"></i>
         </div>
         <h1 class="text-3xl font-bold mb-2">Hôm nay tôi có thể giúp gì cho bạn?</h1>
-        <p class="text-gray-600 max-w-md">Tôi là Trợ lý AI đa phương thức xây dựng trên LM-Kit.NET, có khả năng phân tích PDF, lưu trữ Vector và nhiều hơn thế.</p>
+        <p class="text-gray-600 max-w-md">CILA - AI Agent hỗ trợ đa năng: phân tích tài liệu, tìm kiếm thông minh, tạo nội dung và nhiều hơn thế.</p>
       </div>
 
-      <div v-else class="max-w-3xl mx-auto w-full py-6 pb-32">
+      <div v-else class="max-w-3xl mx-auto w-full py-6" :style="{ paddingBottom: composerHeight + 32 + 'px' }">
         <div v-for="(msg, index) in messages" :key="index" class="flex flex-col mb-8">
           
           <!-- User Message -->
@@ -86,30 +89,43 @@
             </div>
             
             <div class="flex flex-col flex-1 min-w-0">
-              <div class="font-semibold mb-1 text-sm text-gray-700">Trợ lý AI</div>
+              <div class="font-semibold mb-1 text-sm text-gray-700">CILA - AI Agent</div>
 
-              <!-- Thinking Steps (Chain of Thought UI) -->
-              <div v-if="msg.thinkingSteps && msg.thinkingSteps.length > 0" class="mb-4 flex flex-col gap-1 p-3 rounded-xl bg-gradient-to-br from-gray-50 to-gray-100 border border-gray-200 w-fit min-w-[280px] max-w-[90%]">
-                <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Quá trình suy luận</div>
-                <div v-for="(step, idx) in msg.thinkingSteps" :key="idx" 
-                  class="text-[13px] flex items-start gap-2 py-0.5 transition-all duration-300"
-                  :class="idx === msg.thinkingSteps.length - 1 && msg.isTyping && !msg.content ? 'text-gray-700' : 'text-emerald-600'">
+              <!-- One reasoning panel: pipeline milestones AND the model's own chain-of-thought
+                   live in the same card. They are two halves of one story (what the agent did /
+                   what the model thought) and splitting them into a stack of separate boxes
+                   made the transcript noisy — see the reasoning-in-panel decision. The
+                   chain-of-thought stays expanded while it streams: hiding it behind a closed
+                   disclosure is what made a working turn look like a hang. -->
+              <div v-if="hasReasoning(msg)" class="mb-4 flex flex-col gap-1.5 p-3 rounded-lg bg-gray-50 border border-gray-200 w-fit min-w-[280px] max-w-[90%]">
+                <button type="button" class="flex items-center gap-1.5 text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1 cursor-pointer select-none w-fit hover:text-gray-500" :aria-expanded="!reasoningPanelCollapsed(msg)" @click="toggleReasoningPanel(msg)">
+                  <i class="pi text-[10px]" :class="reasoningPanelCollapsed(msg) ? 'pi-chevron-right' : 'pi-chevron-down'" aria-hidden="true"></i>
+                  <span>Quá trình suy luận</span>
+                  <i v-if="reasoningStreaming(msg)" class="pi pi-spin pi-spinner text-[10px]" aria-hidden="true"></i>
+                </button>
+                <template v-if="!reasoningPanelCollapsed(msg)">
+                <div v-for="(step, idx) in msg.thinkingSteps ?? []" :key="idx" 
+                  class="text-[13px] flex items-start gap-2 py-0.5"
+                  :class="idx === (msg.thinkingSteps?.length ?? 0) - 1 && msg.isTyping && !msg.content ? 'text-gray-700' : 'text-gray-500'">
                   <span class="mt-0.5 flex-shrink-0">
-                    <i class="pi pi-spin pi-spinner text-blue-500" v-if="idx === msg.thinkingSteps.length - 1 && msg.isTyping && !msg.content"></i>
-                    <i class="pi pi-check-circle text-emerald-500" v-else></i>
+                    <i class="pi pi-spin pi-spinner text-gray-400" v-if="idx === (msg.thinkingSteps?.length ?? 0) - 1 && msg.isTyping && !msg.content"></i>
+                    <i class="pi pi-check-circle text-gray-400" v-else></i>
                   </span>
                   <span class="leading-snug">{{ step }}</span>
                 </div>
+                <!-- Model reasoning (DeepSeek-R1 style): the model's own chain-of-thought,
+                     separated from the milestones by a rule rather than by another card. -->
+                <div v-if="msg.reasoning" class="mt-1 pt-2 border-t border-gray-200 flex flex-col"
+                  :aria-label="reasoningStreaming(msg) ? 'Mô hình đang suy luận' : 'Suy luận của mô hình'"
+                  :role="reasoningStreaming(msg) ? 'status' : undefined">
+                  <div class="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">
+                    <i v-if="reasoningStreaming(msg)" class="pi pi-spin pi-spinner text-[10px]" aria-hidden="true"></i>
+                    <span>{{ reasoningStreaming(msg) ? 'Đang suy luận' : 'Suy luận của mô hình' }}</span>
+                  </div>
+                  <div class="reasoning-live max-h-44 overflow-y-auto whitespace-pre-wrap text-[13px] leading-snug text-gray-600">{{ msg.reasoning }}</div>
+                </div>
+                </template>
               </div>
-
-              <!-- Model reasoning (DeepSeek-R1 style): the model's own chain-of-thought,
-                   collapsible and kept distinct from the pipeline-status steps above. -->
-              <details v-if="msg.reasoning" class="mb-4 w-fit max-w-[90%] rounded-xl border border-indigo-200 bg-indigo-50/60 p-3">
-                <summary class="cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wider text-indigo-700">
-                  Suy luận của mô hình
-                </summary>
-                <div class="mt-2 whitespace-pre-wrap text-[13px] leading-snug text-indigo-900">{{ msg.reasoning }}</div>
-              </details>
 
               <!-- Web Search Chip -->
               <button v-if="msg.webUrls && msg.webUrls.length > 0" type="button" class="mb-3 min-h-11 flex items-center gap-2 cursor-pointer group/chip w-max" @click="openDrawer(msg.webUrls)">
@@ -117,8 +133,9 @@
                   <i class="pi pi-search text-xs"></i>
                   <span class="text-sm font-medium">Read {{ msg.webUrls.length }} web pages</span>
                   <div class="flex -space-x-1.5 ml-1">
-                    <span v-for="(_, i) in msg.webUrls.slice(0, 3)" :key="i" class="w-5 h-5 rounded-full border border-gray-200 bg-white flex items-center justify-center">
+                    <span v-for="(url, i) in msg.webUrls.slice(0, 3)" :key="i" class="relative w-5 h-5 rounded-full border border-gray-200 bg-white flex items-center justify-center overflow-hidden">
                       <i class="pi pi-globe text-[10px] text-sky-600"></i>
+                      <img v-if="faviconUrl(url)" :src="faviconUrl(url)" alt="" loading="lazy" class="absolute inset-0 w-full h-full object-contain" @error="onFaviconError" />
                     </span>
                   </div>
                 </div>
@@ -161,8 +178,14 @@
                 </div>
               </div>
 
-              <!-- Typing Indicator -->
-              <div v-if="msg.isTyping" class="flex gap-1 mt-2">
+              <!-- Thinking Indicator: ChatGPT-style shimmer shown while the pipeline
+                   works (isTyping stays true until the first answer token). -->
+              <div v-if="msg.isTyping" class="mt-2 mb-1 flex items-center gap-2 select-none" aria-live="polite">
+                <span class="thinking-shimmer text-[15px] font-medium">Thinking...</span>
+              </div>
+
+              <!-- Legacy bouncing dots (kept for reduced-motion users). -->
+              <div v-if="msg.isTyping" class="flex gap-1 mt-1 motion-reduce:block" style="display:none">
                 <div class="w-2 h-2 rounded-full bg-gray-500 animate-bounce"></div>
                 <div class="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style="animation-delay: 0.1s"></div>
                 <div class="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style="animation-delay: 0.2s"></div>
@@ -219,7 +242,7 @@
       accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.jpg,.jpeg,.png,.bmp,.webp"
       @change="handleFileSelect" />
 
-    <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-chatgpt-dark via-chatgpt-dark to-transparent pt-10 pb-6 px-4">
+    <div ref="composerOverlayRef" class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-chatgpt-dark via-chatgpt-dark to-transparent pt-10 pb-6 px-4">
       <div class="max-w-3xl mx-auto relative group">
         <div v-if="chatError" role="alert" class="mb-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {{ chatError }}
@@ -269,32 +292,32 @@
               rows="1"
               autoResize
               aria-label="Tin nhắn"
-              placeholder="Nhắn tin cho Trợ lý AI..." />
+              placeholder="Nhắn tin cho CILA - AI Agent..." />
           </div>
           
           <!-- Bottom Toolbar -->
           <div class="flex items-center justify-between mt-2 px-1 pb-1">
-            <!-- Right Actions -->
-            <div class="flex items-center gap-1.5">
+            <!-- Left: tool buttons -->
+            <div class="flex items-center gap-1">
               <button
                 @click="toggleWebSearch"
                 :aria-pressed="webSearchEnabled"
                 aria-label="Tìm kiếm web"
-                class="min-w-11 min-h-11 px-3 flex items-center justify-center rounded-full border transition-colors"
+                class="min-w-10 min-h-10 px-2.5 flex items-center justify-center rounded-full border transition-colors"
                 :class="webSearchEnabled ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100' : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-100'">
-                <i class="pi pi-globe text-lg" aria-hidden="true"></i>
+                <i class="pi pi-globe text-base" aria-hidden="true"></i>
               </button>
               <button
                 @click="toggleEphemeral"
                 :aria-pressed="isEphemeral"
                 aria-label="Chat tạm thời"
                 title="Chat tạm thời — không lưu vào lịch sử"
-                class="min-w-11 min-h-11 px-3 flex items-center justify-center rounded-full border transition-colors"
+                class="min-w-10 min-h-10 px-2.5 flex items-center justify-center rounded-full border transition-colors"
                 :class="isEphemeral ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100' : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-100'">
-                <i class="pi pi-eye-slash text-lg" aria-hidden="true"></i>
+                <i class="pi pi-eye-slash text-base" aria-hidden="true"></i>
               </button>
-              <button @click="triggerFileInput" class="w-11 h-11 flex items-center justify-center text-gray-600 hover:text-gray-900 transition-colors rounded-full hover:bg-gray-100" aria-label="Đính kèm file">
-                <i class="pi pi-paperclip text-lg"></i>
+              <button @click="triggerFileInput" class="min-w-10 min-h-10 flex items-center justify-center text-gray-500 hover:text-gray-900 transition-colors rounded-full hover:bg-gray-100" aria-label="Đính kèm file">
+                <i class="pi pi-paperclip text-base"></i>
               </button>
               <button
                 v-if="voiceSupported"
@@ -302,11 +325,14 @@
                 :aria-pressed="isRecording"
                 aria-label="Nhập bằng giọng nói"
                 :disabled="isTranscribing"
-                class="min-w-11 min-h-11 px-2 flex items-center justify-center gap-1.5 rounded-full border transition-colors disabled:opacity-50"
+                class="min-w-10 min-h-10 px-2 flex items-center justify-center gap-1.5 rounded-full border transition-colors disabled:opacity-50"
                 :class="isRecording ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100' : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-100'">
-                <i :class="[isTranscribing ? 'pi pi-spin pi-spinner' : 'pi pi-microphone', isRecording ? 'animate-pulse' : '']" class="text-lg" aria-hidden="true"></i>
+                <i :class="[isTranscribing ? 'pi pi-spin pi-spinner' : 'pi pi-microphone', isRecording ? 'animate-pulse' : '']" class="text-base" aria-hidden="true"></i>
                 <span v-if="isRecording" class="text-xs font-medium tabular-nums">{{ voiceElapsedLabel }}</span>
               </button>
+            </div>
+            <!-- Right: send / stop -->
+            <div class="flex items-center">
               <Button
                 v-if="isStreaming"
                 icon="pi pi-stop"
@@ -330,7 +356,7 @@
           </div>
         </div>
         <div class="text-center text-xs text-gray-500 mt-3">
-          Trợ lý AI phát triển bởi LM-Kit.NET có thể mắc sai lầm. Vui lòng kiểm tra lại các thông tin quan trọng.
+          CILA - AI Agent có thể mắc sai lầm. Vui lòng kiểm tra lại các thông tin quan trọng.
         </div>
       </div>
     </div>
@@ -345,8 +371,9 @@
       <div class="flex flex-col gap-3 mt-2">
         <a v-for="(url, index) in drawerUrls" :key="index" :href="url" target="_blank" rel="noopener noreferrer" class="block p-3 rounded-xl border border-gray-100 bg-gray-200/50 hover:bg-gray-200 hover:border-gray-300 transition-all group">
           <div class="flex items-start gap-3">
-            <div class="w-8 h-8 rounded-lg bg-white shadow-sm flex-shrink-0 flex items-center justify-center overflow-hidden">
+            <div class="relative w-8 h-8 rounded-lg bg-white shadow-sm flex-shrink-0 flex items-center justify-center overflow-hidden">
                 <i class="pi pi-globe text-sky-600"></i>
+                <img v-if="faviconUrl(url)" :src="faviconUrl(url)" alt="" loading="lazy" class="absolute inset-0 w-full h-full object-contain" @error="onFaviconError" />
             </div>
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium text-gray-800 truncate group-hover:text-cyan-400 transition-colors">{{ getCleanHostname(url) }}</div>
@@ -368,14 +395,11 @@
 
     <!-- Toast notifications (share confirmations, regenerate warnings) -->
     <Toast position="bottom-right" />
-
-    <!-- Voice to Voice Module -->
-    <VoiceWebRtcModule />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, nextTick, watch, onMounted, type ComponentPublicInstance } from 'vue';
+import { computed, ref, nextTick, watch, onMounted, onBeforeUnmount, type ComponentPublicInstance } from 'vue';
 import { useRoute } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
@@ -393,9 +417,6 @@ import {
   parseStoredAssistantContent,
   type ChatMessage,
 } from '@/composables/useChatStream';
-const VoiceWebRtcModule = defineAsyncComponent(
-  () => import('@/components/voice/VoiceWebRtcModule.vue')
-);
 
 const inputMessage = ref('');
 const messages = ref<ChatMessage[]>([]);
@@ -404,8 +425,21 @@ const toast = useToast();
 const chatError = ref('');
 const isGenerating = ref(false);
 const chatContainer = ref<HTMLElement | null>(null);
+// The composer is an absolutely-positioned overlay (gradient + textarea + toolbar)
+// pinned to the bottom of the chat pane. A fixed list padding could not clear it:
+// measured height grows with the attachment tray, error banner and edit banner, so
+// the last bubble (e.g. the live "Thinking..." line) slid underneath the input and
+// was unreadable. The padding is therefore driven by the composer's REAL height.
+const composerOverlayRef = ref<HTMLElement | null>(null);
+const composerHeight = ref(232);
+let composerObserver: ResizeObserver | null = null;
 const currentSessionId = ref<string | null>(null);
 const attachedFiles = ref<File[]>([]);
+
+// Keep the last ordinary (persisted) conversation so a browser reload returns to
+// the transcript instead of showing the empty welcome screen. Ephemeral chats are
+// deliberately never written here.
+const LAST_SESSION_STORAGE_KEY = 'omni.lastChatSessionId';
 const saveAttachmentsToKnowledge = ref(false);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 
@@ -446,6 +480,49 @@ const hasCanvasBlock = (msg: ChatMessage): boolean => {
   const present = largestCodeFence(msg.content) !== null;
   canvasFenceCache.set(msg, { content: msg.content, present });
   return present;
+};
+
+/**
+ * The reasoning panel shows when the turn has anything to say about HOW it got there:
+ * pipeline milestones, the model's chain-of-thought, or (usually) both. Rendering one card
+ * from one predicate keeps the two halves together — they used to be two separate boxes,
+ * which stacked up and buried the conversation.
+ */
+const hasReasoning = (msg: ChatMessage): boolean =>
+  Boolean(msg.reasoning) || (msg.thinkingSteps?.length ?? 0) > 0;
+
+/** True while this exact message is the turn still being generated. */
+const isLiveTurn = (msg: ChatMessage): boolean =>
+  isGenerating.value && messages.value[messages.value.length - 1] === msg;
+
+/** The chain-of-thought is still arriving, so the panel label reads as in-progress. */
+const reasoningStreaming = (msg: ChatMessage): boolean => Boolean(msg.reasoning) && isLiveTurn(msg);
+
+/**
+ * Per-message collapse for the reasoning panel. The live turn is never force-collapsed
+ * (a collapsing panel would look like the turn stalled), and once expanded a panel stays
+ * open — only the user, via the chevron, closes it.
+ */
+const collapsedReasoningPanels = ref(new WeakSet<ChatMessage>());
+const reasoningPanelCollapsed = (msg: ChatMessage): boolean =>
+  collapsedReasoningPanels.value.has(msg) && !isLiveTurn(msg);
+const toggleReasoningPanel = (msg: ChatMessage): void => {
+  if (reasoningPanelCollapsed(msg)) collapsedReasoningPanels.value.delete(msg);
+  else collapsedReasoningPanels.value.add(msg);
+};
+
+/**
+ * Favicon for a citation: Google's public s2 service, keyed by the site's origin so the
+ * CDN cache stays warm. Kept in the template as a plain function (not a computed map) —
+ * the URL depends only on the host, so re-running it per render is free.
+ */
+const faviconUrl = (urlStr: string): string => {
+  try { return `https://www.google.com/s2/favicons?domain=${new URL(urlStr).origin}&sz=32`; }
+  catch { return ''; }
+};
+/** On load failure (offline, blocked host, CSP) the globe icon shows through instead of a broken image. */
+const onFaviconError = (event: Event): void => {
+  (event.target as HTMLElement).style.display = 'none';
 };
 
 /** "Mở trong Canvas": creates a code artifact from the message's largest fence. */
@@ -533,12 +610,14 @@ const {
 });
 
 const loadMessages = async () => {
-  if (!currentSessionId.value) return;
+  const sessionId = currentSessionId.value;
+  if (!sessionId) return;
   chatError.value = '';
   try {
-    const response = await http.get(ApiFactory.CHAT.GET_MESSAGES(currentSessionId.value));
+    const response = await http.get(ApiFactory.CHAT.GET_MESSAGES(sessionId));
     if (response.ok) {
       const data = await response.json();
+      if (currentSessionId.value !== sessionId) return;
       messages.value = data.map((m: { content: string; role: string }) => {
         // Xóa các marker giao thức ([Agent invoked], [THINKING], [WEB_SEARCH])
         // bằng đúng tiện ích dùng chung với trang chia sẻ công khai.
@@ -553,7 +632,18 @@ const loadMessages = async () => {
         };
       });
       await scrollToBottom();
-    } else chatError.value = await readApiError(response, 'Không thể tải nội dung đoạn chat');
+    } else {
+      if (response.status === 404) {
+        // A deleted/expired remembered session should not trap the user in a
+        // broken route on every reload.
+        try {
+          if (localStorage.getItem(LAST_SESSION_STORAGE_KEY) === sessionId)
+            localStorage.removeItem(LAST_SESSION_STORAGE_KEY);
+        } catch { /* storage may be unavailable */ }
+        currentSessionId.value = null;
+      }
+      chatError.value = await readApiError(response, 'Không thể tải nội dung đoạn chat');
+    }
   } catch (error) {
     chatError.value = errorMessage(error, 'Không thể tải nội dung đoạn chat.');
   }
@@ -573,22 +663,59 @@ const getCleanHostname = (urlStr: string) => {
 };
 
 onMounted(() => {
-  if (route.query.id) {
+  // Track the composer's real height so the transcript always clears the overlay.
+  if (typeof ResizeObserver !== 'undefined' && composerOverlayRef.value) {
+    composerObserver = new ResizeObserver((entries) => {
+      // borderBoxSize includes the overlay's own padding (pt-10 gradient + pb-6),
+      // which contentRect omits — the transcript must clear the whole overlay.
+      const entry = entries[0];
+      const height = entry?.borderBoxSize?.[0]?.blockSize ?? entry?.contentRect.height;
+      if (height) composerHeight.value = Math.ceil(height);
+    });
+    composerObserver.observe(composerOverlayRef.value);
+    composerHeight.value =
+      Math.ceil(composerOverlayRef.value.getBoundingClientRect().height) || composerHeight.value;
+  }
+
+  if (route.query.id && typeof route.query.id === 'string') {
     // Opening a saved conversation is never temporary.
     isEphemeral.value = false;
-    currentSessionId.value = route.query.id as string;
-    loadMessages();
+    currentSessionId.value = route.query.id;
+    try { localStorage.setItem(LAST_SESSION_STORAGE_KEY, route.query.id); } catch { /* best effort */ }
+    void loadMessages();
+    return;
+  }
+
+  // `/chat?new=...` is an explicit request for a blank composer. With no
+  // navigation hint, restore the last persisted conversation after a reload.
+  if (!route.query.new) {
+    try {
+      const rememberedId = localStorage.getItem(LAST_SESSION_STORAGE_KEY);
+      if (rememberedId) {
+        isEphemeral.value = false;
+        currentSessionId.value = rememberedId;
+        void loadMessages();
+      }
+    } catch {
+      // Storage may be unavailable; the normal welcome screen remains usable.
+    }
   }
 });
 
-watch(() => route.query.id, (newId) => {
-  if (newId && typeof newId === 'string') {
+// Watch the full query object, not just `id`: "New chat" navigates /chat →
+// /chat?new=... leaving `id` undefined on BOTH routes, so an id-only watcher
+// never fired and the previous transcript stayed on screen — the next message
+// silently appended to the old session instead of starting a fresh one.
+watch(() => route.query, (query) => {
+  const newId = typeof query.id === 'string' ? query.id : undefined;
+  if (newId) {
     cancelEditing();
     // A saved session opened from history leaves temporary mode.
     isEphemeral.value = false;
     currentSessionId.value = newId;
-    loadMessages();
-  } else if (route.query.new) {
+    try { localStorage.setItem(LAST_SESSION_STORAGE_KEY, newId); } catch { /* best effort */ }
+    void loadMessages();
+  } else if (query.new) {
     cancelEditing();
     // "New chat" from the sidebar starts an ordinary (saved) conversation.
     isEphemeral.value = false;
@@ -737,6 +864,9 @@ const ensureSession = async () => {
   if (!sessionRes.ok) throw new Error('Không thể tạo phiên trò chuyện.');
   const newSession = await sessionRes.json();
   currentSessionId.value = newSession.id;
+  if (!isEphemeral.value) {
+    try { localStorage.setItem(LAST_SESSION_STORAGE_KEY, newSession.id); } catch { /* best effort */ }
+  }
   window.dispatchEvent(new CustomEvent('chat-session-created'));
 };
 
@@ -1048,4 +1178,35 @@ const { approveTask, rejectTask } = useHitlActions({
   sendMessage,
   approvedSystemMessage: (result) => `Đã phê duyệt. Kết quả thực thi tool: ${result}`,
 });
+
+onBeforeUnmount(() => {
+  composerObserver?.disconnect();
+  composerObserver = null;
+});
 </script>
+
+<style scoped>
+/* ChatGPT-style animated shimmer for the "Thinking..." indicator: a gray base
+   text with a lighter sweep sliding across it, looping while isTyping is true. */
+.thinking-shimmer {
+  background: linear-gradient(90deg, #6b7280 25%, #d1d5db 50%, #6b7280 75%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: thinking-sweep 1.8s linear infinite;
+}
+
+@keyframes thinking-sweep {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-shimmer {
+    animation: none;
+    color: #6b7280;
+    background: none;
+  }
+}
+</style>

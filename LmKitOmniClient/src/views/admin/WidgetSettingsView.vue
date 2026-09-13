@@ -54,7 +54,7 @@
         <section class="rounded-xl border border-gray-200 bg-white p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label for="title" class="text-sm font-semibold text-gray-900">Tiêu đề widget</label>
-            <input id="title" v-model="form.widgetTitle" type="text" maxlength="50" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Trợ lý AI" />
+            <input id="title" v-model="form.widgetTitle" type="text" maxlength="50" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="CILA - AI Agent" />
           </div>
           <div>
             <label for="brand" class="text-sm font-semibold text-gray-900">Màu thương hiệu (#RRGGBB)</label>
@@ -100,7 +100,7 @@
         <pre class="mt-2 overflow-x-auto rounded-lg bg-gray-900 px-4 py-3 text-xs text-gray-100"><code>&lt;iframe
   src="{{ appOrigin }}/widget/chat?key=&lt;WIDGET_KEY&gt;"
   style="position:fixed;bottom:16px;right:16px;width:380px;height:560px;border:0;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.25);z-index:99999"
-  title="Trợ lý AI"
+  title="CILA - AI Agent"
   allow="clipboard-write"&gt;
 &lt;/iframe&gt;</code></pre>
       </section>

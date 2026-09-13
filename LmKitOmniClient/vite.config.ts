@@ -28,7 +28,10 @@ export default defineConfig({
   // never registered used to live here and was removed).
   server: {
     proxy: {
-      '/api': 'http://localhost:5032',
+      // Trailing slash matters: '/api' (no slash) also swallowed SPA routes that
+      // merely START with "api" (e.g. /api-keys), proxying them to the backend
+      // which 404s them — the API Keys page rendered blank in dev.
+      '/api/': 'http://localhost:5032',
     },
   },
 })

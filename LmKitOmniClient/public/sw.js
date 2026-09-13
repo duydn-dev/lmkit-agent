@@ -1,12 +1,12 @@
 /*
- * Service worker tối giản cho LM-Kit Omni Agent (PWA v1).
+ * Service worker tối giản cho CILA AI Agent (PWA v1).
  *
  * Chiến lược:
  * - /api/     : KHÔNG BAO GIỜ can thiệp hay cache — dữ liệu, xác thực cookie và
  *   SSE phải luôn đi thẳng tới mạng.
  * - /assets/* : cache-first (bundle Vite có hash trong tên file nên bất biến),
  *   fallback mạng khi chưa có trong cache.
- * - Còn lại (HTML, /fonts/, favicon.svg, manifest...): network-first để bản
+ * - Còn lại (HTML, /fonts/, favicon.ico, manifest...): network-first để bản
  *   deploy mới lan tỏa ngay lập tức, fallback cache khi offline.
  *
  * Danh sách bỏ qua từng có thêm `/hubs/` cho một SignalR hub mà API chưa bao giờ

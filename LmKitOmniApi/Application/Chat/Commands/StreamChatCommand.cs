@@ -8,7 +8,14 @@ public class StreamChatCommand : IStreamRequest<string>
     public Guid UserId { get; set; }
     public Guid TenantId { get; set; }
     public string Message { get; set; } = string.Empty;
-    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Null/empty by wire contract — per-request model selection is rejected by
+    /// ChatController. Nullable so clients that send <c>ModelId: null</c> (chat
+    /// view, widget, task approval) pass model binding instead of tripping the
+    /// implicit [Required] on non-nullable strings.
+    /// </summary>
+    public string? ModelId { get; set; }
 
     /// <summary>
     /// Re-run the session's last user message. The incoming <see cref="Message"/> is

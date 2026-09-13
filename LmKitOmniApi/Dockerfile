@@ -74,8 +74,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/publish .
-RUN mkdir -p /app/Models /app/Uploads /app/App_Data /var/lib/lmkit/keys \
-    && chown -R 1654:1654 /app/Models /app/Uploads /app/App_Data /var/lib/lmkit/keys \
+RUN mkdir -p /app/Uploads /app/App_Data /var/lib/lmkit/keys \
+    && chown -R 1654:1654 /app/Uploads /app/App_Data /var/lib/lmkit/keys \
     && chmod 700 /var/lib/lmkit/keys
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
@@ -131,8 +131,8 @@ RUN curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
 
 WORKDIR /app
 COPY --from=build /app/publish .
-RUN mkdir -p /app/Models /app/Uploads /app/App_Data /var/lib/lmkit/keys \
-    && chown -R 1654:1654 /app/Models /app/Uploads /app/App_Data /var/lib/lmkit/keys \
+RUN mkdir -p /app/Uploads /app/App_Data /var/lib/lmkit/keys \
+    && chown -R 1654:1654 /app/Uploads /app/App_Data /var/lib/lmkit/keys \
     && chmod 700 /var/lib/lmkit/keys
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

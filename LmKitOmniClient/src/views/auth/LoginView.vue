@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-chatgpt-dark p-4 font-sans relative overflow-hidden">
+  <div class="login-page min-h-screen flex items-center justify-center bg-chatgpt-dark p-4 font-sans relative overflow-hidden">
     <!-- Background Effects -->
     <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-chatgpt-brand/20 rounded-full blur-[100px] pointer-events-none"></div>
     <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/20 rounded-full blur-[100px] pointer-events-none"></div>
@@ -9,11 +9,11 @@
         
         <!-- Logo/Header -->
         <div class="text-center mb-8">
-          <div class="w-16 h-16 rounded-full bg-chatgpt-brand flex items-center justify-center mx-auto mb-4 shadow-lg shadow-chatgpt-brand/30">
-            <i class="pi pi-sparkles text-3xl text-white"></i>
+          <div class="w-20 h-20 flex items-center justify-center mx-auto mb-4">
+            <img class="object-contain w-full h-full" src="@/assets/quochuy.svg" alt="Quốc Huy" />
           </div>
-          <h1 class="text-2xl font-bold text-gray-900 mb-2">Đăng nhập vào Trợ lý AI</h1>
-          <p class="text-gray-600 text-sm">Hệ thống Multi-Agent được phát triển trên LM-Kit.NET</p>
+          <h1 class="text-2xl font-bold text-gray-900 mb-2">Trợ lý ảo - CILA AI</h1>
+          <p class="text-gray-600 text-sm">Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi trường quốc gia</p>
         </div>
         
         <!-- Error Message -->
@@ -25,16 +25,19 @@
         <!-- Login Form -->
         <form @submit.prevent="handleLogin" class="space-y-5">
           <div>
-            <label for="login-email" class="block text-sm font-medium text-gray-700 mb-1.5">Email / Tài khoản</label>
+            <label for="login-email" class="block text-sm font-medium text-gray-700 mb-1.5">Tên tài khoản</label>
             <IconField>
               <InputIcon class="pi pi-user" />
-              <InputText id="login-email" v-model="email" type="text" autocomplete="username" placeholder="Nhập email hoặc tài khoản của bạn..." fluid required />
+              <InputText id="login-email" v-model="email" type="text" autocomplete="username" placeholder="Tên tài khoản" fluid required />
             </IconField>
           </div>
           
           <div>
             <label for="login-password" class="block text-sm font-medium text-gray-700 mb-1.5">Mật khẩu</label>
-            <InputText id="login-password" v-model="password" type="password" autocomplete="current-password" placeholder="••••••••" fluid required />
+            <IconField>
+              <InputIcon class="pi pi-lock" />
+              <InputText id="login-password" v-model="password" type="password" autocomplete="current-password" placeholder="Mật khẩu" fluid required />
+            </IconField>
           </div>
           
           <Button 

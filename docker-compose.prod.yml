@@ -9,10 +9,6 @@ x-api-environment: &api-env
   - HttpsRedirection__Enabled=false
   - Cors__AllowedOrigins__0=${CORS_ORIGIN:-http://localhost}
   - ConnectionStrings__Redis=${REDIS_CONNECTION_STRING:-redis:6379},password=${REDIS_PASSWORD:?Set REDIS_PASSWORD}
-  - AiModels__DefaultChat=${AI_DEFAULT_CHAT:-bonsai}
-  - AiModels__DefaultVision=${AI_DEFAULT_VISION:-glm-ocr}
-  - AiModels__DefaultEmbedding=${AI_DEFAULT_EMBEDDING:-bge-m3}
-  - AiModels__DefaultReranker=${AI_DEFAULT_RERANKER:-bge-m3}
   - AiModels__WarmupChatModel=${AI_WARMUP_CHAT_MODEL:-false}
   - AiModels__RequireChatModelReady=${AI_REQUIRE_CHAT_MODEL_READY:-false}
   - BootstrapAdmin__Enabled=${BOOTSTRAP_ADMIN_ENABLED:-false}
@@ -50,8 +46,7 @@ x-api-depends_on: &api-deps
 
 x-api-volumes: &api-volumes
   - dataprotectionkeys:/var/lib/lmkit/keys
-  - ${AI_MODELS_HOST_DIR:-./LmKitOmniApi/AIModels}:/app/AIModels:ro
-  - ${AI_MODELS_CACHE_HOST_DIR:-models}:/app/Models
+  - ${AI_MODELS_HOST_DIR:-./LmKitOmniApi/AIModels}:/app/AIModels
   - uploads:/app/Uploads
 
 x-api-resources: &api-resources
@@ -85,10 +80,9 @@ services:
       resources: *api-resources
     # Liveness only, on purpose — and this OVERRIDES the image's own HEALTHCHECK
     # (which curls /health). /health and /health/ready both run the "lmkit-model"
-    # check, which reports Unhealthy whenever AiModels:DefaultChat names a
-    # registered model whose weights file is not on disk. That is the normal
-    # state of a CI runner or a fresh checkout (LmKitOmniApi/AIModels/ is not in
-    # the repo), so waiting on them would leave `up --wait` hanging until timeout.
+    # check, which may report infrastructure readiness. Catalog model IDs are resolved by
+    # LM-Kit on first load using the writable /app/AIModels storage directory; readiness
+    # does not download multi-gigabyte weights just to answer a health probe.
     # /health/live is mapped with Predicate = _ => false: it runs no checks, so a
     # 200 means only "Kestrel is accepting requests" — which in this app happens
     # strictly AFTER EF migrations and the BootstrapAdmin seed, because both run
@@ -130,10 +124,7 @@ services:
     command: ["sh", "-c", "chown -R 1654:1654 /keys /models /uploads"]
     volumes:
       - dataprotectionkeys:/keys
-      # Must be the SAME source expression the api service mounts at /app/Models,
-      # or setting AI_MODELS_CACHE_HOST_DIR chowns the unused named volume and
-      # leaves the host directory the API actually writes to owned by root.
-      - ${AI_MODELS_CACHE_HOST_DIR:-models}:/models
+      - ${AI_MODELS_HOST_DIR:-./LmKitOmniApi/AIModels}:/models
       - uploads:/uploads
     restart: "no"
 
@@ -213,7 +204,6 @@ volumes:
   pgdata:
   qdrantdata:
   dataprotectionkeys:
-  models:
   uploads:
 
 # Compose would otherwise create the default network with a daemon-assigned subnet,

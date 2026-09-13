@@ -8,7 +8,7 @@
         </div>
         <div>
           <h1 class="text-xl font-bold text-gray-900 tracking-tight">Hướng dẫn tùy chỉnh</h1>
-          <p class="text-xs text-gray-500">Cá nhân hóa cách trợ lý AI phản hồi trong mọi đoạn chat của bạn.</p>
+          <p class="text-xs text-gray-500">Cá nhân hóa cách CILA AI Agent phản hồi trong mọi đoạn chat của bạn.</p>
         </div>
       </div>
     </div>

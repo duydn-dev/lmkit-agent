@@ -125,7 +125,7 @@
         </button>
       </div>
       <div class="text-center text-[10px] text-gray-400 mt-2">
-        Powered by LM-Kit.NET
+        Powered by CILA - AI Agent
       </div>
     </div>
   </div>
@@ -169,7 +169,7 @@ const misconfiguredEmbedMessage =
   'Widget chưa được cấu hình: thiếu khóa widget. Thêm ?key=<WIDGET_KEY> vào URL nhúng ' +
   '(hoặc data-widget-key="<WIDGET_KEY>" trên thẻ <script> widget.js).';
 
-const headerTitle = ref('Trợ lý AI');
+const headerTitle = ref('CILA - AI Agent');
 const headerSubtitle = ref('Luôn sẵn sàng');
 const brandColor = ref('#2563eb'); // blue-600
 

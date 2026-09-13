@@ -93,6 +93,7 @@ public sealed class ResilientWebSearchService(
                 {
                     AbsoluteExpirationRelativeToNow = CacheTtl
                 }, ct);
+                logger.LogInformation("Web search provider {Provider} served the query with {HitCount} hits.", provider.Name, hits.Count);
                 return WebSearchOutcome.Success(serialized);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

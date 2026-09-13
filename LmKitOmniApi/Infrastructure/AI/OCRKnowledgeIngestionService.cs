@@ -14,6 +14,7 @@ namespace LmKitOmniApi.Infrastructure.AI;
 /// </summary>
 public class OCRKnowledgeIngestionService
 {
+    private static readonly TimeSpan DefaultAttachmentTimeout = TimeSpan.FromMinutes(4);
     private readonly IRagPipelineService _ragService;
     private readonly LmModelManager _modelManager;
     private readonly IMediator _mediator;
@@ -47,6 +48,8 @@ public class OCRKnowledgeIngestionService
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         string extractedText;
 
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(DefaultAttachmentTimeout);
         try
         {
             if (IsImageFile(ext))
@@ -57,7 +60,7 @@ public class OCRKnowledgeIngestionService
                 {
                     ImagePath = filePath,
                     Prompt = "Hãy đọc và trích xuất toàn bộ văn bản trong hình ảnh này. Nếu không có chữ, hãy mô tả chi tiết nội dung hình ảnh."
-                }, ct);
+                }, timeout.Token);
             }
             else if (IsDocumentFile(ext))
             {
@@ -93,7 +96,7 @@ public class OCRKnowledgeIngestionService
                     userId,
                     $"ChatAttachment_{fileName}",
                     extractedText,
-                    ct);
+                    timeout.Token);
             }
 
             return new FileProcessingResult
@@ -107,6 +110,16 @@ public class OCRKnowledgeIngestionService
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            _logger.LogWarning("Attachment processing timed out after {Timeout}: {File}", DefaultAttachmentTimeout, fileName);
+            return new FileProcessingResult
+            {
+                Success = false,
+                FileName = fileName,
+                ErrorMessage = "Attachment processing timed out. Please try a smaller or clearer file."
+            };
         }
         catch (Exception ex)
         {

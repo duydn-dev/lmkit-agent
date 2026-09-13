@@ -55,6 +55,14 @@ public static class PrivateNetworkClassifier
     {
         ArgumentNullException.ThrowIfNull(address);
 
+        // Operator escape hatch used by the DB egress guard (DbEgressValidator):
+        // when DatabaseAgent:AllowPrivateNetworks=true, RFC1918/loopback targets are
+        // permitted so the agent can reach databases on the internal network (Docker,
+        // LAN). Default remains deny. HTTP SSRF guard deliberately does NOT honor
+        // this — database egress only.
+        if (DatabasePrivateNetworks.Allowed)
+            return false;
+
         return address.AddressFamily switch
         {
             AddressFamily.InterNetwork => IsPrivateOrLocalIPv4(address.GetAddressBytes()),
@@ -112,4 +120,12 @@ public static class PrivateNetworkClassifier
     }
 
     private static bool IsAllZero(ReadOnlySpan<byte> bytes) => bytes.IndexOfAnyExcept((byte)0) < 0;
+}
+
+/// <summary>Static switch set at startup from DatabaseAgent:AllowPrivateNetworks.</summary>
+public static class DatabasePrivateNetworks
+{
+    public static bool Allowed { get; private set; }
+
+    public static void Configure(bool allowed) => Allowed = allowed;
 }

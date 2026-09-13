@@ -60,13 +60,19 @@ function parseDataLine(line: string): ChatStreamEvent | null {
   // (orchestrator pipeline status); the consumer accumulates it into a collapsible panel.
   if (value.startsWith('[REASONING]:'))
     return { type: 'reasoning', value: value.slice('[REASONING]:'.length) };
-  // Source citations: one pipe-separated URL list per message. Trimmed like
-  // [THINKING] — and unlike [REASONING], whose fragments need their whitespace —
-  // because the orchestrator terminates this marker with a REAL newline (its own
-  // line-anchored stripper depends on that), so the last URL would otherwise
-  // reach the reference drawer with the terminator still glued to it.
-  if (value.startsWith('[WEB_SEARCH]:'))
-    return { type: 'web-search', value: value.slice('[WEB_SEARCH]:'.length).trim() };
+  // Source citations: one pipe-separated URL list per message. The backend appends
+  // a real newline to protect its persisted marker protocol; JSON decoding leaves
+  // that newline in the value, so remove only the terminator before splitting URLs.
+  if (value.startsWith('[WEB_SEARCH]:')) {
+    const markerValue = value.slice('[WEB_SEARCH]:'.length);
+    // Strip BOTH forms of the terminator the backend may have left glued on: the
+    // real CR/LF (JSON-decoded path) and the literal two-character `\n` / `\r`
+    // escape (plain-data path where JSON.parse threw and `raw` is used verbatim).
+    return {
+      type: 'web-search',
+      value: markerValue.replace(/\\[rn]/g, '').replace(/[\r\n]/g, '').trim()
+    };
+  }
   if (value.startsWith('[HITL_APPROVAL_REQUIRED:') && value.endsWith(']'))
     return { type: 'approval', value: value.slice('[HITL_APPROVAL_REQUIRED:'.length, -1).trim() };
   if (value.startsWith('[RESEARCH_SAVED:') && value.endsWith(']'))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSafeWebUrl, parseStoredAssistantContent } from './useChatStream';
+import { cleanThinkingStepText, isSafeWebUrl, parseStoredAssistantContent } from './useChatStream';
 
 /**
  * The history/share side of the `[WEB_SEARCH]` protocol. The orchestrator emits
@@ -72,5 +72,30 @@ describe('parseStoredAssistantContent — web references', () => {
     );
 
     expect(parsed.webUrls?.filter(isSafeWebUrl)).toEqual(['https://ok.example/x']);
+  });
+});
+
+describe('cleanThinkingStepText — emoji stripping', () => {
+  it('strips backend emoji decorations and collapses leftover spaces', () => {
+    expect(cleanThinkingStepText('🛡️ Kiểm tra bảo mật đầu vào...')).toBe('Kiểm tra bảo mật đầu vào...');
+    expect(cleanThinkingStepText('✅ Đầu vào an toàn')).toBe('Đầu vào an toàn');
+    expect(cleanThinkingStepText('✍️ Đang tổng hợp và tạo câu trả lời...')).toBe('Đang tổng hợp và tạo câu trả lời...');
+    expect(cleanThinkingStepText('📋 Khởi tạo LM-Kit ReAct agent với công cụ có cấu trúc...')).toBe(
+      'Khởi tạo LM-Kit ReAct agent với công cụ có cấu trúc...'
+    );
+  });
+
+  it('keeps plain Vietnamese text and ellipses intact', () => {
+    expect(cleanThinkingStepText('Tìm kiếm ký ức liên quan...')).toBe('Tìm kiếm ký ức liên quan...');
+    expect(cleanThinkingStepText('')).toBe('');
+  });
+
+  it('parseStoredAssistantContent returns emoji-free thinking steps for stored messages', () => {
+    const parsed = parseStoredAssistantContent(
+      '[THINKING]: 🧠 Tìm kiếm ký ức liên quan...\n' +
+      '[THINKING]: 🧠 Không có ký ức liên quan\n'
+    );
+
+    expect(parsed.thinkingSteps).toEqual(['Tìm kiếm ký ức liên quan...', 'Không có ký ức liên quan']);
   });
 });

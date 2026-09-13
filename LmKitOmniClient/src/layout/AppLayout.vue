@@ -1,86 +1,105 @@
 <template>
-  <div class="flex h-screen bg-chatgpt-dark text-chatgpt-text font-sans">
+  <div class="flex h-screen bg-gray-50 text-gray-900 font-sans">
     
     <!-- Sidebar -->
-    <aside class="w-64 bg-gray-100 flex flex-col hidden md:flex transition-all duration-300" aria-label="Thanh bên ứng dụng">
-      <div class="p-3 pb-0">
+    <aside class="w-[260px] bg-white border-r border-gray-200 flex flex-col hidden md:flex transition-all duration-300" aria-label="Thanh bên ứng dụng">
+      <!-- Brand -->
+      <div class="px-5 py-4 border-b border-gray-100">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center shadow-sm">
+            <i class="pi pi-sparkles text-white text-sm"></i>
+          </div>
+          <div class="min-w-0">
+            <div class="text-sm font-bold text-gray-900 truncate">CILA - AI Agent</div>
+            <div class="text-[11px] text-gray-500 truncate leading-tight">Trung tâm Thông tin lưu trữ<br>Tài nguyên môi trường quốc gia</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <nav class="flex-1 overflow-y-auto py-3 px-3" aria-label="Điều hướng">
         <template v-for="group in visibleNavGroups" :key="group.title">
-          <div class="text-xs text-gray-500 font-semibold mb-2 mt-4 first:mt-0 px-3 uppercase tracking-wider">{{ group.title }}</div>
+          <div class="text-[10px] text-gray-400 font-semibold mb-1.5 mt-4 first:mt-0 px-2 uppercase tracking-widest">{{ group.title }}</div>
           <router-link
             v-for="item in group.items"
             :key="item.to"
             :to="item.to"
-            class="w-full flex items-center gap-3 px-3 py-3 hover:bg-chatgpt-light font-medium rounded-md transition-colors cursor-pointer mt-1 first:mt-0"
-            active-class="bg-chatgpt-light border border-gray-200">
-            <i :class="item.icon" aria-hidden="true"></i>
+            class="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-gray-50 text-gray-600 hover:text-gray-900 text-[13px] font-medium rounded-lg transition-colors cursor-pointer group/item"
+            active-class="!bg-sky-50 !text-sky-700 border-l-2 border-sky-500 -ml-[2px] pl-[12px]">
+            <i :class="item.icon + ' text-gray-400 group-hover/item:text-gray-600'" aria-hidden="true"></i>
             <span>{{ item.label }}</span>
           </router-link>
         </template>
-      </div>
+      </nav>
       
-      <div class="flex-1 overflow-y-auto p-3 mt-2 flex flex-col">
-        <div class="text-xs text-gray-500 font-semibold mb-2 px-3 uppercase tracking-wider flex items-center justify-between">
-          <span>Lịch sử trò chuyện</span>
-          <button @click="newChat" class="hover:text-gray-900 transition-colors rounded-md hover:bg-gray-200 w-11 h-11 flex items-center justify-center" aria-label="Tạo phiên chat mới">
-            <i class="pi pi-plus"></i>
-          </button>
-        </div>
-        <div class="relative mb-2 px-1">
-          <i class="pi pi-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-xs" aria-hidden="true"></i>
-          <input
-            v-model="searchQuery"
-            type="search"
-            class="w-full min-h-11 rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-900 placeholder:text-gray-500 focus:border-sky-500"
-            placeholder="Tìm kiếm đoạn chat"
-            aria-label="Tìm kiếm đoạn chat" />
-        </div>
-        <div v-if="searchLoading" class="px-3 py-2 text-xs text-gray-500 italic" role="status">Đang tìm kiếm...</div>
-        <template v-else>
-          <div v-if="displayedSessions.length === 0" class="px-3 py-2 text-xs text-gray-500 italic">
-            {{ isSearching ? 'Không tìm thấy đoạn chat nào.' : 'Chưa có phiên chat nào.' }}
+      <!-- Chat History -->
+      <div class="flex-1 overflow-y-auto border-t border-gray-100">
+        <div class="p-3">
+          <div class="text-[10px] text-gray-400 font-semibold mb-1.5 px-2 uppercase tracking-widest flex items-center justify-between">
+            <span>Lịch sử chat</span>
+            <button @click="newChat" class="hover:text-gray-600 transition-colors rounded-md hover:bg-gray-100 w-8 h-8 flex items-center justify-center" aria-label="Tạo phiên chat mới">
+              <i class="pi pi-plus text-xs"></i>
+            </button>
           </div>
-          <div v-for="session in displayedSessions" :key="session.id" class="w-full flex items-center justify-between gap-3 px-3 py-2 text-gray-700 hover:text-gray-900 font-medium hover:bg-chatgpt-light rounded-md transition-colors text-sm truncate group mt-1">
+          <div class="relative mb-2">
+            <i class="pi pi-search absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs" aria-hidden="true"></i>
+            <input
+              v-model="searchQuery"
+              type="search"
+              class="w-full h-9 rounded-lg border border-gray-200 bg-gray-50 pl-8 pr-3 text-xs text-gray-900 placeholder:text-gray-400 focus:border-sky-400 focus:bg-white transition-colors"
+              placeholder="Tìm kiếm..."
+              aria-label="Tìm kiếm đoạn chat" />
+          </div>
+        </div>
+        <div v-if="searchLoading" class="px-3 py-2 text-xs text-gray-400 italic" role="status">Đang tìm kiếm...</div>
+        <template v-else>
+          <div v-if="displayedSessions.length === 0" class="px-3 py-2 text-xs text-gray-400 italic text-center">
+            {{ isSearching ? 'Không tìm thấy.' : 'Chưa có đoạn chat.' }}
+          </div>
+          <div v-for="session in displayedSessions" :key="session.id" class="w-full flex items-center gap-2 px-3 py-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors text-xs truncate group mx-1 my-0.5">
             <template v-if="editingSessionId === session.id">
               <input
                 :ref="focusRenameInput"
                 v-model="editingTitle"
                 type="text"
-                class="flex-1 min-w-0 min-h-11 rounded-md border border-sky-500 bg-white px-2 text-sm text-gray-900"
+                class="flex-1 min-w-0 h-8 rounded-md border border-sky-400 bg-white px-2 text-xs text-gray-900"
                 :aria-label="`Tên mới cho đoạn chat ${session.title || 'mới'}`"
                 @keydown.enter.prevent="saveRename(session.id)"
                 @keydown.esc.prevent="cancelRename"
                 @blur="cancelRename" />
             </template>
             <template v-else>
-              <button type="button" class="flex items-center gap-3 truncate flex-1 cursor-pointer text-left min-h-11" @click="selectSession(session.id)">
-                <i class="pi pi-message text-gray-500 group-hover:text-gray-700"></i>
+              <button type="button" class="flex items-center gap-2 truncate flex-1 cursor-pointer text-left min-h-8" @click="selectSession(session.id)">
+                <i class="pi pi-message text-gray-400 text-[11px]"></i>
                 <span class="truncate text-left flex-1">{{ session.title || 'Đoạn chat mới' }}</span>
               </button>
-              <button @click.stop="startRename(session)" class="text-gray-500 hover:text-gray-900 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 w-11 h-11 rounded hover:bg-gray-200/50 transition-all flex-shrink-0 cursor-pointer" :aria-label="`Đổi tên đoạn chat ${session.title || 'mới'}`">
-                <i class="pi pi-pencil text-xs"></i>
+              <button @click.stop="startRename(session)" class="text-gray-400 hover:text-gray-700 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 w-7 h-7 rounded hover:bg-gray-200/60 transition-all flex-shrink-0 cursor-pointer flex items-center justify-center" :aria-label="`Đổi tên đoạn chat ${session.title || 'mới'}`">
+                <i class="pi pi-pencil text-[10px]"></i>
               </button>
-              <button @click.stop="deleteSession(session.id)" class="text-gray-500 hover:text-red-600 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 w-11 h-11 rounded hover:bg-gray-200/50 transition-all flex-shrink-0 cursor-pointer" :aria-label="`Xóa đoạn chat ${session.title || 'mới'}`">
-                <i class="pi pi-trash text-xs"></i>
+              <button @click.stop="deleteSession(session.id)" class="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 w-7 h-7 rounded hover:bg-gray-200/60 transition-all flex-shrink-0 cursor-pointer flex items-center justify-center" :aria-label="`Xóa đoạn chat ${session.title || 'mới'}`">
+                <i class="pi pi-trash text-[10px]"></i>
               </button>
             </template>
           </div>
         </template>
       </div>
       
-      <div class="p-3 border-t border-gray-200 flex items-center gap-1">
-        <button @click="openSettings" class="flex-1 min-h-11 flex items-center gap-3 overflow-hidden px-2 py-2 hover:bg-chatgpt-light rounded-md transition-colors text-left cursor-pointer group">
-          <div class="w-8 h-8 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0 shadow-sm">
-            <span class="text-xs font-bold text-white">{{ userInitials }}</span>
+      <!-- User Profile -->
+      <div class="p-3 border-t border-gray-100">
+        <button type="button" class="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer group" @click="openSettings" :aria-expanded="false">
+          <div class="w-8 h-8 rounded-full bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center flex-shrink-0">
+            <span class="text-[11px] font-bold text-white">{{ userInitials }}</span>
           </div>
-          <div class="overflow-hidden flex-1">
-            <div class="text-sm font-medium truncate text-gray-900">{{ userName }}</div>
-            <div class="text-xs text-gray-500 truncate">{{ userEmail }}</div>
+          <div class="min-w-0 flex-1">
+            <div class="text-xs font-semibold text-gray-900 truncate">{{ userName }}</div>
+            <div class="text-[10px] text-gray-400 truncate">{{ userRole }}</div>
           </div>
-          <i v-if="isAdmin" class="pi pi-cog text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity hover:text-gray-900" aria-hidden="true"></i>
-        </button>
-        
-        <button @click="logout" class="w-11 h-11 flex items-center justify-center text-gray-500 hover:text-red-600 hover:bg-chatgpt-light rounded-md transition-colors cursor-pointer flex-shrink-0" aria-label="Đăng xuất">
-          <i class="pi pi-sign-out"></i>
+          <div class="flex items-center gap-1">
+            <i v-if="isAdmin" class="pi pi-cog text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-gray-600 text-xs" aria-hidden="true"></i>
+            <button type="button" @click.stop="logout" class="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer" aria-label="Đăng xuất">
+              <i class="pi pi-sign-out text-xs"></i>
+            </button>
+          </div>
         </button>
       </div>
     </aside>
@@ -88,11 +107,11 @@
     <!-- Main Content Area -->
     <main class="flex-1 flex flex-col relative bg-chatgpt-dark min-w-0">
       
-      <!-- Header (mobile toggle + notification bell) -->
-      <header class="flex items-center justify-between gap-2 p-4 border-b border-gray-200 bg-gray-100">
-        <button @click="mobileNavOpen = !mobileNavOpen" :aria-expanded="mobileNavOpen" aria-controls="mobile-navigation" class="w-11 h-11 md:hidden" :aria-label="mobileNavOpen ? 'Đóng menu điều hướng' : 'Mở menu điều hướng'"><i class="pi pi-bars text-xl"></i></button>
-        <span class="font-medium">Nền tảng Trợ lý AI</span>
-        <div class="flex items-center gap-1">
+      <!-- Header -->
+      <header class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-200 bg-white">
+        <button @click="mobileNavOpen = !mobileNavOpen" :aria-expanded="mobileNavOpen" aria-controls="mobile-navigation" class="w-10 h-10 md:hidden flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors" :aria-label="mobileNavOpen ? 'Đóng menu điều hướng' : 'Mở menu điều hướng'"><i class="pi pi-bars text-lg text-gray-600"></i></button>
+        <div class="flex-1"></div>
+        <div class="flex items-center gap-1.5">
           <div ref="notificationRoot" class="relative" @keydown.escape="closeNotifications(true)">
             <button
               ref="notificationButton"
@@ -101,18 +120,18 @@
               aria-haspopup="true"
               aria-controls="notification-panel"
               aria-label="Thông báo"
-              class="relative w-11 h-11 flex items-center justify-center rounded-md hover:bg-gray-200 transition-colors cursor-pointer">
-              <i class="pi pi-bell text-xl"></i>
-              <span v-if="unreadCount > 0" aria-hidden="true" class="absolute top-1 right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
+              class="relative w-10 h-10 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
+              <i class="pi pi-bell text-lg text-gray-600"></i>
+              <span v-if="unreadCount > 0" aria-hidden="true" class="absolute top-1.5 right-1.5 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
             </button>
 
-            <div v-if="notificationsOpen" id="notification-panel" role="region" aria-label="Danh sách thông báo" class="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
+            <div v-if="notificationsOpen" id="notification-panel" role="region" aria-label="Danh sách thông báo" class="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
               <div class="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-100">
                 <span class="text-sm font-semibold text-gray-900">Thông báo</span>
                 <button
                   @click="markAllNotificationsRead"
                   :disabled="notificationsBusy || unreadCount === 0"
-                  class="min-h-11 px-2 text-xs font-medium text-sky-700 hover:text-sky-900 disabled:text-gray-400 disabled:cursor-not-allowed rounded-md hover:bg-gray-100 transition-colors cursor-pointer">
+                  class="px-2 py-1 text-xs font-medium text-sky-600 hover:text-sky-800 disabled:text-gray-400 disabled:cursor-not-allowed rounded-md hover:bg-gray-100 transition-colors cursor-pointer">
                   Đọc tất cả
                 </button>
               </div>
@@ -128,8 +147,8 @@
                     :key="notification.id"
                     @click="markNotificationRead(notification)"
                     :title="notification.isRead ? undefined : 'Đánh dấu đã đọc'"
-                    class="w-full min-h-11 flex items-start gap-3 px-4 py-3 text-left border-b border-gray-100 last:border-b-0 hover:bg-gray-50 transition-colors cursor-pointer">
-                    <span class="mt-1.5 w-2 h-2 rounded-full flex-shrink-0" :class="notification.isRead ? 'bg-transparent' : 'bg-sky-600'" aria-hidden="true"></span>
+                    class="w-full min-h-11 flex items-start gap-3 px-4 py-3 text-left border-b border-gray-50 last:border-b-0 hover:bg-gray-50 transition-colors cursor-pointer">
+                    <span class="mt-1.5 w-2 h-2 rounded-full flex-shrink-0" :class="notification.isRead ? 'bg-transparent' : 'bg-sky-500'" aria-hidden="true"></span>
                     <span class="min-w-0 flex-1">
                       <span class="block text-sm truncate" :class="notification.isRead ? 'text-gray-500' : 'font-semibold text-gray-900'">{{ notification.title }}</span>
                       <span v-if="notification.body" class="block text-xs text-gray-500 line-clamp-2 mt-0.5">{{ notification.body }}</span>
@@ -140,23 +159,24 @@
               </div>
             </div>
           </div>
-          <button @click="newChat" class="w-11 h-11 md:hidden" aria-label="Tạo phiên chat mới"><i class="pi pi-plus text-xl"></i></button>
+          <button @click="newChat" class="w-10 h-10 md:hidden flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors" aria-label="Tạo phiên chat mới"><i class="pi pi-plus text-lg text-gray-600"></i></button>
         </div>
       </header>
 
-      <nav v-if="mobileNavOpen" id="mobile-navigation" class="md:hidden bg-gray-100 border-b border-gray-200 p-3 grid gap-1" aria-label="Điều hướng di động">
+      <!-- Mobile Navigation -->
+      <nav v-if="mobileNavOpen" id="mobile-navigation" class="md:hidden bg-white border-b border-gray-200 p-3 grid gap-1" aria-label="Điều hướng di động">
         <template v-for="group in visibleNavGroups" :key="group.title">
-          <div class="text-[11px] text-gray-500 font-semibold mt-2 first:mt-0 px-3 uppercase tracking-wider">{{ group.title }}</div>
+          <div class="text-[10px] text-gray-400 font-semibold mt-2 first:mt-0 px-2 uppercase tracking-widest">{{ group.title }}</div>
           <router-link
             v-for="item in group.items"
             :key="item.to"
             :to="item.to"
             @click="mobileNavOpen = false"
-            class="min-h-11 flex items-center px-3 py-2 rounded hover:bg-chatgpt-light">
-            <i :class="item.icon" class="mr-2" aria-hidden="true"></i>{{ item.label }}
+            class="min-h-10 flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-gray-50 text-gray-600 hover:text-gray-900 text-sm">
+            <i :class="item.icon + ' text-gray-400'" aria-hidden="true"></i>{{ item.label }}
           </router-link>
         </template>
-        <button @click="logout" class="min-h-11 text-left px-3 py-2 rounded text-red-700 hover:bg-red-50"><i class="pi pi-sign-out mr-2"></i>Đăng xuất</button>
+        <button @click="logout" class="min-h-10 text-left px-2.5 py-2 rounded-lg text-red-600 hover:bg-red-50 text-sm flex items-center gap-2"><i class="pi pi-sign-out text-gray-400"></i>Đăng xuất</button>
       </nav>
 
       <div v-if="appError" role="alert" class="m-3 mb-0 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -192,7 +212,6 @@ interface ChatSession {
 const router = useRouter();
 const authStore = useAuthStore();
 const userName = computed(() => authStore.currentUser?.fullName || authStore.currentUser?.email || 'Người dùng');
-const userEmail = computed(() => authStore.currentUser?.email || '');
 const userRole = computed(() => authStore.currentUser?.role || 'Member');
 
 const isAdmin = computed(() => userRole.value === 'Admin');
@@ -209,7 +228,7 @@ const navGroups: NavGroup[] = [
   {
     title: 'Không gian làm việc',
     items: [
-      { to: '/chat', icon: 'pi pi-sparkles', label: 'Trợ lý AI' },
+      { to: '/chat', icon: 'pi pi-sparkles', label: 'AI Agent' },
       { to: '/projects', icon: 'pi pi-folder', label: 'Dự án' },
       { to: '/documents', icon: 'pi pi-file-pdf', label: 'Kho tài liệu (RAG)' },
       { to: '/memory', icon: 'pi pi-history', label: 'Bộ nhớ trợ lý' },
@@ -243,7 +262,8 @@ const navGroups: NavGroup[] = [
       { to: '/admin/users', icon: 'pi pi-users', label: 'Quản lý User' },
       { to: '/admin/mcp-servers', icon: 'pi pi-server', label: 'Máy chủ MCP' },
       { to: '/admin/knowledge', icon: 'pi pi-database', label: 'Cơ sở tri thức' },
-      { to: '/admin/databases', icon: 'pi pi-server', label: 'Kết nối CSDL' },
+      { to: '/admin/databases', icon: 'pi pi-server', label: 'Quản lý Database' },
+      { to: '/admin/widget', icon: 'pi pi-qrcode', label: 'Widget nhúng' },
       { to: '/admin/audit', icon: 'pi pi-shield', label: 'Nhật ký hoạt động' }
     ]
   }

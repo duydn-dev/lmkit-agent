@@ -47,6 +47,10 @@ builder.WebHost.ConfigureKestrel(options =>
 
 // Đăng ký LmModelManager như một Singleton
 builder.Services.AddSingleton<LmModelManager>();
+// Model downloader: async background service that pre-fetches configured models into
+// AIModels at startup without blocking the API thread. Logs every model queued, started,
+// completed and failed so operators can follow the download from the console.
+builder.Services.AddHostedService<ModelDownloader>();
 
 // Đăng ký ProblemDetails & GlobalExceptionHandler
 builder.Services.AddProblemDetails();
@@ -334,6 +338,12 @@ builder.Services.AddScoped<AgentToolGateway>();
 // DatabaseAgent:Enabled). Connection secrets encrypted via DbConnectionSecretProtector;
 // egress-vetted per-provider; both engines registered as IExternalDatabaseProvider.
 builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Security.DatabaseAgentOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Security.DatabaseAgentOptions.SectionName));
+
+// DB egress escape hatch: when DatabaseAgent:AllowPrivateNetworks=true, allow the
+// agent's database connections to target RFC1918/loopback hosts (Docker, LAN).
+// HTTP SSRF guard is untouched. Default (flag absent/false) keeps deny.
+LmKitOmniApi.Infrastructure.Security.DatabasePrivateNetworks.Configure(
+    builder.Configuration.GetValue<bool>("DatabaseAgent:AllowPrivateNetworks", false));
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.Security.DbConnectionSecretProtector>();
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Security.DbEgressValidator>();
 builder.Services.AddSingleton<LmKitOmniApi.Infrastructure.AI.Database.IExternalDatabaseProvider, LmKitOmniApi.Infrastructure.AI.Database.PostgresDatabaseProvider>();

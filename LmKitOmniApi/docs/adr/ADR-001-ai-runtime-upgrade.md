@@ -100,9 +100,9 @@ delete operations and any generated placeholder tool.
   (`linux-x64` / `linux-arm64`) so a plain restore stays lean. Runtime priority is
   CUDA 13 → CUDA 12 → CPU; Vulkan is not reachable in the shipped container because `libvulkan`
   is absent from the image.
-- Loaded models are keyed by resolved file path in `LmModelManager`, so `AiModels:DefaultEmbedding`
-  and `AiModels:DefaultReranker` pointing at the same file (both `bge-m3` by default) materialize
-  the weights once and share one `LM` instance.
+- Loaded models are keyed by the resolved catalog artifact/path in `LmModelManager`, so
+  roles that resolve to the same artifact can share one `LM` instance. The shipped defaults
+  use separate catalog IDs for embeddings (`bge-m3`) and reranking (`bge-m3-reranker`).
 - Frontend uses same-origin nginx proxying, credentialed API calls and lazy-loaded voice code.
 
 ## Verification gates

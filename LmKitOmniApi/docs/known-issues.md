@@ -68,19 +68,35 @@ What remains open:
 
 ---
 
-## 9. The default chat model is not shipped and its filename looks wrong
+## 9. Catalog model downloads require writable storage and first-use time
 
-`LmKitOmniApi/appsettings.json:49,60`
+`LmKitOmniApi/appsettings.json:43-55`
 
-`AiModels:DefaultChat = "bonsai"` resolves to `AIModels/bonsai/Bonsai-27B-Q1_0.gguf`.
-`*AIModels/` is gitignored (`.gitignore:89`) and there is no download script, so **a fresh
-checkout has no chat model** and `/health/ready` reports Unhealthy until one is placed there.
-That is intended — the previous behaviour reported healthy and failed on the first user
-message.
+The default chat configuration is the LM-Kit catalog ID `gemma4:e4b`, not a hard-coded
+weights path. `LmModelManager` calls `LM.LoadFromModelID(modelId, storagePath: AIModels)`,
+so the configured `AiModels:ModelsDirectory` must be writable and have enough space. LM-Kit
+reuses a matching artifact already present there or downloads it on first use.
 
-Separately, `Q1_0` is not a llama.cpp quantization tag (it ships `Q2_K`, `IQ1_S`, `IQ1_M`, …),
-so this exact filename most likely never existed. Picking the shipped default is a product
-decision, so it is recorded rather than changed.
+This is an operational prerequisite, not an application defect: `/health/ready` cannot prove
+a catalog download before loading the model, so the first request may take longer or fail if
+network/storage is unavailable.
+
+### LM-Kit's own download step can fail after the bytes are complete
+
+Observed on this host for both `qwen3.5:9b` (6.0 GB) and `gemma4:e4b` (4.5 GB): LM-Kit
+finishes the transfer into `<storagePath>.download` and then throws
+`IOException: Cannot create a file when that file already exists` while materialising the
+artifacts, leaving a complete but unusable archive and a model that never loads.
+
+`LmModelManager` therefore looks for an already-extracted model FIRST
+(`FindCachedCatalogModelFile`): it scans `<storagePath>/<repository>/` for the base weights
+(largest `.lmk`/`.gguf`, never `mmproj-*`, `.origin` or `.download`) and loads that file
+directly, bypassing the remote origin check. The archive can also be unpacked by hand into
+`AIModels/<repository>/` — `model.base` keeps the file name from its `metadata.json` —
+after which the loader picks it up with no download attempt.
+
+A 6 GB GPU cannot hold `qwen3.5:9b` (5.5 GB weights + 0.5 GB projector); `gemma4:e4b` fits
+(~4.9 GB peak on an RTX 2060). `nemotron3-nano:4b` (2.6 GB) is the next step down.
 
 ---
 

@@ -31,7 +31,8 @@ export interface ChatMessage {
   isTyping?: boolean;
   webUrls?: string[];
   thinkingSteps?: string[];
-  /** Model chain-of-thought (DeepSeek-R1 style), shown collapsed and separate from the answer. */
+  /** Model chain-of-thought (DeepSeek-R1 style), rendered in the same reasoning panel as the
+   *  pipeline milestones and kept out of the answer. */
   reasoning?: string;
   attachedFiles?: string[];
   producedFiles?: ProducedFile[];
@@ -108,6 +109,31 @@ export interface StoredAssistantContent {
  * log lines are dropped entirely. Shared by ChatView's history loader and the
  * public ShareView so both strip markers identically.
  */
+/**
+ * Strips emoji/pictographs (and their joiners/variation selectors) from a
+ * [THINKING] step. The backend decorates step text with emoji (🛡️ ✅ 🧠 ...);
+ * the UI renders its own PrimeIcons per step state, so the raw emoji are noise
+ * that made the panel look cluttered. Plain text (incl. Vietnamese, "...") passes through.
+ */
+export function cleanThinkingStepText(text: string): string {
+  return text
+    .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * Matches a transient ReAct heartbeat line ("Agent đang suy luận... (Ns)"),
+ * emitted every few seconds while the blocking ReAct pass runs. These are live
+ * progress, not pipeline milestones: the panel keeps ONE such line that updates
+ * in place, and history loading drops them entirely.
+ */
+const HEARTBEAT_PATTERN = /Agent đang suy l[uận]+\.\.\./;
+
+export function isHeartbeatThinkingStep(text: string): boolean {
+  return HEARTBEAT_PATTERN.test(text);
+}
+
 export function parseStoredAssistantContent(raw: string): StoredAssistantContent {
   let content = (raw || '').replace(/\[Agent invoked:.*?\][\n\r]*/g, '');
   let webUrls: string[] | undefined;
@@ -134,7 +160,11 @@ export function parseStoredAssistantContent(raw: string): StoredAssistantContent
   if (content.includes('[THINKING]:')) {
     const thinkingMatches = content.match(/\[THINKING\]:([^\n\r]+)/g);
     if (thinkingMatches) {
-      thinkingSteps = thinkingMatches.map((match) => match.replace('[THINKING]:', '').trim());
+      // History loading drops transient heartbeats: they were live progress for the
+      // streaming view, not part of the conversation's permanent record.
+      thinkingSteps = thinkingMatches
+        .map((match) => cleanThinkingStepText(match.replace('[THINKING]:', '')))
+        .filter((step) => !isHeartbeatThinkingStep(step));
       content = content.replace(/\[THINKING\]:[^\n\r]+[\n\r]*/g, '').trimStart();
     }
   }
@@ -239,7 +269,11 @@ export function useChatStream() {
     const onAbort = () => { void reader.cancel().catch(() => {}); };
     localController.signal.addEventListener('abort', onAbort);
 
-    assistantMsg.isTyping = false;
+    // isTyping stays TRUE while the pipeline works (security check, memory, ReAct,
+    // synthesis) and flips off only when the first ANSWER token arrives. Turning it
+    // off here made the bubble show nothing but silent thinking steps, which read
+    // as a hang during the long silent ReAct pass.
+    assistantMsg.isTyping = true;
 
     // Auto-scroll is coalesced to at most one call per animation frame, so a fast
     // token stream triggers a single layout flush per frame instead of one per SSE
@@ -284,7 +318,24 @@ export function useChatStream() {
             if (!assistantMsg.thinkingSteps) {
               assistantMsg.thinkingSteps = [];
             }
-            assistantMsg.thinkingSteps.push(event.value);
+            const cleaned = cleanThinkingStepText(event.value);
+            // Heartbeats are live progress, not milestones: replace the previous
+            // heartbeat line in place so a long ReAct pass ticks one elapsed-seconds
+            // line instead of stacking dozens of stale ones.
+            if (isHeartbeatThinkingStep(cleaned)) {
+              const existingIdx = assistantMsg.thinkingSteps.findIndex(isHeartbeatThinkingStep);
+              if (existingIdx !== -1) {
+                assistantMsg.thinkingSteps.splice(existingIdx, 1, cleaned);
+              } else {
+                assistantMsg.thinkingSteps.push(cleaned);
+              }
+            } else {
+              // A real milestone after heartbeats retires the progress line, so the
+              // finished panel reads as a clean sequence of steps.
+              const heartbeatIdx = assistantMsg.thinkingSteps.findIndex(isHeartbeatThinkingStep);
+              if (heartbeatIdx !== -1) assistantMsg.thinkingSteps.splice(heartbeatIdx, 1);
+              assistantMsg.thinkingSteps.push(cleaned);
+            }
             scheduleScroll();
             continue;
           }
@@ -324,6 +375,8 @@ export function useChatStream() {
           if (event.type === 'agent-log') continue;
 
           assistantMsg.content += (event as Extract<ChatStreamEvent, { type: 'content' }>).value;
+          // First real answer token: the answer is flowing, retire the Thinking indicator.
+          if (assistantMsg.isTyping) assistantMsg.isTyping = false;
           scheduleScroll();
         }
         if (done) break;

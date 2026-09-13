@@ -57,6 +57,10 @@ appsettings.Local.json
 LmKitOmniApi/Uploads/
 LmKitOmniApi/Temp/
 LmKitOmniApi/Documents/
+
+## ASP.NET Core DataProtection key ring (master keys - never commit)
+**/DataProtectionKeys/
+
 **/bin/Debug/
 **/bin/Release/
 **/obj/Debug/
