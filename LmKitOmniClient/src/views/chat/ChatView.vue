@@ -104,6 +104,9 @@
                   <i v-if="reasoningStreaming(msg)" class="pi pi-spin pi-spinner text-[10px]" aria-hidden="true"></i>
                 </button>
                 <template v-if="!reasoningPanelCollapsed(msg)">
+                <!-- Pipeline milestones are progress scaffolding: they matter only while the
+                     turn runs, then give way to the chain-of-thought — the part worth rereading. -->
+                <template v-if="isLiveTurn(msg)">
                 <div v-for="(step, idx) in msg.thinkingSteps ?? []" :key="idx" 
                   class="text-[13px] flex items-start gap-2 py-0.5"
                   :class="idx === (msg.thinkingSteps?.length ?? 0) - 1 && msg.isTyping && !msg.content ? 'text-gray-700' : 'text-gray-500'">
@@ -113,14 +116,18 @@
                   </span>
                   <span class="leading-snug">{{ step }}</span>
                 </div>
-                <!-- Model reasoning (DeepSeek-R1 style): the model's own chain-of-thought,
-                     separated from the milestones by a rule rather than by another card. -->
-                <div v-if="msg.reasoning" class="mt-1 pt-2 border-t border-gray-200 flex flex-col"
+                </template>
+                <!-- Model reasoning (DeepSeek-R1 style): the model's own chain-of-thought.
+                     While streaming it sits under a live label below the milestones; once the
+                     answer lands the milestones and the label drop away and the panel IS the
+                     chain-of-thought. -->
+                <div v-if="msg.reasoning" class="flex flex-col"
+                  :class="reasoningStreaming(msg) ? 'mt-1 pt-2 border-t border-gray-200' : ''"
                   :aria-label="reasoningStreaming(msg) ? 'Mô hình đang suy luận' : 'Suy luận của mô hình'"
                   :role="reasoningStreaming(msg) ? 'status' : undefined">
-                  <div class="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">
-                    <i v-if="reasoningStreaming(msg)" class="pi pi-spin pi-spinner text-[10px]" aria-hidden="true"></i>
-                    <span>{{ reasoningStreaming(msg) ? 'Đang suy luận' : 'Suy luận của mô hình' }}</span>
+                  <div v-if="reasoningStreaming(msg)" class="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">
+                    <i class="pi pi-spin pi-spinner text-[10px]" aria-hidden="true"></i>
+                    <span>Đang suy luận</span>
                   </div>
                   <div class="reasoning-live max-h-44 overflow-y-auto whitespace-pre-wrap text-[13px] leading-snug text-gray-600">{{ msg.reasoning }}</div>
                 </div>
@@ -483,13 +490,15 @@ const hasCanvasBlock = (msg: ChatMessage): boolean => {
 };
 
 /**
- * The reasoning panel shows when the turn has anything to say about HOW it got there:
- * pipeline milestones, the model's chain-of-thought, or (usually) both. Rendering one card
- * from one predicate keeps the two halves together — they used to be two separate boxes,
- * which stacked up and buried the conversation.
+ * The reasoning panel shows when the turn has anything to say about HOW it got there.
+ * While the turn runs that means milestones and/or arriving chain-of-thought; once the
+ * answer lands the milestones are scaffolding nobody rereads, so the panel — and its
+ * very existence — is decided by the chain-of-thought alone.
  */
 const hasReasoning = (msg: ChatMessage): boolean =>
-  Boolean(msg.reasoning) || (msg.thinkingSteps?.length ?? 0) > 0;
+  isLiveTurn(msg)
+    ? Boolean(msg.reasoning) || (msg.thinkingSteps?.length ?? 0) > 0
+    : Boolean(msg.reasoning);
 
 /** True while this exact message is the turn still being generated. */
 const isLiveTurn = (msg: ChatMessage): boolean =>
