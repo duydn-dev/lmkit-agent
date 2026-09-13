@@ -329,7 +329,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         // until that evaluation exists, this two-pass flow is the documented, intentional
         // behavior — not a bug.
         // ── Step 3-4: LM-Kit native tool discovery + ReAct planning ──
-        yield return "[THINKING]: 📋 Khởi tạo LM-Kit ReAct agent với công cụ có cấu trúc...\n";
+        yield return "[THINKING]: 📋 Đang suy luận từng bước với các công cụ hỗ trợ...\n";
         // The chat permit is SemaphoreLimits:Chat = 1, so a busy box makes this the point where
         // a turn silently stalls. Taking it through the admission queue keeps that wait bounded
         // and lets it report itself: WaitForTurnAsync yields NOTHING when the permit is free (so
@@ -417,7 +417,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             yield break;
         }
 
-        yield return $"[THINKING]: ✅ LM-Kit ReAct hoàn tất sau {nativeRun.InferenceCount} inference(s)\n";
+        yield return $"[THINKING]: ✅ Hoàn tất suy luận sau {nativeRun.InferenceCount} bước xử lý\n";
 
         // Agent runs: surface the captured tool steps as [STEP:] markers (display
         // twin of the stepSink the run handler persists). Never emitted for chat,

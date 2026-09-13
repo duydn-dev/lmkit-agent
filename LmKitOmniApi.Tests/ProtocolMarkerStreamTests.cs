@@ -61,7 +61,7 @@ public class ProtocolMarkerStreamTests
             .Append("[THINKING]: ✅ Đầu vào an toàn\n")
             .Append("[THINKING]: 🧠 Tìm kiếm ký ức liên quan...\n")
             .Append("[THINKING]: 🧠 Không có ký ức liên quan\n")
-            .Append("[THINKING]: 📋 Khởi tạo LM-Kit ReAct agent với công cụ có cấu trúc...\n")
+            .Append("[THINKING]: 📋 Đang suy luận từng bước với các công cụ hỗ trợ...\n")
             .Append("[THINKING]: ✍️ Đang tổng hợp và tạo câu trả lời...\n")
             .Append(OneParagraphAnswer)
             .ToString();
@@ -136,7 +136,7 @@ public class ProtocolMarkerStreamTests
     {
         // [FILE:] markers carry no newline of their own and are emitted immediately
         // before the citation marker, so the two are adjacent on the wire.
-        var stream = "[THINKING]: ✅ LM-Kit ReAct hoàn tất sau 2 inference(s)\n"
+        var stream = "[THINKING]: ✅ Hoàn tất suy luận sau 2 bước xử lý\n"
             + "[FILE:{\"id\":\"c.png\",\"name\":\"chart.png\",\"contentType\":\"image/png\",\"size\":9}]"
             + AgentOrchestrator.FormatWebSearchMarker(new[] { "https://example.com/a" })
             + "[THINKING]: ✍️ Đang tổng hợp và tạo câu trả lời...\n"
