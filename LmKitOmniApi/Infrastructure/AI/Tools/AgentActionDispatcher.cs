@@ -213,9 +213,11 @@ public sealed class AgentActionDispatcher
                 return await ExecuteCallApiAsync(tenantId, userId, query, allowWrite: true, ct);
 
             case "CREATE_DOCX":
-                return await ExecuteCreateOfficeAsync(tenantId, userId, query, isDocx: true, fileSink, ct);
+                return await ExecuteCreateOfficeAsync(tenantId, userId, query, OfficeOutputKind.Docx, fileSink, ct);
             case "CREATE_XLSX":
-                return await ExecuteCreateOfficeAsync(tenantId, userId, query, isDocx: false, fileSink, ct);
+                return await ExecuteCreateOfficeAsync(tenantId, userId, query, OfficeOutputKind.Xlsx, fileSink, ct);
+            case "CREATE_PDF":
+                return await ExecuteCreateOfficeAsync(tenantId, userId, query, OfficeOutputKind.Pdf, fileSink, ct);
 
             case "SCHEDULE_CREATE":
                 // Reached ONLY on the approved-resume path (ScheduleTask is approval-
@@ -692,16 +694,21 @@ public sealed class AgentActionDispatcher
         return result;
     }
 
+    private enum OfficeOutputKind { Docx, Xlsx, Pdf }
+
     private async Task<string> ExecuteCreateOfficeAsync(
-        Guid tenantId, Guid? userId, string query, bool isDocx,
+        Guid tenantId, Guid? userId, string query, OfficeOutputKind kind,
         IList<LmKitOmniApi.Infrastructure.AI.Security.ProducedFile>? fileSink, CancellationToken ct)
     {
         if (userId is not { } ownerId)
             return "[Tài liệu] Không xác định được người dùng — file luôn nằm trong kho riêng của một tài khoản.";
-        _logger.LogInformation("📄 Executing {Kind} authoring...", isDocx ? "docx" : "xlsx");
-        var (message, file) = isDocx
-            ? _officeAuthoring.CreateDocx(tenantId, ownerId, query)
-            : _officeAuthoring.CreateXlsx(tenantId, ownerId, query);
+        _logger.LogInformation("📄 Executing {Kind} authoring...", kind);
+        var (message, file) = kind switch
+        {
+            OfficeOutputKind.Docx => _officeAuthoring.CreateDocx(tenantId, ownerId, query),
+            OfficeOutputKind.Pdf => _officeAuthoring.CreatePdf(tenantId, ownerId, query),
+            _ => _officeAuthoring.CreateXlsx(tenantId, ownerId, query)
+        };
         if (file is not null) fileSink?.Add(file);
         await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "AuthorDocument", null, ct);
         return message;

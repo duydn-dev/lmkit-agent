@@ -22,7 +22,9 @@ public sealed class OfficeAuthoringServiceTests
     private static (OfficeAuthoringService Service, UserResourceAccessService Resources) Build(
         Action<OfficeAuthoringOptions>? configure = null)
     {
-        var options = new OfficeAuthoringOptions();
+        // Bộ test này kiểm chứng ENGINE OPENXML (lớp fallback + caps/sanitize dùng
+        // chung). Engine Aspose có bộ test riêng: AsposeOfficeAuthoringTests.
+        var options = new OfficeAuthoringOptions { Engine = "OpenXml" };
         configure?.Invoke(options);
         var resources = new UserResourceAccessService(new ToolSandboxService(NullLogger<ToolSandboxService>.Instance));
         var service = new OfficeAuthoringService(

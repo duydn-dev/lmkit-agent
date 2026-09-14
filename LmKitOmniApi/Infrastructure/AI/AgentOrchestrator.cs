@@ -194,6 +194,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["SCHEDULE_CANCEL"] = "ScheduleManage",
         ["CREATE_DOCX"] = "AuthorDocument",
         ["CREATE_XLSX"] = "AuthorDocument",
+        ["CREATE_PDF"] = "AuthorDocument",
     };
 
     // H6 path-extraction regexes moved to AgentActionDispatcher alongside the
@@ -1346,9 +1347,10 @@ public class AgentOrchestrator : IAgentOrchestrator
             tools.Add(new DelegatedActionTool(
                 "create_docx",
                 "Tạo file WORD (.docx) từ nội dung và trả về cho người dùng tải ngay trong chat. "
-                    + "Payload JSON: {\"fileName\":\"bao-cao.docx\",\"title\":\"Tiêu đề\",\"markdown\":\"# Mục 1\\nNội dung **đậm**, *nghiêng*\\n- gạch đầu dòng\\n|Cột A|Cột B|\\n|1|2|\"}. "
-                    + "Hỗ trợ markdown tập con: #/##/### tiêu đề, đoạn văn, - và 1. danh sách, **đậm**/*nghiêng*, bảng |…|. "
-                    + "Dùng khi người dùng muốn KẾT QUẢ DẠNG FILE Word (báo cáo, công văn, tổng hợp bài viết…).",
+                    + "Payload JSON: {\"fileName\":\"bao-cao.docx\",\"title\":\"Tiêu đề\",\"markdown\":\"# Mục 1\\nNội dung **đậm**, *nghiêng*\\n- gạch đầu dòng\\n|Cột A|Cột B|\\n|1|2|\","
+                    + "\"options\":{\"header\":\"TÊN CƠ QUAN\",\"footer\":\"Lưu hành nội bộ\",\"pageNumbers\":true,\"toc\":false,\"fontName\":\"Times New Roman\",\"fontSize\":13}}. "
+                    + "Markdown tập con: #/##/### tiêu đề (thành Heading style thật), - và 1. danh sách thật, **đậm**/*nghiêng*, bảng |…|. "
+                    + "Mặc định khổ A4, lề công văn VN. Dùng khi người dùng muốn KẾT QUẢ DẠNG FILE Word (báo cáo, công văn, tổng hợp bài viết…).",
                 (q, ct) => invoke("CREATE_DOCX", q, ct)));
         }
         if (_officeAuthoring.IsEnabled && ActionAllowed("CREATE_XLSX"))
@@ -1356,9 +1358,21 @@ public class AgentOrchestrator : IAgentOrchestrator
             tools.Add(new DelegatedActionTool(
                 "create_xlsx",
                 "Tạo file EXCEL (.xlsx) từ dữ liệu bảng và trả về cho người dùng tải ngay trong chat. "
-                    + "Payload JSON: {\"fileName\":\"so-lieu.xlsx\",\"sheets\":[{\"name\":\"Q3\",\"headers\":[\"Chỉ tiêu\",\"Giá trị\"],\"rows\":[[\"pH\",7.2],[\"COD\",15]]}]}. "
-                    + "Số viết dạng số JSON (không bọc chuỗi) để thành ô số thật. Dùng khi người dùng muốn dữ liệu dạng bảng tính.",
+                    + "Payload JSON: {\"fileName\":\"so-lieu.xlsx\",\"sheets\":[{\"name\":\"Q3\",\"headers\":[\"Chỉ tiêu\",\"Giá trị\"],\"rows\":[[\"pH\",7.2],[\"Tổng\",\"=SUM(B2:B2)\"]],"
+                    + "\"columnFormats\":[null,\"#,##0.00\"],\"chart\":{\"type\":\"column\",\"title\":\"Biểu đồ\",\"categoryColumn\":0,\"seriesColumns\":[1]}}]}. "
+                    + "Số viết dạng số JSON (không bọc chuỗi) → ô số thật; ô bắt đầu \"=\" là CÔNG THỨC thật; chart column/line/pie vẽ cạnh dữ liệu. "
+                    + "Dùng khi người dùng muốn dữ liệu dạng bảng tính.",
                 (q, ct) => invoke("CREATE_XLSX", q, ct)));
+        }
+
+        if (_officeAuthoring.IsPdfAvailable && ActionAllowed("CREATE_PDF"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "create_pdf",
+                "Tạo file PDF từ nội dung văn bản và trả về cho người dùng tải ngay trong chat — CÙNG payload với create_docx "
+                    + "({\"fileName\":\"bao-cao.pdf\",\"title\",\"markdown\",\"options\":{…}}). "
+                    + "Dùng khi người dùng muốn bản PDF cố định (in ấn, lưu trữ); muốn file sửa được thì dùng create_docx.",
+                (q, ct) => invoke("CREATE_PDF", q, ct)));
         }
 
         // Native document tools (PDF forms + redaction + PDF/A validation). Pure LM-Kit
