@@ -195,6 +195,11 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["CREATE_DOCX"] = "AuthorDocument",
         ["CREATE_XLSX"] = "AuthorDocument",
         ["CREATE_PDF"] = "AuthorDocument",
+        ["EDIT_DOCX"] = "AuthorDocument",
+        ["EDIT_XLSX"] = "AuthorDocument",
+        ["CONVERT_DOCUMENT"] = "AuthorDocument",
+        ["READ_DOCX"] = "ReadWordDocument",
+        ["READ_XLSX"] = "ReadExcelDocument",
     };
 
     // H6 path-extraction regexes moved to AgentActionDispatcher alongside the
@@ -1373,6 +1378,58 @@ public class AgentOrchestrator : IAgentOrchestrator
                     + "({\"fileName\":\"bao-cao.pdf\",\"title\",\"markdown\",\"options\":{…}}). "
                     + "Dùng khi người dùng muốn bản PDF cố định (in ấn, lưu trữ); muốn file sửa được thì dùng create_docx.",
                 (q, ct) => invoke("CREATE_PDF", q, ct)));
+        }
+
+        // Họ tool edit/read/convert Office — cần engine Aspose (đọc/sửa file có sẵn
+        // trong kho người dùng; nguồn = id tệp từ [FILE:] hoặc đường dẫn tệp của bạn).
+        if (_officeAuthoring.IsAsposeEngine && ActionAllowed("EDIT_DOCX"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "edit_docx",
+                "SỬA một file Word có sẵn (id tệp từ [FILE:] hoặc đường dẫn tệp của bạn) — tạo FILE MỚI, gốc giữ nguyên. "
+                    + "Payload JSON: {\"path\":\"<id .docx>\",\"fileName\":\"ban-sua.docx\",\"operations\":["
+                    + "{\"op\":\"replaceText\",\"find\":\"cũ\",\"replace\":\"mới\",\"matchCase\":false},"
+                    + "{\"op\":\"appendMarkdown\",\"markdown\":\"## Bổ sung\\nNội dung…\"},"
+                    + "{\"op\":\"setHeaderFooter\",\"header\":\"…\",\"footer\":\"…\",\"pageNumbers\":true}]}.",
+                (q, ct) => invoke("EDIT_DOCX", q, ct)));
+        }
+        if (_officeAuthoring.IsAsposeEngine && ActionAllowed("EDIT_XLSX"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "edit_xlsx",
+                "SỬA một file Excel có sẵn (id tệp từ [FILE:] hoặc đường dẫn tệp của bạn) — tạo FILE MỚI, gốc giữ nguyên. "
+                    + "Payload JSON: {\"path\":\"<id .xlsx>\",\"operations\":["
+                    + "{\"op\":\"setCells\",\"sheet\":\"Q3\",\"cells\":[{\"ref\":\"B2\",\"value\":7.5},{\"ref\":\"B5\",\"formula\":\"=SUM(B2:B4)\"}]},"
+                    + "{\"op\":\"addSheet\",\"name\":\"Q4\",\"headers\":[…],\"rows\":[[…]]},"
+                    + "{\"op\":\"renameSheet\",\"from\":\"Q3\",\"to\":\"Quý 3\"},{\"op\":\"deleteSheet\",\"name\":\"Nháp\"},"
+                    + "{\"op\":\"setColumnFormat\",\"sheet\":\"Q3\",\"column\":1,\"format\":\"#,##0.00\"},"
+                    + "{\"op\":\"addChart\",\"sheet\":\"Q3\",\"chart\":{\"type\":\"column\",\"seriesColumns\":[1]}}]}.",
+                (q, ct) => invoke("EDIT_XLSX", q, ct)));
+        }
+        if (_officeAuthoring.IsAsposeEngine && ActionAllowed("READ_DOCX"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "read_docx",
+                "ĐỌC văn bản từ một file Word/RTF có sẵn (id tệp từ [FILE:] hoặc đường dẫn tệp của bạn) để lấy nội dung phân tích/sửa tiếp. "
+                    + "Payload JSON: {\"path\":\"<id .docx>\"}. Chỉ đọc — không đổi file.",
+                (q, ct) => invoke("READ_DOCX", q, ct)));
+        }
+        if (_officeAuthoring.IsAsposeEngine && ActionAllowed("READ_XLSX"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "read_xlsx",
+                "ĐỌC dữ liệu một trang tính Excel có sẵn thành bảng (id tệp từ [FILE:] hoặc đường dẫn tệp của bạn). "
+                    + "Payload JSON: {\"path\":\"<id .xlsx>\",\"sheet\":\"Q3\",\"maxRows\":100}. Chỉ đọc — không đổi file.",
+                (q, ct) => invoke("READ_XLSX", q, ct)));
+        }
+        if (_officeAuthoring.IsAsposeEngine && ActionAllowed("CONVERT_DOCUMENT"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "convert_document",
+                "CHUYỂN ĐỊNH DẠNG một file có sẵn (id tệp từ [FILE:] hoặc đường dẫn tệp của bạn) và trả file mới để tải. "
+                    + "Payload JSON: {\"path\":\"<id tệp>\",\"to\":\"pdf\",\"fileName\":\"ban-in.pdf\"}. "
+                    + "Văn bản (docx/doc/rtf/html/txt) → pdf/docx/html/txt/rtf; bảng tính (xlsx/xls/csv) → pdf/xlsx/csv/html.",
+                (q, ct) => invoke("CONVERT_DOCUMENT", q, ct)));
         }
 
         // Native document tools (PDF forms + redaction + PDF/A validation). Pure LM-Kit

@@ -58,6 +58,63 @@ public sealed class XlsxSheetSpec
     public XlsxChartSpec? Chart { get; init; }
 }
 
+/// <summary>Một phép thay thế văn bản trong edit_docx.</summary>
+public sealed class DocxReplacementSpec
+{
+    public string Find { get; init; } = string.Empty;
+    public string Replace { get; init; } = string.Empty;
+    public bool MatchCase { get; init; }
+}
+
+/// <summary>
+/// Các phép sửa MỘT LẦN GỌI cho edit_docx — declarative, không stateful:
+/// thay chữ, nối thêm nội dung markdown vào cuối, đặt header/footer/số trang.
+/// File gốc KHÔNG bị đổi — kết quả là file mới trong kho người dùng.
+/// </summary>
+public sealed class DocxEditSpec
+{
+    public string? FileName { get; init; }
+    public List<DocxReplacementSpec> Replacements { get; init; } = [];
+    public string? AppendMarkdown { get; init; }
+    public string? Header { get; init; }
+    public string? Footer { get; init; }
+    public bool? PageNumbers { get; init; }
+
+    public bool HasAnyOperation =>
+        Replacements.Count > 0 || !string.IsNullOrWhiteSpace(AppendMarkdown)
+        || Header is not null || Footer is not null || PageNumbers is not null;
+}
+
+/// <summary>Một phép sửa của edit_xlsx; <see cref="Op"/> quyết định trường nào có nghĩa.</summary>
+public sealed class XlsxEditOperationSpec
+{
+    /// <summary>"setCells" | "addSheet" | "renameSheet" | "deleteSheet" | "setColumnFormat" | "addChart".</summary>
+    public string Op { get; init; } = string.Empty;
+
+    public string? Sheet { get; init; }
+    public List<XlsxCellEditSpec> Cells { get; init; } = [];      // setCells
+    public XlsxSheetSpec? NewSheet { get; init; }                  // addSheet
+    public string? From { get; init; }                             // renameSheet
+    public string? To { get; init; }                               // renameSheet
+    public int? Column { get; init; }                              // setColumnFormat
+    public string? Format { get; init; }                           // setColumnFormat
+    public XlsxChartSpec? Chart { get; init; }                     // addChart
+}
+
+/// <summary>Một ô trong setCells: tham chiếu A1 + giá trị HOẶC công thức.</summary>
+public sealed class XlsxCellEditSpec
+{
+    public string Ref { get; init; } = string.Empty;
+    public System.Text.Json.JsonElement? Value { get; init; }
+    public string? Formula { get; init; }
+}
+
+public sealed class XlsxEditSpec
+{
+    public string? FileName { get; init; }
+    public List<XlsxEditOperationSpec> Operations { get; init; } = [];
+}
+
 /// <summary>
 /// Biểu đồ khai báo: cột phân loại + các cột giá trị (chỉ số 0-based trong bảng).
 /// Đối tượng chart được ghi vào XML của workbook — không render ảnh nên không

@@ -40,7 +40,7 @@ Mọi thứ trong mục này **bật sẵn** trừ khi ghi rõ. Danh sách chứ
 **Tools & tích hợp**
 - MCP server integration chuẩn 2026-07-28 (SDK chính thức, secrets mã hóa, SSRF/DNS guard, OAuth per-user)
 - Tool sandbox JavaScript (Jint) — bật sẵn
-- Soạn file Office ngay trong chat: agent tạo **Word (.docx)**, **Excel (.xlsx)** và **PDF** trả về thẻ tải file trong câu trả lời. Engine **Aspose 20.10** (cần license — `OfficeAuthoring:AsposeLicensePath`): heading style thật + TOC + header/footer/số trang, công thức + freeze + chart Excel, xuất PDF; môi trường thiếu GDI/Skia tự rơi về engine OpenXML (docx/xlsx cơ bản). File nằm trong kho riêng của người dùng
+- Bộ tool Office đầy đủ trong chat — engine **Aspose 20.10** (license — `OfficeAuthoring:AsposeLicensePath`): **create** (`create_docx`/`create_xlsx`/`create_pdf` — heading style thật, TOC, header/footer/số trang, công thức + freeze + chart Excel), **edit** (`edit_docx` thay chữ/nối nội dung/header-footer; `edit_xlsx` setCells/công thức/thêm-đổi tên-xóa sheet/định dạng cột/chart — luôn ra file MỚI, gốc giữ nguyên), **read** (`read_docx`/`read_xlsx` trích nội dung), **convert** (`convert_document` docx↔pdf/html/txt/rtf, xlsx→pdf/csv/html). File trong kho riêng của người dùng, trả thẻ tải qua `[FILE:]`; môi trường thiếu GDI/Skia: create tự rơi về engine OpenXML, các tool khác báo rõ
 - Web search: **SearXNG self-hosted** (mặc định, không cần API key) → Brave → Tavily (đều tùy chọn, cần API key) → fallback DuckDuckGo scraping
 
 **Widget & API**

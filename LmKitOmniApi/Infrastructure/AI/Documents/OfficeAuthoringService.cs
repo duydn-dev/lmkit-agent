@@ -93,6 +93,16 @@ public sealed class OfficeAuthoringService
     /// <summary>create_pdf chỉ tồn tại trên engine Aspose (OpenXml không render PDF).</summary>
     public bool IsPdfAvailable => IsEnabled && UseAspose;
 
+    /// <summary>Họ tool edit/read/convert cần Aspose — engine OpenXml không có chúng.</summary>
+    public bool IsAsposeEngine => IsEnabled && UseAspose;
+
+    /// <summary>File dẫn xuất do edit/convert tạo — dispatcher persist vào kho + [FILE:].</summary>
+    public sealed record DerivedFile(byte[] Data, string FileName, string ContentType);
+
+    private const int ReadTextMaxChars = 8_000;
+    private const int ReadTableDefaultRows = 100;
+    private const int MaxEditOperations = 20;
+
     // ── create_docx ─────────────────────────────────────────────────────
 
     public (string Message, ProducedFile? File) CreateDocx(Guid tenantId, Guid userId, string input)
@@ -203,6 +213,335 @@ public sealed class OfficeAuthoringService
             TryDeleteFile(path);
             return ("[Tài liệu] Không tạo được file Excel — dữ liệu có cấu trúc không xử lý được.", null);
         }
+    }
+
+    // ── edit / read / convert (Aspose-only; nguồn = bytes đã qua resolver sở hữu) ──
+
+    public (string Message, DerivedFile? File) EditDocxFromBytes(byte[] source, JsonElement payload)
+    {
+        if (AsposeGateError() is { } gate) return (gate, null);
+
+        var spec = ParseDocxEditSpec(payload, out var parseError);
+        if (parseError is not null) return (parseError, null);
+        if (!spec!.HasAnyOperation)
+            return ("[Tài liệu] Không có phép sửa nào — cần replacements/appendMarkdown/header/footer/pageNumbers.", null);
+
+        var licensed = AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+        try
+        {
+            var data = AsposeOfficeEngine.EditDocx(source, spec);
+            var name = SanitizeFileName(spec.FileName, ".docx", "da-sua.docx");
+            var operationCount = spec.Replacements.Count
+                + (string.IsNullOrWhiteSpace(spec.AppendMarkdown) ? 0 : 1)
+                + (spec.Header is not null || spec.Footer is not null || spec.PageNumbers is not null ? 1 : 0);
+            return (EditedMessage("Word", name, data.Length, operationCount, licensed), new DerivedFile(data, name, DocxContentType));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "📄 [OfficeAuthoring] edit_docx thất bại.");
+            return ("[Tài liệu] Không sửa được file Word trên môi trường máy chủ hiện tại — file gốc vẫn nguyên vẹn.", null);
+        }
+    }
+
+    public (string Message, DerivedFile? File) EditXlsxFromBytes(byte[] source, JsonElement payload)
+    {
+        if (AsposeGateError() is { } gate) return (gate, null);
+
+        var spec = ParseXlsxEditSpec(payload, out var parseError);
+        if (parseError is not null) return (parseError, null);
+        if (spec!.Operations.Count == 0)
+            return ("[Tài liệu] Không có phép sửa nào trong \"operations\".", null);
+
+        var licensed = AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+        try
+        {
+            var data = AsposeOfficeEngine.EditXlsx(source, spec);
+            var name = SanitizeFileName(spec.FileName, ".xlsx", "da-sua.xlsx");
+            return (EditedMessage("Excel", name, data.Length, spec.Operations.Count, licensed), new DerivedFile(data, name, XlsxContentType));
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Lỗi NGHIỆP VỤ từ engine (sheet không tồn tại, op lạ…) — nói thẳng cho agent sửa.
+            return ($"[Tài liệu] {ex.Message} File gốc vẫn nguyên vẹn.", null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "📊 [OfficeAuthoring] edit_xlsx thất bại.");
+            return ("[Tài liệu] Không sửa được file Excel trên môi trường máy chủ hiện tại — file gốc vẫn nguyên vẹn.", null);
+        }
+    }
+
+    public string ReadDocxFromBytes(byte[] source)
+    {
+        if (AsposeGateError() is { } gate) return gate;
+        AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+        try
+        {
+            var text = AsposeOfficeEngine.ExtractDocxText(source).Trim();
+            if (text.Length == 0) return "(Tài liệu không có văn bản.)";
+            return text.Length <= ReadTextMaxChars
+                ? text
+                : text[..ReadTextMaxChars] + $"\n… (đã cắt bớt, tài liệu dài {text.Length} ký tự)";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "📄 [OfficeAuthoring] read_docx thất bại.");
+            return "[Tài liệu] Không đọc được file — có thể không phải định dạng Word hợp lệ.";
+        }
+    }
+
+    public string ReadXlsxFromBytes(byte[] source, JsonElement payload)
+    {
+        if (AsposeGateError() is { } gate) return gate;
+        AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+        try
+        {
+            var sheet = GetString(payload, "sheet");
+            var maxRows = (int)Math.Clamp(GetDouble(payload, "maxRows") ?? ReadTableDefaultRows, 1, 1000);
+            return AsposeOfficeEngine.ExtractXlsxTable(source, sheet, maxRows, ReadTextMaxChars);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return $"[Tài liệu] {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "📊 [OfficeAuthoring] read_xlsx thất bại.");
+            return "[Tài liệu] Không đọc được file — có thể không phải định dạng Excel hợp lệ.";
+        }
+    }
+
+    public (string Message, DerivedFile? File) ConvertFromBytes(byte[] source, string sourceName, JsonElement payload)
+    {
+        if (AsposeGateError() is { } gate) return (gate, null);
+
+        var target = (GetString(payload, "to") ?? string.Empty).Trim().TrimStart('.').ToLowerInvariant();
+        var sourceExt = Path.GetExtension(sourceName).TrimStart('.').ToLowerInvariant();
+        var licensed = AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+
+        // Hai tuyến: Words cho văn bản, Cells cho bảng tính — chọn theo ĐUÔI NGUỒN.
+        var wordsSources = new[] { "docx", "doc", "rtf", "html", "htm", "txt", "md" };
+        var cellsSources = new[] { "xlsx", "xls", "csv" };
+
+        try
+        {
+            byte[] data;
+            string contentType;
+            if (wordsSources.Contains(sourceExt))
+            {
+                var format = target switch
+                {
+                    "pdf" => Aspose.Words.SaveFormat.Pdf,
+                    "docx" => Aspose.Words.SaveFormat.Docx,
+                    "html" => Aspose.Words.SaveFormat.Html,
+                    "txt" => Aspose.Words.SaveFormat.Text,
+                    "rtf" => Aspose.Words.SaveFormat.Rtf,
+                    _ => (Aspose.Words.SaveFormat?)null ?? throw new InvalidOperationException(
+                        $"Đích \"{target}\" không hỗ trợ cho văn bản. Chọn: pdf, docx, html, txt, rtf.")
+                };
+                data = AsposeOfficeEngine.ConvertWithWords(source, format);
+                contentType = target switch
+                {
+                    "pdf" => PdfContentType,
+                    "docx" => DocxContentType,
+                    "html" => "text/html",
+                    "txt" => "text/plain",
+                    _ => "application/rtf"
+                };
+            }
+            else if (cellsSources.Contains(sourceExt))
+            {
+                var format = target switch
+                {
+                    "pdf" => Aspose.Cells.SaveFormat.Pdf,
+                    "xlsx" => Aspose.Cells.SaveFormat.Xlsx,
+                    "csv" => Aspose.Cells.SaveFormat.CSV,
+                    "html" => Aspose.Cells.SaveFormat.Html,
+                    _ => (Aspose.Cells.SaveFormat?)null ?? throw new InvalidOperationException(
+                        $"Đích \"{target}\" không hỗ trợ cho bảng tính. Chọn: pdf, xlsx, csv, html.")
+                };
+                data = AsposeOfficeEngine.ConvertWithCells(source, format);
+                contentType = target switch
+                {
+                    "pdf" => PdfContentType,
+                    "xlsx" => XlsxContentType,
+                    "csv" => "text/csv",
+                    _ => "text/html"
+                };
+            }
+            else
+            {
+                return ($"[Tài liệu] Không nhận dạng được định dạng nguồn \".{sourceExt}\" — hỗ trợ: docx/doc/rtf/html/txt (văn bản), xlsx/xls/csv (bảng tính).", null);
+            }
+
+            var stem = Path.GetFileNameWithoutExtension(sourceName);
+            var name = SanitizeFileName(GetString(payload, "fileName") ?? $"{stem}.{target}", "." + target, $"chuyen-doi.{target}");
+            var note = licensed ? null : EvaluationNote;
+            return ($"[Tài liệu] Đã chuyển \"{sourceName}\" → {target.ToUpperInvariant()} \"{name}\" ({FormatSize(data.Length)}) — tệp đính kèm để tải về.{note}",
+                new DerivedFile(data, name, contentType));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return ($"[Tài liệu] {ex.Message}", null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "📄 [OfficeAuthoring] convert_document → {Target} thất bại.", target);
+            return target == "pdf"
+                ? ("[Tài liệu] Không xuất được PDF trên môi trường máy chủ hiện tại (thiếu engine render chữ). Thử đích khác (docx/html/txt).", null)
+                : ("[Tài liệu] Chuyển đổi thất bại — nguồn có thể hỏng hoặc không đúng định dạng.", null);
+        }
+    }
+
+    private string? AsposeGateError() => !IsEnabled
+        ? "[Tài liệu] Tool soạn file Office đang tắt (OfficeAuthoring:Enabled)."
+        : !UseAspose
+            ? "[Tài liệu] Tool này cần engine Aspose (OfficeAuthoring:Engine=Aspose)."
+            : null;
+
+    private static string EditedMessage(string kind, string name, long size, int operationCount, bool licensed)
+        => $"[Tài liệu] Đã sửa file {kind} ({operationCount} phép sửa) → \"{name}\" ({FormatSize(size)}) — file MỚI đính kèm để tải, file gốc giữ nguyên.{(licensed ? "" : EvaluationNote)}";
+
+    private static DocxEditSpec? ParseDocxEditSpec(JsonElement payload, out string? error)
+    {
+        error = null;
+        var replacements = new List<DocxReplacementSpec>();
+        if (payload.TryGetProperty("operations", out var opsProp) && opsProp.ValueKind == JsonValueKind.Array)
+        {
+            // Cho phép dạng operations[] tổng quát: gom các op về spec phẳng.
+            string? appendMarkdown = null, header = null, footer = null;
+            bool? pageNumbers = null;
+            var count = 0;
+            foreach (var op in opsProp.EnumerateArray())
+            {
+                if (++count > MaxEditOperations) { error = $"[Tài liệu] Tối đa {MaxEditOperations} phép sửa mỗi lần gọi."; return null; }
+                switch ((GetString(op, "op") ?? string.Empty).Trim().ToLowerInvariant())
+                {
+                    case "replacetext":
+                        var find = GetString(op, "find");
+                        if (string.IsNullOrEmpty(find) || find.Length < 2)
+                        { error = "[Tài liệu] replaceText cần \"find\" tối thiểu 2 ký tự."; return null; }
+                        replacements.Add(new DocxReplacementSpec
+                        {
+                            Find = find,
+                            Replace = GetString(op, "replace") ?? string.Empty,
+                            MatchCase = GetBool(op, "matchCase") ?? false
+                        });
+                        break;
+                    case "appendmarkdown":
+                        appendMarkdown = GetString(op, "markdown");
+                        break;
+                    case "setheaderfooter":
+                        header = GetString(op, "header");
+                        footer = GetString(op, "footer");
+                        pageNumbers = GetBool(op, "pageNumbers");
+                        break;
+                    default:
+                        error = $"[Tài liệu] Phép sửa docx \"{GetString(op, "op")}\" không hỗ trợ (replaceText/appendMarkdown/setHeaderFooter).";
+                        return null;
+                }
+            }
+            return new DocxEditSpec
+            {
+                FileName = GetString(payload, "fileName"),
+                Replacements = replacements,
+                AppendMarkdown = appendMarkdown,
+                Header = header,
+                Footer = footer,
+                PageNumbers = pageNumbers
+            };
+        }
+
+        error = "[Tài liệu] Thiếu \"operations\" — mảng các phép sửa (replaceText/appendMarkdown/setHeaderFooter).";
+        return null;
+    }
+
+    private XlsxEditSpec? ParseXlsxEditSpec(JsonElement payload, out string? error)
+    {
+        error = null;
+        if (!payload.TryGetProperty("operations", out var opsProp) || opsProp.ValueKind != JsonValueKind.Array)
+        {
+            error = "[Tài liệu] Thiếu \"operations\" — mảng các phép sửa (setCells/addSheet/renameSheet/deleteSheet/setColumnFormat/addChart).";
+            return null;
+        }
+
+        var operations = new List<XlsxEditOperationSpec>();
+        foreach (var op in opsProp.EnumerateArray())
+        {
+            if (operations.Count >= MaxEditOperations)
+            { error = $"[Tài liệu] Tối đa {MaxEditOperations} phép sửa mỗi lần gọi."; return null; }
+
+            var cells = new List<XlsxCellEditSpec>();
+            if (op.TryGetProperty("cells", out var cellsProp) && cellsProp.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var cell in cellsProp.EnumerateArray())
+                {
+                    cells.Add(new XlsxCellEditSpec
+                    {
+                        Ref = GetString(cell, "ref") ?? string.Empty,
+                        Formula = GetString(cell, "formula"),
+                        Value = cell.TryGetProperty("value", out var v) ? v.Clone() : null
+                    });
+                }
+            }
+
+            XlsxSheetSpec? newSheet = null;
+            if ((GetString(op, "op") ?? string.Empty).Equals("addSheet", StringComparison.OrdinalIgnoreCase))
+            {
+                List<string>? headers = null;
+                if (op.TryGetProperty("headers", out var headersProp) && headersProp.ValueKind == JsonValueKind.Array)
+                    headers = headersProp.EnumerateArray().Select(RenderCellText).ToList();
+                var rows = new List<List<JsonElement>>();
+                if (op.TryGetProperty("rows", out var rowsProp) && rowsProp.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var row in rowsProp.EnumerateArray())
+                    {
+                        if (row.ValueKind != JsonValueKind.Array) continue;
+                        if (rows.Count >= _options.MaxRowsPerWorkbook)
+                        { error = $"[Tài liệu] addSheet vượt trần {_options.MaxRowsPerWorkbook} dòng."; return null; }
+                        rows.Add(row.EnumerateArray().Take(_options.MaxColumns).Select(c => c.Clone()).ToList());
+                    }
+                }
+                newSheet = new XlsxSheetSpec
+                {
+                    Name = GetString(op, "name") ?? "Trang mới",
+                    Headers = headers,
+                    Rows = rows,
+                    FreezeHeader = GetBool(op, "freezeHeader") ?? true
+                };
+            }
+
+            XlsxChartSpec? chart = null;
+            if (op.TryGetProperty("chart", out var chartProp) && chartProp.ValueKind == JsonValueKind.Object)
+            {
+                var seriesColumns = new List<int>();
+                if (chartProp.TryGetProperty("seriesColumns", out var seriesProp) && seriesProp.ValueKind == JsonValueKind.Array)
+                    seriesColumns = seriesProp.EnumerateArray()
+                        .Where(x => x.ValueKind == JsonValueKind.Number).Select(x => x.GetInt32()).Take(8).ToList();
+                chart = new XlsxChartSpec
+                {
+                    Type = GetString(chartProp, "type") ?? "column",
+                    Title = GetString(chartProp, "title"),
+                    CategoryColumn = (int)(GetDouble(chartProp, "categoryColumn") ?? 0),
+                    SeriesColumns = seriesColumns.Count > 0 ? seriesColumns : [1]
+                };
+            }
+
+            operations.Add(new XlsxEditOperationSpec
+            {
+                Op = GetString(op, "op") ?? string.Empty,
+                Sheet = GetString(op, "sheet"),
+                Cells = cells,
+                NewSheet = newSheet,
+                From = GetString(op, "from"),
+                To = GetString(op, "to"),
+                Column = GetDouble(op, "column") is { } col ? (int)col : null,
+                Format = GetString(op, "format"),
+                Chart = chart
+            });
+        }
+
+        return new XlsxEditSpec { FileName = GetString(payload, "fileName"), Operations = operations };
     }
 
     private const string EvaluationNote =
@@ -619,7 +958,7 @@ public sealed class OfficeAuthoringService
         var size = new FileInfo(path).Length;
         _logger.LogInformation("📄 [OfficeAuthoring] Đã tạo {Kind} {Name} ({Size} bytes).", kind, displayName, size);
         var file = new ProducedFile(storedName, displayName, contentType, size);
-        return ($"[Tài liệu] Đã tạo file {kind} \"{displayName}\" ({FormatSize(size)}) — tệp đính kèm trong câu trả lời để người dùng tải về.{note}", file);
+        return ($"[Tài liệu] Đã tạo file {kind} \"{displayName}\" ({FormatSize(size)}, id tệp: {storedName}) — tệp đính kèm trong câu trả lời để người dùng tải về.{note}", file);
     }
 
     /// <summary>Tên hiển thị an toàn: bỏ đường dẫn/ký tự cấm, ép đúng đuôi, có mặc định.</summary>

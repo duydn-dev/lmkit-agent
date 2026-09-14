@@ -219,6 +219,17 @@ public sealed class AgentActionDispatcher
             case "CREATE_PDF":
                 return await ExecuteCreateOfficeAsync(tenantId, userId, query, OfficeOutputKind.Pdf, fileSink, ct);
 
+            case "EDIT_DOCX":
+                return await ExecuteEditOfficeAsync(tenantId, userId, query, isDocx: true, fileSink, ct);
+            case "EDIT_XLSX":
+                return await ExecuteEditOfficeAsync(tenantId, userId, query, isDocx: false, fileSink, ct);
+            case "READ_DOCX":
+                return await ExecuteReadOfficeAsync(tenantId, userId, query, isDocx: true, ct);
+            case "READ_XLSX":
+                return await ExecuteReadOfficeAsync(tenantId, userId, query, isDocx: false, ct);
+            case "CONVERT_DOCUMENT":
+                return await ExecuteConvertDocumentAsync(tenantId, userId, query, fileSink, ct);
+
             case "SCHEDULE_CREATE":
                 // Reached ONLY on the approved-resume path (ScheduleTask is approval-
                 // required, so the first call returns [HITL_APPROVAL_REQUIRED] upstream).
@@ -607,6 +618,12 @@ public sealed class AgentActionDispatcher
             error = "[Thiếu trường \"path\" (đường dẫn tệp của bạn)]"; return null;
         }
         var path = pathEl.GetString()!;
+        // Id tệp trần từ [FILE:] marker (không chứa dấu phân cách đường dẫn) được
+        // ghép thẳng vào kho upload của CHÍNH người gọi rồi mới validate — agent
+        // dùng được id mà không cần biết đường dẫn tuyệt đối; tên trần không thể
+        // traversal, và ValidateOwnedPath vẫn là chốt cuối.
+        if (!path.Contains('/') && !path.Contains('\\'))
+            path = System.IO.Path.Combine(_resources.GetUploadDirectory(tenantId, userId.Value), path);
         var check = _resources.ValidateOwnedPath(tenantId, userId.Value, path);
         if (!check.IsAllowed || !System.IO.File.Exists(check.SanitizedPath))
         {
@@ -692,6 +709,55 @@ public sealed class AgentActionDispatcher
         await _toolPermission.RecordToolInvocationAsync(
             tenantId, userId, allowWrite ? "CallApiWrite" : "CallApi", null, ct);
         return result;
+    }
+
+    private async Task<string> ExecuteEditOfficeAsync(
+        Guid tenantId, Guid? userId, string query, bool isDocx,
+        IList<LmKitOmniApi.Infrastructure.AI.Security.ProducedFile>? fileSink, CancellationToken ct)
+    {
+        var input = ResolveOwnedDocumentInput(tenantId, userId, query, out var error);
+        if (input is null) return error!;
+        _logger.LogInformation("📄 Executing {Kind} edit...", isDocx ? "docx" : "xlsx");
+        var (message, derived) = isDocx
+            ? _officeAuthoring.EditDocxFromBytes(input.Value.Bytes, input.Value.Payload)
+            : _officeAuthoring.EditXlsxFromBytes(input.Value.Bytes, input.Value.Payload);
+        if (derived is not null)
+        {
+            var fileId = PersistProducedFile(tenantId, userId, derived.Data, derived.FileName, derived.ContentType, fileSink);
+            message += $" (id tệp mới: {fileId})";
+        }
+        await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "AuthorDocument", null, ct);
+        return message;
+    }
+
+    private async Task<string> ExecuteReadOfficeAsync(
+        Guid tenantId, Guid? userId, string query, bool isDocx, CancellationToken ct)
+    {
+        var input = ResolveOwnedDocumentInput(tenantId, userId, query, out var error);
+        if (input is null) return error!;
+        var result = isDocx
+            ? _officeAuthoring.ReadDocxFromBytes(input.Value.Bytes)
+            : _officeAuthoring.ReadXlsxFromBytes(input.Value.Bytes, input.Value.Payload);
+        await _toolPermission.RecordToolInvocationAsync(
+            tenantId, userId, isDocx ? "ReadWordDocument" : "ReadExcelDocument", null, ct);
+        return result;
+    }
+
+    private async Task<string> ExecuteConvertDocumentAsync(
+        Guid tenantId, Guid? userId, string query,
+        IList<LmKitOmniApi.Infrastructure.AI.Security.ProducedFile>? fileSink, CancellationToken ct)
+    {
+        var input = ResolveOwnedDocumentInput(tenantId, userId, query, out var error);
+        if (input is null) return error!;
+        var sourceName = System.IO.Path.GetFileName(input.Value.Path);
+        var (message, derived) = _officeAuthoring.ConvertFromBytes(input.Value.Bytes, sourceName, input.Value.Payload);
+        if (derived is not null)
+        {
+            var fileId = PersistProducedFile(tenantId, userId, derived.Data, derived.FileName, derived.ContentType, fileSink);
+            message += $" (id tệp mới: {fileId})";
+        }
+        await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "AuthorDocument", null, ct);
+        return message;
     }
 
     private enum OfficeOutputKind { Docx, Xlsx, Pdf }

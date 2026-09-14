@@ -241,6 +241,103 @@ public static class AsposeOfficeEngine
         table.PreferredWidth = AW.Tables.PreferredWidth.FromPercent(100);
     }
 
+    // ── WORD: edit / read / convert (byte-based — file nguồn lấy từ kho
+    //    người dùng qua resolver sở hữu của dispatcher, KHÔNG nhận đường dẫn thô) ──
+
+    /// <summary>Sửa docx: thay chữ, nối markdown, đặt header/footer. Trả bytes file MỚI.</summary>
+    public static byte[] EditDocx(byte[] source, DocxEditSpec spec)
+    {
+        using var input = new MemoryStream(source);
+        var document = new AW.Document(input);
+
+        foreach (var replacement in spec.Replacements)
+        {
+            var options = new AW.Replacing.FindReplaceOptions { MatchCase = replacement.MatchCase };
+            document.Range.Replace(replacement.Find, replacement.Replace, options);
+        }
+
+        if (!string.IsNullOrWhiteSpace(spec.AppendMarkdown))
+        {
+            var builder = new AW.DocumentBuilder(document);
+            builder.MoveToDocumentEnd();
+            builder.Writeln();
+            AppendMarkdown(builder, spec.AppendMarkdown);
+        }
+
+        if (spec.Header is not null || spec.Footer is not null || spec.PageNumbers is not null)
+        {
+            var builder = new AW.DocumentBuilder(document);
+            if (spec.Header is not null)
+            {
+                var header = GetOrCreateHeaderFooter(document, AW.HeaderFooterType.HeaderPrimary);
+                header.RemoveAllChildren();
+                builder.MoveToHeaderFooter(AW.HeaderFooterType.HeaderPrimary);
+                builder.ParagraphFormat.Alignment = AW.ParagraphAlignment.Center;
+                builder.Font.Italic = true;
+                builder.Write(spec.Header.Trim());
+                builder.Font.Italic = false;
+            }
+            if (spec.Footer is not null || spec.PageNumbers == true)
+            {
+                var footer = GetOrCreateHeaderFooter(document, AW.HeaderFooterType.FooterPrimary);
+                footer.RemoveAllChildren();
+                builder.MoveToHeaderFooter(AW.HeaderFooterType.FooterPrimary);
+                builder.ParagraphFormat.Alignment = AW.ParagraphAlignment.Center;
+                if (!string.IsNullOrWhiteSpace(spec.Footer))
+                {
+                    builder.Write(spec.Footer.Trim());
+                    if (spec.PageNumbers == true) builder.Write(" — ");
+                }
+                if (spec.PageNumbers == true)
+                {
+                    builder.Write("Trang ");
+                    builder.InsertField(AW.Fields.FieldType.FieldPage, false);
+                    builder.Write(" / ");
+                    builder.InsertField(AW.Fields.FieldType.FieldNumPages, false);
+                }
+            }
+        }
+
+        using var output = new MemoryStream();
+        document.Save(output, AW.SaveFormat.Docx);
+        return output.ToArray();
+    }
+
+    private static AW.HeaderFooter GetOrCreateHeaderFooter(AW.Document document, AW.HeaderFooterType type)
+    {
+        var section = document.FirstSection;
+        var headerFooter = section.HeadersFooters[type];
+        if (headerFooter is null)
+        {
+            headerFooter = new AW.HeaderFooter(document, type);
+            section.HeadersFooters.Add(headerFooter);
+        }
+        return headerFooter;
+    }
+
+    /// <summary>Trích văn bản thuần từ docx/doc/rtf (Words tự nhận dạng định dạng).</summary>
+    public static string ExtractDocxText(byte[] source)
+    {
+        using var input = new MemoryStream(source);
+        var document = new AW.Document(input);
+        return document.GetText()
+            .Replace("\r", "\n")
+            .Replace("\u000c", "\n"); // page break control char
+    }
+
+    /// <summary>
+    /// Chuyển đổi qua Aspose.Words (docx/doc/rtf/html/txt → pdf/docx/html/txt/rtf).
+    /// Đích PDF cần engine đo chữ — caller bắt lỗi nền tảng và báo rõ.
+    /// </summary>
+    public static byte[] ConvertWithWords(byte[] source, AW.SaveFormat target)
+    {
+        using var input = new MemoryStream(source);
+        var document = new AW.Document(input);
+        using var output = new MemoryStream();
+        document.Save(output, target);
+        return output.ToArray();
+    }
+
     // ── EXCEL ───────────────────────────────────────────────────────────
 
     public static void BuildXlsx(XlsxSpec spec, string path)
@@ -248,47 +345,194 @@ public static class AsposeOfficeEngine
         using var workbook = new AC.Workbook();
         workbook.Worksheets.Clear();
 
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sheetSpec in spec.Sheets)
+        {
+            var worksheet = workbook.Worksheets.Add(SanitizeSheetName(sheetSpec.Name, usedNames));
+            FillSheet(workbook, worksheet, sheetSpec);
+        }
+
+        // Công thức (ô "=…") được tính sẵn để giá trị cache đúng ngay khi mở file.
+        workbook.CalculateFormula();
+        workbook.Save(path, AC.SaveFormat.Xlsx);
+    }
+
+    /// <summary>Đổ một sheet theo spec — dùng chung cho create_xlsx và edit_xlsx(addSheet).</summary>
+    private static void FillSheet(AC.Workbook workbook, AC.Worksheet worksheet, XlsxSheetSpec sheetSpec)
+    {
         var headerStyle = workbook.CreateStyle();
         headerStyle.Font.IsBold = true;
         headerStyle.ForegroundColor = System.Drawing.Color.FromArgb(217, 225, 242);
         headerStyle.Pattern = AC.BackgroundType.Solid;
         headerStyle.SetBorder(AC.BorderType.BottomBorder, AC.CellBorderType.Thin, System.Drawing.Color.Gray);
 
-        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var sheetSpec in spec.Sheets)
+        var cells = worksheet.Cells;
+        var rowIndex = 0;
+
+        if (sheetSpec.Headers is { Count: > 0 })
         {
-            var worksheet = workbook.Worksheets.Add(SanitizeSheetName(sheetSpec.Name, usedNames));
-            var cells = worksheet.Cells;
-            var rowIndex = 0;
-
-            if (sheetSpec.Headers is { Count: > 0 })
+            for (var c = 0; c < sheetSpec.Headers.Count; c++)
             {
-                for (var c = 0; c < sheetSpec.Headers.Count; c++)
-                {
-                    var cell = cells[0, c];
-                    cell.PutValue(sheetSpec.Headers[c]);
-                    cell.SetStyle(headerStyle);
-                }
-                rowIndex = 1;
-                if (sheetSpec.FreezeHeader) worksheet.FreezePanes(1, 0, 1, 0);
+                var cell = cells[0, c];
+                cell.PutValue(sheetSpec.Headers[c]);
+                cell.SetStyle(headerStyle);
             }
-
-            foreach (var row in sheetSpec.Rows)
-            {
-                for (var c = 0; c < row.Count; c++)
-                    PutCell(cells[rowIndex, c], row[c]);
-                rowIndex++;
-            }
-
-            ApplyColumnFormatsAndWidths(workbook, worksheet, sheetSpec);
-
-            if (sheetSpec.Chart is { } chartSpec && sheetSpec.Rows.Count > 0)
-                AddChart(worksheet, sheetSpec, chartSpec);
+            rowIndex = 1;
+            if (sheetSpec.FreezeHeader) worksheet.FreezePanes(1, 0, 1, 0);
         }
 
-        // Công thức (ô "=…") được tính sẵn để giá trị cache đúng ngay khi mở file.
+        foreach (var row in sheetSpec.Rows)
+        {
+            for (var c = 0; c < row.Count; c++)
+                PutCell(cells[rowIndex, c], row[c]);
+            rowIndex++;
+        }
+
+        ApplyColumnFormatsAndWidths(workbook, worksheet, sheetSpec);
+
+        if (sheetSpec.Chart is { } chartSpec && sheetSpec.Rows.Count > 0)
+            AddChart(worksheet, sheetSpec, chartSpec);
+    }
+
+    /// <summary>Sửa workbook: setCells/addSheet/renameSheet/deleteSheet/setColumnFormat/addChart.</summary>
+    public static byte[] EditXlsx(byte[] source, XlsxEditSpec spec)
+    {
+        using var input = new MemoryStream(source);
+        using var workbook = new AC.Workbook(input);
+
+        foreach (var operation in spec.Operations)
+        {
+            switch (operation.Op.Trim().ToLowerInvariant())
+            {
+                case "setcells":
+                {
+                    var worksheet = ResolveSheet(workbook, operation.Sheet);
+                    foreach (var cellEdit in operation.Cells)
+                    {
+                        if (string.IsNullOrWhiteSpace(cellEdit.Ref)) continue;
+                        var cell = worksheet.Cells[cellEdit.Ref];
+                        if (!string.IsNullOrWhiteSpace(cellEdit.Formula))
+                            cell.Formula = cellEdit.Formula;
+                        else if (cellEdit.Value is { } value)
+                            PutCell(cell, value);
+                    }
+                    break;
+                }
+                case "addsheet":
+                {
+                    var sheetSpec = operation.NewSheet
+                        ?? throw new InvalidOperationException("addSheet cần name/headers/rows.");
+                    var used = workbook.Worksheets.Cast<AC.Worksheet>()
+                        .Select(ws => ws.Name)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var worksheet = workbook.Worksheets.Add(SanitizeSheetName(sheetSpec.Name, used));
+                    FillSheet(workbook, worksheet, sheetSpec);
+                    break;
+                }
+                case "renamesheet":
+                {
+                    var worksheet = ResolveSheet(workbook, operation.From);
+                    if (string.IsNullOrWhiteSpace(operation.To))
+                        throw new InvalidOperationException("renameSheet cần \"to\".");
+                    var used = workbook.Worksheets.Cast<AC.Worksheet>()
+                        .Where(ws => ws != worksheet)
+                        .Select(ws => ws.Name)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    worksheet.Name = SanitizeSheetName(operation.To, used);
+                    break;
+                }
+                case "deletesheet":
+                {
+                    if (workbook.Worksheets.Count <= 1)
+                        throw new InvalidOperationException("Không thể xóa trang tính cuối cùng.");
+                    var worksheet = ResolveSheet(workbook, operation.Sheet ?? operation.From);
+                    workbook.Worksheets.RemoveAt(worksheet.Index);
+                    break;
+                }
+                case "setcolumnformat":
+                {
+                    var worksheet = ResolveSheet(workbook, operation.Sheet);
+                    if (operation.Column is not { } column || string.IsNullOrWhiteSpace(operation.Format))
+                        throw new InvalidOperationException("setColumnFormat cần \"column\" và \"format\".");
+                    var style = workbook.CreateStyle();
+                    style.Custom = operation.Format;
+                    worksheet.Cells.Columns[column].ApplyStyle(style, new AC.StyleFlag { NumberFormat = true });
+                    break;
+                }
+                case "addchart":
+                {
+                    var worksheet = ResolveSheet(workbook, operation.Sheet);
+                    var chart = operation.Chart
+                        ?? throw new InvalidOperationException("addChart cần \"chart\".");
+                    var lastRow = worksheet.Cells.MaxDataRow + 1;   // 0-based → 1-based
+                    var lastColumn = worksheet.Cells.MaxDataColumn + 1;
+                    if (lastRow < 2) throw new InvalidOperationException("Trang tính chưa có dữ liệu để vẽ biểu đồ.");
+                    AddChartOverRange(worksheet, chart, firstDataRow: 2, lastDataRow: lastRow, dataColumns: lastColumn);
+                    break;
+                }
+                default:
+                    throw new InvalidOperationException($"Phép sửa \"{operation.Op}\" không được hỗ trợ.");
+            }
+        }
+
         workbook.CalculateFormula();
-        workbook.Save(path, AC.SaveFormat.Xlsx);
+        using var output = new MemoryStream();
+        workbook.Save(output, AC.SaveFormat.Xlsx);
+        return output.ToArray();
+    }
+
+    /// <summary>Đọc dữ liệu một trang tính thành bảng markdown gọn (giá trị hiển thị).</summary>
+    public static string ExtractXlsxTable(byte[] source, string? sheetName, int maxRows, int maxChars)
+    {
+        using var input = new MemoryStream(source);
+        using var workbook = new AC.Workbook(input);
+        var worksheet = ResolveSheet(workbook, sheetName);
+
+        var lastRow = worksheet.Cells.MaxDataRow;
+        var lastColumn = worksheet.Cells.MaxDataColumn;
+        if (lastRow < 0 || lastColumn < 0) return $"(Trang tính \"{worksheet.Name}\" trống.)";
+
+        var builder = new System.Text.StringBuilder();
+        builder.Append("Trang tính \"").Append(worksheet.Name).Append("\" (")
+            .Append(lastRow + 1).Append(" dòng × ").Append(lastColumn + 1).AppendLine(" cột):");
+        var rowsRendered = 0;
+        for (var r = 0; r <= lastRow && rowsRendered < maxRows && builder.Length < maxChars; r++, rowsRendered++)
+        {
+            builder.Append('|');
+            for (var c = 0; c <= lastColumn; c++)
+            {
+                builder.Append(' ').Append(worksheet.Cells[r, c].StringValue.Replace("|", "\\|")).Append(" |");
+            }
+            builder.AppendLine();
+        }
+        if (rowsRendered <= lastRow)
+            builder.Append("… (còn ").Append(lastRow + 1 - rowsRendered).Append(" dòng — tăng maxRows nếu cần)");
+        var text = builder.ToString().TrimEnd();
+        return text.Length <= maxChars ? text : text[..maxChars] + "\n… (đã cắt bớt)";
+    }
+
+    /// <summary>Chuyển đổi qua Aspose.Cells (xlsx/csv → pdf/xlsx/csv/html).</summary>
+    public static byte[] ConvertWithCells(byte[] source, AC.SaveFormat target)
+    {
+        using var input = new MemoryStream(source);
+        using var workbook = new AC.Workbook(input);
+        using var output = new MemoryStream();
+        workbook.Save(output, target);
+        return output.ToArray();
+    }
+
+    /// <summary>Tìm trang tính theo tên (bỏ qua sheet watermark bản đánh giá); null → sheet dữ liệu đầu tiên.</summary>
+    private static AC.Worksheet ResolveSheet(AC.Workbook workbook, string? name)
+    {
+        var sheets = workbook.Worksheets.Cast<AC.Worksheet>()
+            .Where(ws => !ws.Name.Contains("Evaluation", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (sheets.Count == 0) sheets = workbook.Worksheets.Cast<AC.Worksheet>().ToList();
+
+        if (string.IsNullOrWhiteSpace(name)) return sheets[0];
+        return sheets.FirstOrDefault(ws => ws.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException(
+                $"Không có trang tính \"{name}\". Hiện có: {string.Join(", ", sheets.Select(ws => ws.Name))}.");
     }
 
     private static void PutCell(AC.Cell cell, JsonElement value)
@@ -360,16 +604,22 @@ public static class AsposeOfficeEngine
 
     private static void AddChart(AC.Worksheet worksheet, XlsxSheetSpec sheetSpec, XlsxChartSpec chartSpec)
     {
+        var dataColumns = Math.Max(sheetSpec.Headers?.Count ?? 0, sheetSpec.Rows.Max(r => r.Count));
+        var firstDataRow = sheetSpec.Headers is { Count: > 0 } ? 2 : 1; // A1-based
+        var lastDataRow = firstDataRow + sheetSpec.Rows.Count - 1;
+        AddChartOverRange(worksheet, chartSpec, firstDataRow, lastDataRow, dataColumns);
+    }
+
+    /// <summary>Vẽ biểu đồ trên một vùng dữ liệu đã biết — dùng chung create + edit(addChart).</summary>
+    private static void AddChartOverRange(
+        AC.Worksheet worksheet, XlsxChartSpec chartSpec, int firstDataRow, int lastDataRow, int dataColumns)
+    {
         var chartType = chartSpec.Type.Trim().ToLowerInvariant() switch
         {
             "line" => AC.Charts.ChartType.Line,
             "pie" => AC.Charts.ChartType.Pie,
             _ => AC.Charts.ChartType.Column
         };
-
-        var dataColumns = Math.Max(sheetSpec.Headers?.Count ?? 0, sheetSpec.Rows.Max(r => r.Count));
-        var firstDataRow = sheetSpec.Headers is { Count: > 0 } ? 2 : 1; // A1-based
-        var lastDataRow = firstDataRow + sheetSpec.Rows.Count - 1;
 
         // Đặt biểu đồ bên PHẢI vùng dữ liệu, không đè số liệu.
         var chartIndex = worksheet.Charts.Add(chartType, 1, dataColumns + 1, 16, dataColumns + 9);
