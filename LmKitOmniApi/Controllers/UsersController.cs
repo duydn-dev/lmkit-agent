@@ -20,11 +20,19 @@ public class UsersController : ApiControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetUsers(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetUsers(
+        [FromQuery] int? page, [FromQuery] int? pageSize, [FromQuery] string? search, CancellationToken cancellationToken)
     {
         if (!TryGetIdentity(out var tenantId, out _)) return Unauthorized();
 
-        var users = await _mediator.Send(new GetUsersQuery { TenantId = tenantId }, cancellationToken);
+        var (p, size) = Application.Common.Paging.Normalize(page, pageSize);
+        var users = await _mediator.Send(new GetUsersQuery
+        {
+            TenantId = tenantId,
+            Page = p,
+            PageSize = size,
+            Search = search
+        }, cancellationToken);
         return Ok(users);
     }
 

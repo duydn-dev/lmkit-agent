@@ -51,7 +51,19 @@ internal static class TestHostConfiguration
         ["BootstrapAdmin:Enabled"] = "false",
         ["ConnectionStrings:Redis"] = "",
         ["AiModels:WarmupChatModel"] = "false",
-        ["AiModels:RequireChatModelReady"] = "false"
+        ["AiModels:RequireChatModelReady"] = "false",
+        // appsettings now ships CATALOG ids (e.g. "gemma4:e4b"). On a test host that
+        // must fail FAST and OFFLINE: a catalog id reaches LM.LoadFromModelID, which
+        // contacts the LM-Kit catalog and starts a real multi-GB download — the chat
+        // stream then sits silent past HttpClient's 100s timeout (how
+        // ChatAttachment_IsDeletedAfterRequestProcessing went red). A path-shaped id
+        // takes the local-path branch instead and throws FileNotFoundException
+        // immediately, so chat streams its "[ERROR]" + "[DONE]" contract offline.
+        ["AiModels:DefaultChat"] = "AIModels/absent-chat-model-for-tests.gguf",
+        ["AiModels:DefaultVision"] = "AIModels/absent-vision-model-for-tests.gguf",
+        ["AiModels:DefaultEmbedding"] = "AIModels/absent-embedding-model-for-tests.gguf",
+        ["AiModels:DefaultSpeech"] = "AIModels/absent-speech-model-for-tests.gguf",
+        ["AiModels:DefaultReranker"] = "AIModels/absent-reranker-model-for-tests.gguf"
     };
 
     /// <summary>The one setting that must never be shared between two live hosts.</summary>

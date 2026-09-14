@@ -12,6 +12,9 @@ namespace LmKitOmniApi.Application.Schedules;
 /// </summary>
 public static class ScheduledTaskRules
 {
+    public const string CompletionRunMode = "completion";
+    public const string AgentRunMode = "agent";
+
     public const int MaxNameLength = 100;
     public const int MaxPromptLength = 2000;
     public const int MinIntervalMinutes = 15;
@@ -35,6 +38,9 @@ public static class ScheduledTaskRules
             return "Nội dung nhắc lệnh không được để trống.";
         if (prompt.Length > MaxPromptLength)
             return $"Nội dung nhắc lệnh không được vượt quá {MaxPromptLength} ký tự.";
+
+        if (NormalizeRunMode(request.RunMode) is null)
+            return "Chế độ chạy không hợp lệ. Chỉ hỗ trợ: completion, agent.";
 
         switch (NormalizeKind(request.ScheduleKind))
         {
@@ -68,6 +74,7 @@ public static class ScheduledTaskRules
         var kind = NormalizeKind(request.ScheduleKind);
         task.Name = request.Name.Trim();
         task.Prompt = request.Prompt.Trim();
+        task.RunMode = NormalizeRunMode(request.RunMode)!;
         task.ScheduleKind = kind;
         task.IntervalMinutes = kind == ScheduleCalculator.IntervalKind ? request.IntervalMinutes : null;
         task.TimeOfDayMinutes = kind is ScheduleCalculator.DailyKind or ScheduleCalculator.WeeklyKind
@@ -86,6 +93,7 @@ public static class ScheduledTaskRules
         Id = task.Id,
         Name = task.Name,
         Prompt = task.Prompt,
+        RunMode = task.RunMode,
         ScheduleKind = task.ScheduleKind,
         IntervalMinutes = task.IntervalMinutes,
         TimeOfDayMinutes = task.TimeOfDayMinutes,
@@ -99,4 +107,12 @@ public static class ScheduledTaskRules
 
     private static string NormalizeKind(string? scheduleKind) =>
         scheduleKind?.Trim().ToLowerInvariant() ?? string.Empty;
+
+    /// <summary>Trống → "completion" (tương thích client cũ); giá trị lạ → null (400).</summary>
+    private static string? NormalizeRunMode(string? runMode)
+    {
+        var normalized = runMode?.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(normalized)) return CompletionRunMode;
+        return normalized is CompletionRunMode or AgentRunMode ? normalized : null;
+    }
 }

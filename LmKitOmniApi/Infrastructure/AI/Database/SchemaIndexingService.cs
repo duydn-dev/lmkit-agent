@@ -6,7 +6,7 @@ namespace LmKitOmniApi.Infrastructure.AI.Database;
 /// <summary>Retrieves the schema context most relevant to a request — the seam the query tool depends on (fakeable without Qdrant).</summary>
 public interface ISchemaRetriever
 {
-    Task<string> RetrieveContextAsync(Guid tenantId, Guid connectionId, string nlQuery, int topK, CancellationToken ct);
+    Task<string> RetrieveContextAsync(Guid? tenantId, Guid connectionId, string nlQuery, int topK, CancellationToken ct);
 }
 
 /// <summary>
@@ -37,11 +37,12 @@ public sealed class SchemaIndexingService : ISchemaRetriever
         _logger = logger;
     }
 
-    public static string CollectionName(Guid tenantId, Guid connectionId) =>
-        $"db_schema_{tenantId:N}_{connectionId:N}";
+    // Owner-scoped: a NULL tenant (system-wide connection) gets the "global" segment.
+    public static string CollectionName(Guid? tenantId, Guid connectionId) =>
+        $"db_schema_{(tenantId.HasValue ? tenantId.Value.ToString("N") : "global")}_{connectionId:N}";
 
     /// <summary>Introspects, (re)builds the connection's schema index, and returns the table count indexed.</summary>
-    public async Task<int> IndexAsync(DbProvider provider, string connectionString, Guid tenantId, Guid connectionId, CancellationToken ct)
+    public async Task<int> IndexAsync(DbProvider provider, string connectionString, Guid? tenantId, Guid connectionId, CancellationToken ct)
     {
         var tables = await _databases.IntrospectAsync(provider, connectionString, ct);
         var collection = CollectionName(tenantId, connectionId);
@@ -66,7 +67,7 @@ public sealed class SchemaIndexingService : ISchemaRetriever
             var qualified = string.IsNullOrEmpty(table.Schema) ? table.Name : $"{table.Schema}.{table.Name}";
             var payload = new Dictionary<string, object>
             {
-                { "TenantId", tenantId.ToString() },
+                { "TenantId", tenantId.HasValue ? tenantId.Value.ToString() : "global" },
                 { ConnectionIdField, connectionId.ToString() },
                 { "Table", qualified },
                 { "Card", card }
@@ -79,7 +80,7 @@ public sealed class SchemaIndexingService : ISchemaRetriever
     }
 
     /// <summary>Returns the top-K relevant table cards for a request, joined as an SQL-generation context block (empty string when none).</summary>
-    public async Task<string> RetrieveContextAsync(Guid tenantId, Guid connectionId, string nlQuery, int topK, CancellationToken ct)
+    public async Task<string> RetrieveContextAsync(Guid? tenantId, Guid connectionId, string nlQuery, int topK, CancellationToken ct)
     {
         var collection = CollectionName(tenantId, connectionId);
         var queryVector = await _embedder.EmbedAsync(nlQuery, ct);

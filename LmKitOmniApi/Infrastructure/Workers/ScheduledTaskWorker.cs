@@ -1,9 +1,13 @@
 using LMKit.Model;
 using LMKit.TextGeneration;
+using LmKitOmniApi.Application.AgentRuns;
+using LmKitOmniApi.Application.AgentRuns.Commands;
+using LmKitOmniApi.Application.Schedules;
 using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.AI;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Services;
+using MediatR;
 using Microsoft.EntityFrameworkCore;
 
 namespace LmKitOmniApi.Infrastructure.Workers;
@@ -33,6 +37,7 @@ public class ScheduledTaskWorker : BackgroundService
     private const string SucceededStatus = "Succeeded";
     private const string FailedStatus = "Failed";
     private const string SkippedStatus = "Skipped";
+    private const string AwaitingApprovalStatus = "AwaitingApproval";
 
     private const string ResultNotificationType = "scheduled";
     private const string ErrorNotificationType = "scheduled_error";
@@ -89,7 +94,7 @@ public class ScheduledTaskWorker : BackgroundService
                         if (claimed != 1) continue;
 
                         var task = await dbContext.ScheduledTasks.SingleAsync(candidate => candidate.Id == taskId, stoppingToken);
-                        await RunClaimedTaskAsync(dbContext, modelManager, task, stoppingToken);
+                        await RunClaimedTaskAsync(scope.ServiceProvider, dbContext, modelManager, task, stoppingToken);
                     }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                     {
@@ -122,13 +127,16 @@ public class ScheduledTaskWorker : BackgroundService
     }
 
     private async Task RunClaimedTaskAsync(
+        IServiceProvider scopedServices,
         HermesDbContext dbContext,
         LmModelManager modelManager,
         ScheduledTask task,
         CancellationToken stoppingToken)
     {
         var runStartedUtc = DateTime.UtcNow;
-        var (status, error, notification) = await ExecuteTaskAsync(modelManager, task, stoppingToken);
+        var (status, error, notification) = task.RunMode == ScheduledTaskRules.AgentRunMode
+            ? await ExecuteAgentTaskAsync(scopedServices, modelManager, task, stoppingToken)
+            : await ExecuteTaskAsync(modelManager, task, stoppingToken);
 
         // ALWAYS finalize the run bookkeeping, whatever the outcome above.
         task.LastRunUtc = runStartedUtc;
@@ -163,6 +171,122 @@ public class ScheduledTaskWorker : BackgroundService
         await dbContext.SaveChangesAsync(stoppingToken);
         _logger.LogInformation("Scheduled task {TaskId} ({TaskName}) finished with status {Status}",
             task.Id, task.Name, task.LastStatus);
+    }
+
+    /// <summary>
+    /// Chế độ "agent": chạy prompt qua ĐÚNG pipeline AgentRun (StreamAgentRunCommand) —
+    /// phiên ẩn + hàng AgentRun + từng bước tool được lưu, HITL giữ nguyên. Nhờ vậy lịch
+    /// tự động dùng được mọi tool đọc (CSDL đã index, tri thức, web…), còn tool cần phê
+    /// duyệt chỉ tạm dừng phiên chờ người dùng như một run thủ công. Kết quả cuối được
+    /// đọc lại từ hàng AgentRun (đã strip marker) và giao qua Notification.
+    /// Model/hàng đợi bận → Skipped (thử lại sớm), giống nhánh completion.
+    /// </summary>
+    private async Task<(string Status, string? Error, Notification? Notification)> ExecuteAgentTaskAsync(
+        IServiceProvider scopedServices,
+        LmModelManager modelManager,
+        ScheduledTask task,
+        CancellationToken stoppingToken)
+    {
+        // Pre-flight giống nhánh completion: model chưa sẵn sàng → Skipped, không spam lỗi.
+        try
+        {
+            _ = await modelManager.GetChatModelAsync(ct: stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Scheduled agent task {TaskId} skipped: chat model is unavailable", task.Id);
+            return (SkippedStatus, Truncate($"Chat model unavailable: {ex.GetType().Name}", MaxErrorLength), null);
+        }
+
+        var mediator = scopedServices.GetRequiredService<IMediator>();
+        var command = new StreamAgentRunCommand
+        {
+            TenantId = task.TenantId,
+            UserId = task.UserId,
+            Goal = task.Prompt
+        };
+
+        try
+        {
+            using var runCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            runCts.CancelAfter(MaxRunDuration);
+
+            // Drain the stream — the handler persists session/run/steps itself; the text
+            // stream here is only progress markers we do not need to retain.
+            await foreach (var _ in mediator.CreateStream(command, runCts.Token))
+            {
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (InferenceQueueRejectedException refused)
+        {
+            // Máy đang kín chỗ suy luận: run đã được handler ghi Failed, nhưng với LỊCH thì
+            // đây là tình huống tạm thời — Skipped để thử lại trong ~10 phút, không spam lỗi.
+            _logger.LogWarning("Scheduled agent task {TaskId} skipped: {Reason}", task.Id, refused.Message);
+            return (SkippedStatus, Truncate(refused.Message, MaxErrorLength), null);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Scheduled agent task {TaskId} timed out after {Timeout}", task.Id, MaxRunDuration);
+            return (FailedStatus,
+                Truncate($"Task run exceeded the {MaxRunDuration.TotalMinutes:0} minute limit.", MaxErrorLength),
+                BuildErrorNotification(task));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Scheduled agent task {TaskId} failed", task.Id);
+            return (FailedStatus, Truncate(ex.Message, MaxErrorLength), BuildErrorNotification(task));
+        }
+
+        // Đọc kết quả thật từ hàng AgentRun bằng một scope DbContext MỚI: dbContext của
+        // vòng lặp còn đang track ScheduledTask, và handler đã lưu bằng context của scope này.
+        using var runReader = scopedServices.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var runDb = runReader.ServiceProvider.GetRequiredService<HermesDbContext>();
+        var run = await runDb.AgentRuns.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == command.RunId, stoppingToken);
+
+        if (run is null)
+            return (FailedStatus, "Agent run row was not persisted.", BuildErrorNotification(task));
+
+        if (run.Status == AgentRunStatuses.AwaitingApproval)
+        {
+            var pending = new Notification
+            {
+                TenantId = task.TenantId,
+                UserId = task.UserId,
+                Type = ResultNotificationType,
+                Title = task.Name,
+                Body = "Lịch tự động đã chạy đến bước cần phê duyệt. Vào màn Phê duyệt tác vụ để xem xét — phiên sẽ tự chạy tiếp sau khi bạn quyết định."
+            };
+            return (AwaitingApprovalStatus, null, pending);
+        }
+
+        if (run.Status == AgentRunStatuses.Completed)
+        {
+            var body = string.IsNullOrWhiteSpace(run.Result)
+                ? "(Agent không trả về nội dung.)"
+                : Truncate(run.Result.Trim(), MaxNotificationBodyLength);
+            var notification = new Notification
+            {
+                TenantId = task.TenantId,
+                UserId = task.UserId,
+                Type = ResultNotificationType,
+                Title = task.Name,
+                Body = body
+            };
+            return (SucceededStatus, null, notification);
+        }
+
+        return (FailedStatus,
+            Truncate(run.Error ?? "Agent run failed.", MaxErrorLength),
+            BuildErrorNotification(task));
     }
 
     /// <summary>

@@ -27,11 +27,20 @@ public sealed class CustomAgentsController : ApiControllerBase
 
     /// <summary>Agents visible to the caller: own agents + tenant-shared agents.</summary>
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List(
+        [FromQuery] int? page, [FromQuery] int? pageSize, [FromQuery] string? search, CancellationToken ct)
     {
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
 
-        var agents = await _mediator.Send(new GetCustomAgentsQuery { TenantId = tenantId, UserId = userId }, ct);
+        var (p, size) = Application.Common.Paging.Normalize(page, pageSize);
+        var agents = await _mediator.Send(new GetCustomAgentsQuery
+        {
+            TenantId = tenantId,
+            UserId = userId,
+            Page = p,
+            PageSize = size,
+            Search = search
+        }, ct);
         return Ok(agents);
     }
 

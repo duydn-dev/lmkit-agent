@@ -6,10 +6,13 @@ namespace LmKitOmniApi.Application.CustomAgents.Queries;
 /// Lists the custom agents visible to the caller: their own agents plus every
 /// agent in the tenant marked <c>IsSharedWithTenant</c>.
 /// </summary>
-public class GetCustomAgentsQuery : IRequest<List<CustomAgentDto>>
+public class GetCustomAgentsQuery : IRequest<Common.PagedResult<CustomAgentDto>>
 {
     public Guid TenantId { get; set; }
     public Guid UserId { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = Common.Paging.DefaultPageSize;
+    public string? Search { get; set; }
 }
 
 /// <summary>

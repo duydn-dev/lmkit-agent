@@ -68,6 +68,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     // _pythonExecutor / _browserExecutor) because CreateNativeActionToolsAsync must
     // check IsEnabled to decide whether to offer the fetch_web tool.
     private readonly IWebReadService _webRead;
+    private readonly LmKitOmniApi.Infrastructure.AI.Web.ApiCallService _apiCall;
     private readonly LmKitOmniApi.Infrastructure.AI.Database.DbQueryService _dbQuery;
 
     // Native document tools (PDF form read/fill + PDF/Office redaction + PDF/A validate).
@@ -184,6 +185,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["REDACT_PDF"] = "RedactPdf",
         ["REDACT_OFFICE"] = "RedactOffice",
         ["VALIDATE_PDFA"] = "ValidatePdfA",
+        ["CALL_API"] = "CallApi",
+        ["CALL_API_WRITE"] = "CallApiWrite",
     };
 
     // H6 path-extraction regexes moved to AgentActionDispatcher alongside the
@@ -204,6 +207,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         IPythonCodeExecutor pythonExecutor,
         IBrowserFetchExecutor browserExecutor,
         IWebReadService webRead,
+        LmKitOmniApi.Infrastructure.AI.Web.ApiCallService apiCallService,
         LmKitOmniApi.Infrastructure.AI.Documents.IPdfFormService pdfForm,
         LmKitOmniApi.Infrastructure.AI.Documents.IDocumentRedactionService documentRedaction,
         LmKitOmniApi.Infrastructure.AI.Lora.ILoraAdapterService loraService,
@@ -232,6 +236,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         _executionSandbox = executionSandbox;
         _browserExecutor = browserExecutor;
         _webRead = webRead;
+        _apiCall = apiCallService;
         _pdfForm = pdfForm;
         _documentRedaction = documentRedaction;
         _loraService = loraService;
@@ -259,6 +264,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             pythonExecutor,
             browserExecutor,
             webRead,
+            apiCallService,
             dbQueryService,
             resources,
             multiAgent,
@@ -1261,6 +1267,33 @@ public class AgentOrchestrator : IAgentOrchestrator
                     + "Có thể thêm hướng dẫn sau dấu \"|\" (vd: \"https://…|tóm tắt các thay đổi\"); chỉ URL được tải. "
                     + "Địa chỉ nội bộ/loopback/metadata bị chặn.",
                 (q, ct) => invoke("WEB_FETCH", q, ct)));
+        }
+
+        // Generic REST tool (call_api / call_api_write). Offered ONLY when an operator
+        // enabled it (_apiCall.IsEnabled — "ApiTool" section, off by default) — same
+        // gating shape as fetch_web. CALLING IS NETWORKED EGRESS: the service SSRF-
+        // validates URL + DNS pre-flight and the named HttpClient re-vets every socket
+        // connect (SsrfSafeConnect), with an optional host allowlist on top. The WRITE
+        // variant maps to the approval-required "CallApiWrite" permission, so any
+        // POST/PUT/PATCH/DELETE first returns [HITL_APPROVAL_REQUIRED] and only runs
+        // after a human approves the exact payload.
+        if (_apiCall.IsEnabled && ActionAllowed("CALL_API"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "call_api",
+                "Gọi MỘT REST API công khai với phương thức CHỈ-ĐỌC (GET/HEAD) và trả về status + body (đã cắt trần). "
+                    + "Payload: URL trần, hoặc JSON {\"method\":\"GET\",\"url\":\"https://…\",\"headers\":{\"Authorization\":\"Bearer …\"}}. "
+                    + "Địa chỉ nội bộ/loopback/metadata bị chặn; redirect không tự đi theo.",
+                (q, ct) => invoke("CALL_API", q, ct)));
+        }
+        if (_apiCall.IsEnabled && ActionAllowed("CALL_API_WRITE"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "call_api_write",
+                "Gửi MỘT yêu cầu REST GHI (POST/PUT/PATCH/DELETE) tới API ngoài — LUÔN cần người dùng phê duyệt trước khi chạy. "
+                    + "Payload JSON: {\"method\":\"POST\",\"url\":\"https://…\",\"headers\":{…},\"body\":{…}}. "
+                    + "Chỉ dùng khi người dùng yêu cầu rõ ràng việc ghi/gửi dữ liệu ra ngoài.",
+                (q, ct) => invoke("CALL_API_WRITE", q, ct)));
         }
 
         // Native document tools (PDF forms + redaction + PDF/A validation). Pure LM-Kit

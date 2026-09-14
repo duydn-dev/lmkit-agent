@@ -9,6 +9,10 @@ public sealed class SaveScheduledTaskRequest
 {
     public string Name { get; set; } = string.Empty;
     public string Prompt { get; set; } = string.Empty;
+
+    /// <summary>"completion" (mặc định) | "agent" — xem <c>ScheduledTask.RunMode</c>.</summary>
+    public string? RunMode { get; set; }
+
     public string ScheduleKind { get; set; } = string.Empty;
     public int? IntervalMinutes { get; set; }
     public int? TimeOfDayMinutes { get; set; }
@@ -26,6 +30,7 @@ public abstract class SaveScheduledTaskCommandBase
     public Guid UserId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Prompt { get; set; } = string.Empty;
+    public string? RunMode { get; set; }
     public string ScheduleKind { get; set; } = string.Empty;
     public int? IntervalMinutes { get; set; }
     public int? TimeOfDayMinutes { get; set; }
@@ -74,6 +79,7 @@ public sealed class ScheduledTaskDto
     public Guid Id { get; init; }
     public string Name { get; init; } = string.Empty;
     public string Prompt { get; init; } = string.Empty;
+    public string RunMode { get; init; } = "completion";
     public string ScheduleKind { get; init; } = string.Empty;
     public int? IntervalMinutes { get; init; }
     public int? TimeOfDayMinutes { get; init; }

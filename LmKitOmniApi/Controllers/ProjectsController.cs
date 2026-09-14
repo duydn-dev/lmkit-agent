@@ -27,11 +27,20 @@ public sealed class ProjectsController : ApiControllerBase
 
     /// <summary>The caller's projects, newest first, each with its live session count.</summary>
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List(
+        [FromQuery] int? page, [FromQuery] int? pageSize, [FromQuery] string? search, CancellationToken ct)
     {
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
 
-        var projects = await _mediator.Send(new GetProjectsQuery { TenantId = tenantId, UserId = userId }, ct);
+        var (p, size) = Application.Common.Paging.Normalize(page, pageSize);
+        var projects = await _mediator.Send(new GetProjectsQuery
+        {
+            TenantId = tenantId,
+            UserId = userId,
+            Page = p,
+            PageSize = size,
+            Search = search
+        }, ct);
         return Ok(projects);
     }
 

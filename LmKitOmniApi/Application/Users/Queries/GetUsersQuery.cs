@@ -2,9 +2,12 @@ using MediatR;
 
 namespace LmKitOmniApi.Application.Users.Queries;
 
-public class GetUsersQuery : IRequest<List<UserSummaryDto>>
+public class GetUsersQuery : IRequest<Common.PagedResult<UserSummaryDto>>
 {
     public Guid TenantId { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = Common.Paging.DefaultPageSize;
+    public string? Search { get; set; }
 }
 
 /// <summary>

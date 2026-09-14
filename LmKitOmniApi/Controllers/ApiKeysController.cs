@@ -38,12 +38,21 @@ public sealed class ApiKeysController : ApiControllerBase
     /// material: only the SHA-256 hash is stored, so not even a prefix can be shown.
     /// </summary>
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List(
+        [FromQuery] int? page, [FromQuery] int? pageSize, [FromQuery] string? search, CancellationToken ct)
     {
         if (RefuseApiKeyPrincipal() is { } refused) return refused;
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
 
-        var keys = await _mediator.Send(new ListApiKeysQuery { TenantId = tenantId, UserId = userId }, ct);
+        var (p, size) = Application.Common.Paging.Normalize(page, pageSize);
+        var keys = await _mediator.Send(new ListApiKeysQuery
+        {
+            TenantId = tenantId,
+            UserId = userId,
+            Page = p,
+            PageSize = size,
+            Search = search
+        }, ct);
         return Ok(keys);
     }
 

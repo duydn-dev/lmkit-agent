@@ -2,10 +2,11 @@ using LmKitOmniApi.Application.McpServers.Queries;
 using LmKitOmniApi.Infrastructure.Data;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using LmKitOmniApi.Application.Common;
 
 namespace LmKitOmniApi.Application.McpServers.Handlers;
 
-public class ListMcpServersQueryHandler : IRequestHandler<ListMcpServersQuery, List<McpServerSummaryDto>>
+public class ListMcpServersQueryHandler : IRequestHandler<ListMcpServersQuery, Common.PagedResult<McpServerSummaryDto>>
 {
     private readonly HermesDbContext _db;
 
@@ -14,10 +15,19 @@ public class ListMcpServersQueryHandler : IRequestHandler<ListMcpServersQuery, L
         _db = db;
     }
 
-    public async Task<List<McpServerSummaryDto>> Handle(ListMcpServersQuery request, CancellationToken cancellationToken)
+    public async Task<Common.PagedResult<McpServerSummaryDto>> Handle(ListMcpServersQuery request, CancellationToken cancellationToken)
     {
-        return await _db.ExternalMcpServers
-            .Where(server => server.TenantId == request.TenantId)
+        var query = _db.ExternalMcpServers
+            .Where(server => server.TenantId == request.TenantId);
+
+        var search = request.Search?.Trim();
+        if (!string.IsNullOrEmpty(search))
+        {
+            var pattern = $"%{search}%";
+            query = query.Where(server => EF.Functions.Like(server.Name, pattern) || EF.Functions.Like(server.Url, pattern));
+        }
+
+        return await query
             .OrderBy(server => server.Name)
             .Select(server => new McpServerSummaryDto
             {
@@ -36,6 +46,6 @@ public class ListMcpServersQueryHandler : IRequestHandler<ListMcpServersQuery, L
                 CreatedAtUtc = server.CreatedAtUtc,
                 UpdatedAtUtc = server.UpdatedAtUtc
             })
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(request.Page, request.PageSize, cancellationToken);
     }
 }

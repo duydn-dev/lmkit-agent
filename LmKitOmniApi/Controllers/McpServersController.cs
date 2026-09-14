@@ -33,11 +33,19 @@ public sealed class McpServersController : ApiControllerBase
     public IActionResult Catalog() => Ok(McpServerCatalog.Entries);
 
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List(
+        [FromQuery] int? page, [FromQuery] int? pageSize, [FromQuery] string? search, CancellationToken ct)
     {
         if (!TryGetTenantId(out var tenantId)) return Unauthorized();
 
-        var servers = await _mediator.Send(new ListMcpServersQuery { TenantId = tenantId }, ct);
+        var (p, size) = Application.Common.Paging.Normalize(page, pageSize);
+        var servers = await _mediator.Send(new ListMcpServersQuery
+        {
+            TenantId = tenantId,
+            Page = p,
+            PageSize = size,
+            Search = search
+        }, ct);
         return Ok(servers);
     }
 

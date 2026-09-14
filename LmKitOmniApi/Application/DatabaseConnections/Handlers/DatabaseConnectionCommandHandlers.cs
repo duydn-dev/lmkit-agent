@@ -22,6 +22,23 @@ internal static class DatabaseConnectionValidation
             return "Chuỗi kết nối là bắt buộc.";
         return null;
     }
+
+    /// <summary>
+    /// Resolve gán tenant từ request: IsGlobal → null (toàn hệ thống); TenantId có
+    /// giá trị → tenant đó (phải tồn tại); còn lại → fallback (tenant của admin
+    /// khi tạo mới / gán hiện tại khi cập nhật). Trả (ok, value, error).
+    /// </summary>
+    public static async Task<(bool Ok, Guid? TenantId, string? Error)> ResolveTenantAssignmentAsync(
+        HermesDbContext dbContext, SaveDatabaseConnectionRequest request, Guid? fallback, CancellationToken ct)
+    {
+        if (request.IsGlobal) return (true, null, null);
+        if (request.TenantId is { } explicitTenant)
+        {
+            var exists = await dbContext.Tenants.AnyAsync(t => t.Id == explicitTenant, ct);
+            return exists ? (true, explicitTenant, null) : (false, null, "Tenant được gán không tồn tại.");
+        }
+        return (true, fallback, null);
+    }
 }
 
 public sealed class CreateDatabaseConnectionCommandHandler : IRequestHandler<CreateDatabaseConnectionCommand, DatabaseConnectionResult>
@@ -43,13 +60,19 @@ public sealed class CreateDatabaseConnectionCommandHandler : IRequestHandler<Cre
         var error = DatabaseConnectionValidation.Validate(request, _databases, requireConnectionString: true);
         if (error is not null) return DatabaseConnectionResult.Fail(error);
 
+        var (assignOk, assignedTenantId, assignError) = await DatabaseConnectionValidation
+            .ResolveTenantAssignmentAsync(_dbContext, request, command.TenantId, ct);
+        if (!assignOk) return DatabaseConnectionResult.Fail(assignError!);
+
+        // Unique theo phạm vi gán: trong một tenant, hoặc trong nhóm toàn hệ thống.
+        // (Index DB (TenantId, Name) unique không chặn được hai hàng null — check tại đây.)
         var duplicate = await _dbContext.DatabaseConnections
-            .AnyAsync(c => c.TenantId == command.TenantId && c.Name == request.Name.Trim(), ct);
-        if (duplicate) return DatabaseConnectionResult.Fail("Đã tồn tại kết nối cùng tên trong tổ chức.");
+            .AnyAsync(c => c.TenantId == assignedTenantId && c.Name == request.Name.Trim(), ct);
+        if (duplicate) return DatabaseConnectionResult.Fail("Đã tồn tại kết nối cùng tên trong phạm vi này.");
 
         var entity = new DatabaseConnection
         {
-            TenantId = command.TenantId,
+            TenantId = assignedTenantId,
             UserId = command.UserId,
             Name = request.Name.Trim(),
             Provider = request.Provider.Trim(),
@@ -91,19 +114,36 @@ public sealed class UpdateDatabaseConnectionCommandHandler : IRequestHandler<Upd
         var error = DatabaseConnectionValidation.Validate(request, _databases, requireConnectionString: replacing);
         if (error is not null) return DatabaseConnectionResult.Fail(error);
 
-        // Tenant-scoped lookup: a foreign id looks exactly like a missing one.
+        // Scoped lookup: hàng của tenant mình HOẶC hàng toàn hệ thống; id lạ trông
+        // hệt như không tồn tại.
         var entity = await _dbContext.DatabaseConnections
-            .FirstOrDefaultAsync(c => c.Id == command.Id && c.TenantId == command.TenantId, ct);
+            .FirstOrDefaultAsync(c => c.Id == command.Id && (c.TenantId == command.TenantId || c.TenantId == null), ct);
         if (entity is null) return DatabaseConnectionResult.Fail("Không tìm thấy kết nối.");
 
-        entity.Name = request.Name.Trim();
+        var (assignOk, assignedTenantId, assignError) = await DatabaseConnectionValidation
+            .ResolveTenantAssignmentAsync(_dbContext, request, entity.TenantId, ct);
+        if (!assignOk) return DatabaseConnectionResult.Fail(assignError!);
+
+        var newName = request.Name.Trim();
+        var duplicate = await _dbContext.DatabaseConnections
+            .AnyAsync(c => c.Id != entity.Id && c.TenantId == assignedTenantId && c.Name == newName, ct);
+        if (duplicate) return DatabaseConnectionResult.Fail("Đã tồn tại kết nối cùng tên trong phạm vi này.");
+
+        // Đổi phạm vi gán → collection Qdrant đổi tên (segment tenant/global) → bắt
+        // buộc re-index để schema nằm đúng collection mới.
+        var scopeChanged = entity.TenantId != assignedTenantId;
+        entity.TenantId = assignedTenantId;
+        entity.Name = newName;
         entity.Provider = request.Provider.Trim();
         entity.IsActive = request.IsActive;
         entity.AllowWrites = request.AllowWrites;
         if (replacing)
         {
             entity.ConnectionStringProtected = _protector.Protect(request.ConnectionString!.Trim());
-            // Credentials/target changed → the indexed schema may be stale.
+        }
+        if (replacing || scopeChanged)
+        {
+            // Credentials/target/phạm vi gán đổi → schema đã index có thể sai chỗ/cũ.
             entity.IsIndexed = false;
             entity.IndexStatus = "Pending";
         }
@@ -129,7 +169,7 @@ public sealed class DeleteDatabaseConnectionCommandHandler : IRequestHandler<Del
     public async Task<bool> Handle(DeleteDatabaseConnectionCommand command, CancellationToken ct)
     {
         var entity = await _dbContext.DatabaseConnections
-            .FirstOrDefaultAsync(c => c.Id == command.Id && c.TenantId == command.TenantId, ct);
+            .FirstOrDefaultAsync(c => c.Id == command.Id && (c.TenantId == command.TenantId || c.TenantId == null), ct);
         if (entity is null) return false;
         _dbContext.DatabaseConnections.Remove(entity);
         await _dbContext.SaveChangesAsync(ct);
@@ -146,7 +186,7 @@ public sealed class ReindexDatabaseConnectionCommandHandler : IRequestHandler<Re
     public async Task<bool> Handle(ReindexDatabaseConnectionCommand command, CancellationToken ct)
     {
         var entity = await _dbContext.DatabaseConnections
-            .FirstOrDefaultAsync(c => c.Id == command.Id && c.TenantId == command.TenantId, ct);
+            .FirstOrDefaultAsync(c => c.Id == command.Id && (c.TenantId == command.TenantId || c.TenantId == null), ct);
         if (entity is null) return false;
 
         // MongoDB has no Qdrant index (schema is sampled live) — re-index is a no-op;
@@ -187,7 +227,7 @@ public sealed class TestDatabaseConnectionCommandHandler : IRequestHandler<TestD
     public async Task<DatabaseConnectionResult> Handle(TestDatabaseConnectionCommand command, CancellationToken ct)
     {
         var entity = await _dbContext.DatabaseConnections
-            .FirstOrDefaultAsync(c => c.Id == command.Id && c.TenantId == command.TenantId, ct);
+            .FirstOrDefaultAsync(c => c.Id == command.Id && (c.TenantId == command.TenantId || c.TenantId == null), ct);
         if (entity is null) return DatabaseConnectionResult.Fail("Không tìm thấy kết nối.");
 
         var isMongo = MongoDatabaseService.Handles(entity.Provider);

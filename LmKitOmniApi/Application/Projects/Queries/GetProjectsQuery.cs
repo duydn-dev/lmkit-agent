@@ -3,10 +3,13 @@ using MediatR;
 namespace LmKitOmniApi.Application.Projects.Queries;
 
 /// <summary>Lists the caller's projects (tenant+user scoped), newest first.</summary>
-public sealed class GetProjectsQuery : IRequest<List<ProjectDto>>
+public sealed class GetProjectsQuery : IRequest<Common.PagedResult<ProjectDto>>
 {
     public Guid TenantId { get; set; }
     public Guid UserId { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = Common.Paging.DefaultPageSize;
+    public string? Search { get; set; }
 }
 
 /// <summary>

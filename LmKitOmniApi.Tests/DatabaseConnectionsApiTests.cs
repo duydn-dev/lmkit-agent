@@ -47,7 +47,10 @@ public sealed class DatabaseConnectionsApiTests : IClassFixture<LmKitApiFactory>
         Assert.DoesNotContain("connectionString", rawBody, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Password", rawBody, StringComparison.OrdinalIgnoreCase);
 
-        var list = JsonSerializer.Deserialize<JsonElement[]>(rawBody)!;
+        // Getlist chuẩn hoá: trang PagedResult { items, page, pageSize, totalCount }.
+        var page = JsonSerializer.Deserialize<JsonElement>(rawBody);
+        var list = page.GetProperty("items").EnumerateArray().ToArray();
+        Assert.True(page.GetProperty("totalCount").GetInt32() >= 1);
         var entry = Assert.Single(list, e => e.GetProperty("id").GetGuid() == id);
         Assert.Equal("Postgres", entry.GetProperty("provider").GetString());
     }
@@ -138,8 +141,8 @@ public sealed class DatabaseConnectionsApiTests : IClassFixture<LmKitApiFactory>
         Assert.Equal(HttpStatusCode.Accepted, reindex.StatusCode);
 
         // The worker is disabled in tests, so it stays queued (Pending, not indexed).
-        var list = await client.GetFromJsonAsync<JsonElement[]>("/api/database-connections");
-        var entry = list!.Single(e => e.GetProperty("id").GetGuid() == id);
+        var pageDoc = await client.GetFromJsonAsync<JsonElement>("/api/database-connections");
+        var entry = pageDoc.GetProperty("items").EnumerateArray().Single(e => e.GetProperty("id").GetGuid() == id);
         Assert.False(entry.GetProperty("isIndexed").GetBoolean());
         Assert.Equal("Pending", entry.GetProperty("indexStatus").GetString());
 

@@ -23,11 +23,20 @@ public sealed class ScheduledTasksController : ApiControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List(
+        [FromQuery] int? page, [FromQuery] int? pageSize, [FromQuery] string? search, CancellationToken ct)
     {
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
 
-        var tasks = await _mediator.Send(new ListScheduledTasksQuery { TenantId = tenantId, UserId = userId }, ct);
+        var (p, size) = Application.Common.Paging.Normalize(page, pageSize);
+        var tasks = await _mediator.Send(new ListScheduledTasksQuery
+        {
+            TenantId = tenantId,
+            UserId = userId,
+            Page = p,
+            PageSize = size,
+            Search = search
+        }, ct);
         return Ok(tasks);
     }
 
@@ -42,6 +51,7 @@ public sealed class ScheduledTasksController : ApiControllerBase
             UserId = userId,
             Name = request.Name,
             Prompt = request.Prompt,
+            RunMode = request.RunMode,
             ScheduleKind = request.ScheduleKind,
             IntervalMinutes = request.IntervalMinutes,
             TimeOfDayMinutes = request.TimeOfDayMinutes,
@@ -67,6 +77,7 @@ public sealed class ScheduledTasksController : ApiControllerBase
             TaskId = id,
             Name = request.Name,
             Prompt = request.Prompt,
+            RunMode = request.RunMode,
             ScheduleKind = request.ScheduleKind,
             IntervalMinutes = request.IntervalMinutes,
             TimeOfDayMinutes = request.TimeOfDayMinutes,

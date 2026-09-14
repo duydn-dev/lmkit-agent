@@ -21,10 +21,18 @@ public sealed class DatabaseConnectionsController : ApiControllerBase
     public DatabaseConnectionsController(IMediator mediator) => _mediator = mediator;
 
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List(
+        [FromQuery] int? page, [FromQuery] int? pageSize, [FromQuery] string? search, CancellationToken ct)
     {
         if (!TryGetTenantId(out var tenantId)) return Unauthorized();
-        return Ok(await _mediator.Send(new GetDatabaseConnectionsQuery { TenantId = tenantId }, ct));
+        var (p, size) = Application.Common.Paging.Normalize(page, pageSize);
+        return Ok(await _mediator.Send(new GetDatabaseConnectionsQuery
+        {
+            TenantId = tenantId,
+            Page = p,
+            PageSize = size,
+            Search = search
+        }, ct));
     }
 
     [HttpPost]

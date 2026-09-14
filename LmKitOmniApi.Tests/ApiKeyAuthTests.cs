@@ -81,7 +81,7 @@ public sealed class ApiKeyAuthTests : IClassFixture<ApiKeyAuthFixture>
         Assert.Equal("ci-pipeline", created.Body.GetProperty("name").GetString());
         Assert.True(created.Body.TryGetProperty("expiresAtUtc", out _));
 
-        var list = await _fixture.JwtClient.GetFromJsonAsync<JsonElement[]>("/api/api-keys");
+        var list = await PagedJson.ItemsAsync(_fixture.JwtClient, "/api/api-keys");
         var entry = Assert.Single(list!);
         Assert.Equal(created.Id, entry.GetProperty("id").GetGuid());
         Assert.Equal("ci-pipeline", entry.GetProperty("name").GetString());
@@ -119,7 +119,7 @@ public sealed class ApiKeyAuthTests : IClassFixture<ApiKeyAuthFixture>
 
         // Exactly one UsedRequests increment per authenticated request, even though
         // the default policy evaluates both schemes.
-        var list = await _fixture.JwtClient.GetFromJsonAsync<JsonElement[]>("/api/api-keys");
+        var list = await PagedJson.ItemsAsync(_fixture.JwtClient, "/api/api-keys");
         Assert.Equal(2, Assert.Single(list!).GetProperty("usedRequests").GetInt32());
     }
 
@@ -186,7 +186,7 @@ public sealed class ApiKeyAuthTests : IClassFixture<ApiKeyAuthFixture>
         Assert.Equal(HttpStatusCode.Unauthorized, afterRevoke.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, unknownRevoke.StatusCode);
 
-        var list = await _fixture.JwtClient.GetFromJsonAsync<JsonElement[]>("/api/api-keys");
+        var list = await PagedJson.ItemsAsync(_fixture.JwtClient, "/api/api-keys");
         Assert.False(Assert.Single(list!).GetProperty("isActive").GetBoolean());
     }
 
@@ -228,7 +228,7 @@ public sealed class ApiKeyAuthTests : IClassFixture<ApiKeyAuthFixture>
         Assert.Equal(HttpStatusCode.Forbidden, revoke.StatusCode);
         Assert.Contains("khóa API", mintBody.GetProperty("message").GetString());
 
-        var stillThere = await _fixture.JwtClient.GetFromJsonAsync<JsonElement[]>("/api/api-keys");
+        var stillThere = await PagedJson.ItemsAsync(_fixture.JwtClient, "/api/api-keys");
         Assert.True(Assert.Single(stillThere!).GetProperty("isActive").GetBoolean());
     }
 

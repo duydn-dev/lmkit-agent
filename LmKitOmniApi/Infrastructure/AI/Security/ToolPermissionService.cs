@@ -44,6 +44,7 @@ public class ToolPermissionService : IToolPermissionService
             // document ops on the caller's own uploads — no egress, source untouched — so
             // enable-gated + audited + rate-limited, NOT approval-required.
             "ReadPdfForm", "FillPdfForm", "RedactPdf", "RedactOffice", "ValidatePdfA",
+            "CallApi", "CallApiWrite", // generic REST tool — write variant is approval-required below
             "Delegate", "MCP" // C3 Fix: added for action→tool mapping
         },
         ["User"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -53,6 +54,7 @@ public class ToolPermissionService : IToolPermissionService
             "BrowseWeb", // headless-browser page fetch — networked egress, approval-required below
             "FetchWeb",  // native LM-Kit fetch-and-read — read-only egress, NOT approval-required (see below)
             "ReadPdfForm", "FillPdfForm", "RedactPdf", "RedactOffice", "ValidatePdfA", // native document tools (see Admin)
+            "CallApi", "CallApiWrite", // generic REST tool (see Admin)
             "Delegate" // C3 Fix: Users can delegate but not use MCP
         },
         ["Guest"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -71,7 +73,11 @@ public class ToolPermissionService : IToolPermissionService
         // Headless-browser navigation ALWAYS requires human approval: it is
         // side-effecting egress (a live outbound request to an operator-approved URL),
         // so a human vets the target before the browser is launched.
-        "BrowseWeb"
+        "BrowseWeb",
+        // Generic REST WRITES (POST/PUT/PATCH/DELETE qua call_api_write) luôn cần người
+        // phê duyệt — cùng triết lý DbWrite: side-effect ra hệ thống ngoài phải có người
+        // vet payload trước. Bản GET/HEAD ("CallApi") thì như FetchWeb: chỉ đọc, không gate.
+        "CallApiWrite"
         // NOTE: "FetchWeb" is deliberately NOT here. Unlike BrowseWeb it launches no
         // container and executes no page scripts — it is a read-only, egress-gated
         // HTTP GET + content extraction (LM-Kit WebReadTool behind a public-web-only
@@ -101,6 +107,9 @@ public class ToolPermissionService : IToolPermissionService
         ["FetchWeb"] = 10,
         ["DbQuery"] = 10,
         ["DbWrite"] = 3,
+        // Generic REST: read mirrors FetchWeb; write mirrors DbWrite (đắt + side-effect).
+        ["CallApi"] = 10,
+        ["CallApiWrite"] = 3,
         ["ReadWordDocument"] = 15,
         ["ReadExcelDocument"] = 15,
         // Native document tools: reads are cheap; fill/redact derive a new file, so a

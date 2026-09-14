@@ -284,6 +284,22 @@ builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Web.WebReadOptions>(bu
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.IWebPageReader, LmKitOmniApi.Infrastructure.AI.Web.LmKitWebPageReader>();
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.IWebReadService, LmKitOmniApi.Infrastructure.AI.Web.LmKitWebReadService>();
 
+// Generic REST tool call_api / call_api_write (disabled by default — see ApiCallOptions,
+// bound from "ApiTool"). The named HttpClient never auto-redirects and re-vets every
+// resolved address AT CONNECT TIME with the same classifier as URL validation
+// (SsrfSafeConnect) — a rebinding API host is refused at the socket. Writes map to the
+// approval-required "CallApiWrite" permission, so they are always human-gated.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Web.ApiCallOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Web.ApiCallOptions.SectionName));
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.ApiCallService>();
+builder.Services.AddHttpClient(LmKitOmniApi.Infrastructure.AI.Web.ApiCallService.HttpClientName, client =>
+{
+    client.Timeout = Timeout.InfiniteTimeSpan; // per-call budget lives in the service's linked CTS
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+    ConnectCallback = SsrfSafeConnect.CreateVettedConnectCallback()
+});
+
 // Native document tools (disabled by default — see DocumentToolsOptions). Options bound
 // from "DocumentTools". Pure LM-Kit.NET document APIs (PdfForm / PdfRedactor /
 // OfficeRedactor / PdfAValidator) — no model, no network, no container — so the only

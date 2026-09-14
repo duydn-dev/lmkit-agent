@@ -48,7 +48,7 @@ public sealed class McpOAuthAuthorizationCodeApiTests : IClassFixture<LmKitApiFa
         Assert.DoesNotContain("super-secret-authcode", rawBody);
         Assert.DoesNotContain("Protected", rawBody, StringComparison.OrdinalIgnoreCase);
 
-        var list = JsonSerializer.Deserialize<JsonElement[]>(rawBody)!;
+        var list = PagedJson.Items(rawBody);
         var entry = Assert.Single(list, e => e.GetProperty("name").GetString() == name);
         Assert.Equal("AuthorizationCode", entry.GetProperty("authMode").GetString());
         Assert.True(entry.GetProperty("hasOAuthSecret").GetBoolean());

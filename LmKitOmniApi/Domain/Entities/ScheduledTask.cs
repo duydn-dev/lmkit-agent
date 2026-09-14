@@ -23,6 +23,14 @@ public sealed class ScheduledTask
 
     public string Prompt { get; set; } = string.Empty;
 
+    /// <summary>
+    /// "completion" (mặc định — một lượt suy luận, không tool) | "agent" (chạy
+    /// Automation Agent đầy đủ: ReAct + tool đọc CSDL đã index, web, tri thức…
+    /// qua đúng pipeline AgentRun nên bước chạy được lưu và HITL vẫn áp dụng).
+    /// </summary>
+    [MaxLength(20)]
+    public string RunMode { get; set; } = "completion";
+
     /// <summary>"interval" | "daily" | "weekly".</summary>
     [MaxLength(20)]
     public string ScheduleKind { get; set; } = "daily";

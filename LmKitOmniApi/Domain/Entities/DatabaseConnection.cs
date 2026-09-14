@@ -20,7 +20,12 @@ public sealed class DatabaseConnection
     [Key]
     public Guid Id { get; set; } = Guid.NewGuid();
 
-    public Guid TenantId { get; set; }
+    /// <summary>
+    /// Tenant sở hữu kết nối. NULL = kết nối "toàn hệ thống": mọi tenant đều
+    /// thấy và dùng được (agent resolve gộp cả hàng null), admin nào cũng quản
+    /// trị được. Collection Qdrant của hàng null dùng segment "global".
+    /// </summary>
+    public Guid? TenantId { get; set; }
 
     /// <summary>Owner. Connections are managed by tenant admins but attributed to a user.</summary>
     public Guid UserId { get; set; }

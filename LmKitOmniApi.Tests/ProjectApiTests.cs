@@ -63,7 +63,7 @@ public sealed class ProjectApiTests : IClassFixture<LmKitApiFactory>
         Assert.Equal(JsonValueKind.Null, minimalBody.GetProperty("instructions").ValueKind);
 
         // The list contains both, newest first (the later create precedes the earlier).
-        var list = await client.GetFromJsonAsync<JsonElement[]>("/api/projects");
+        var list = await PagedJson.ItemsAsync(client, "/api/projects");
         var first = Assert.Single(list!, e => e.GetProperty("id").GetGuid() == projectId);
         Assert.Equal(0, first.GetProperty("sessionCount").GetInt32());
         var olderIndex = Array.FindIndex(list!, e => e.GetProperty("id").GetGuid() == projectId);
@@ -112,7 +112,7 @@ public sealed class ProjectApiTests : IClassFixture<LmKitApiFactory>
         Assert.Contains(unfiltered!, e => e.GetProperty("id").GetGuid() == plainSessionId);
 
         // The project list now reports one session for the project.
-        var projects = await client.GetFromJsonAsync<JsonElement[]>("/api/projects");
+        var projects = await PagedJson.ItemsAsync(client, "/api/projects");
         var entry = Assert.Single(projects!, e => e.GetProperty("id").GetGuid() == projectId);
         Assert.Equal(1, entry.GetProperty("sessionCount").GetInt32());
 
@@ -146,7 +146,7 @@ public sealed class ProjectApiTests : IClassFixture<LmKitApiFactory>
         });
         Assert.Equal(HttpStatusCode.NoContent, update.StatusCode);
 
-        var list = await client.GetFromJsonAsync<JsonElement[]>("/api/projects");
+        var list = await PagedJson.ItemsAsync(client, "/api/projects");
         var entry = Assert.Single(list!, e => e.GetProperty("id").GetGuid() == projectId);
         Assert.Equal("Sau khi sửa", entry.GetProperty("name").GetString());
         Assert.Equal("Hướng dẫn mới", entry.GetProperty("instructions").GetString());
@@ -167,7 +167,7 @@ public sealed class ProjectApiTests : IClassFixture<LmKitApiFactory>
         var foreignPut = await stranger.PutAsJsonAsync($"/api/projects/{projectId}", new { name = "Chiếm quyền" });
         var foreignDelete = await stranger.DeleteAsync($"/api/projects/{projectId}");
         var foreignSessions = await stranger.GetAsync($"/api/projects/{projectId}/sessions");
-        var foreignList = await stranger.GetFromJsonAsync<JsonElement[]>("/api/projects");
+        var foreignList = await PagedJson.ItemsAsync(stranger, "/api/projects");
 
         Assert.Equal(HttpStatusCode.NotFound, foreignPut.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, foreignDelete.StatusCode);
@@ -181,7 +181,7 @@ public sealed class ProjectApiTests : IClassFixture<LmKitApiFactory>
         Assert.Equal("Dự án không tồn tại hoặc bạn không có quyền dùng", await ReadMessageAsync(foreignBind));
 
         // The failed foreign PUT changed nothing for the owner.
-        var ownerList = await owner.GetFromJsonAsync<JsonElement[]>("/api/projects");
+        var ownerList = await PagedJson.ItemsAsync(owner, "/api/projects");
         var entry = Assert.Single(ownerList!, e => e.GetProperty("id").GetGuid() == projectId);
         Assert.Equal("Riêng tư", entry.GetProperty("name").GetString());
 
@@ -210,7 +210,7 @@ public sealed class ProjectApiTests : IClassFixture<LmKitApiFactory>
         Assert.Equal(JsonValueKind.Null, survivor.GetProperty("projectId").ValueKind);
 
         // The project itself is gone everywhere.
-        var list = await client.GetFromJsonAsync<JsonElement[]>("/api/projects");
+        var list = await PagedJson.ItemsAsync(client, "/api/projects");
         Assert.DoesNotContain(list!, e => e.GetProperty("id").GetGuid() == projectId);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/projects/{projectId}/sessions")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync($"/api/projects/{projectId}")).StatusCode);
@@ -252,7 +252,7 @@ public sealed class ProjectApiTests : IClassFixture<LmKitApiFactory>
         // owner-side projects the rest of the class creates.
         var stranger = await CreateOtherTenantClientAsync();
 
-        var existing = await stranger.GetFromJsonAsync<JsonElement[]>("/api/projects");
+        var existing = await PagedJson.ItemsAsync(stranger, "/api/projects");
         for (var i = existing!.Length; i < 20; i++)
         {
             var fill = await stranger.PostAsJsonAsync("/api/projects", new { name = $"Dự án {i}" });

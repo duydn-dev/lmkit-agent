@@ -85,6 +85,7 @@ public sealed class AgentActionDispatcher
     private readonly McpClientService _mcpClient;
     private readonly LmModelManager _modelManager;
     private readonly PromptTemplateEngine _promptTemplate;
+    private readonly LmKitOmniApi.Infrastructure.AI.Web.ApiCallService _apiCall;
     private readonly LmKitOmniApi.Infrastructure.AI.Documents.IPdfFormService _pdfForm;
     private readonly LmKitOmniApi.Infrastructure.AI.Documents.IDocumentRedactionService _documentRedaction;
     private readonly ILogger _logger;
@@ -98,6 +99,7 @@ public sealed class AgentActionDispatcher
         IPythonCodeExecutor pythonExecutor,
         IBrowserFetchExecutor browserExecutor,
         IWebReadService webRead,
+        LmKitOmniApi.Infrastructure.AI.Web.ApiCallService apiCall,
         LmKitOmniApi.Infrastructure.AI.Database.DbQueryService dbQuery,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
@@ -116,6 +118,7 @@ public sealed class AgentActionDispatcher
         _pythonExecutor = pythonExecutor;
         _browserExecutor = browserExecutor;
         _webRead = webRead;
+        _apiCall = apiCall;
         _dbQuery = dbQuery;
         _resources = resources;
         _multiAgent = multiAgent;
@@ -196,6 +199,13 @@ public sealed class AgentActionDispatcher
                 return await ExecuteFetchWebAsync(tenantId, userId, query, ct);
 
             // ── External database agent (read-only) ──
+            case "CALL_API":
+                return await ExecuteCallApiAsync(tenantId, userId, query, allowWrite: false, ct);
+            case "CALL_API_WRITE":
+                // Reached ONLY on the approved-resume path (CallApiWrite is approval-
+                // required, so the first call returns [HITL_APPROVAL_REQUIRED] upstream).
+                return await ExecuteCallApiAsync(tenantId, userId, query, allowWrite: true, ct);
+
             case "DBSCHEMA":
                 return await ExecuteDbSchemaAsync(tenantId, userId, query, ct);
             case "DBQUERY":
@@ -649,6 +659,16 @@ public sealed class AgentActionDispatcher
         // data; the orchestrator's audit layer still records the action + duration.
         var result = await _dbQuery.RunQueryAsync(tenantId, query, ct);
         await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "DbQuery", null, ct);
+        return result;
+    }
+
+    private async Task<string> ExecuteCallApiAsync(
+        Guid tenantId, Guid? userId, string query, bool allowWrite, CancellationToken ct)
+    {
+        _logger.LogInformation("🌐 Executing {Kind} REST call...", allowWrite ? "APPROVED write" : "read-only");
+        var result = await _apiCall.ExecuteAsync(query, allowWrite, ct);
+        await _toolPermission.RecordToolInvocationAsync(
+            tenantId, userId, allowWrite ? "CallApiWrite" : "CallApi", null, ct);
         return result;
     }
 

@@ -14,6 +14,18 @@ public sealed class SaveDatabaseConnectionRequest
     public bool AllowWrites { get; set; }
     /// <summary>On update, true means the supplied ConnectionString replaces the stored secret.</summary>
     public bool ReplaceConnectionString { get; set; }
+
+    /// <summary>
+    /// Gán kết nối cho tenant nào. Ba trạng thái, tránh nhập nhằng "không gửi"
+    /// với "gửi null": <see cref="IsGlobal"/> = true → kết nối toàn hệ thống
+    /// (TenantId null, mọi tenant dùng chung); ngược lại <see cref="TenantId"/>
+    /// có giá trị → gán tenant đó (phải tồn tại); cả hai trống → create gán
+    /// tenant của admin đang thao tác, update giữ nguyên gán hiện tại.
+    /// </summary>
+    public bool IsGlobal { get; set; }
+
+    /// <inheritdoc cref="IsGlobal"/>
+    public Guid? TenantId { get; set; }
 }
 
 public sealed class CreateDatabaseConnectionCommand : IRequest<DatabaseConnectionResult>

@@ -3,9 +3,12 @@ using MediatR;
 
 namespace LmKitOmniApi.Application.McpServers.Queries;
 
-public class ListMcpServersQuery : IRequest<List<McpServerSummaryDto>>
+public class ListMcpServersQuery : IRequest<Common.PagedResult<McpServerSummaryDto>>
 {
     public Guid TenantId { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = Common.Paging.DefaultPageSize;
+    public string? Search { get; set; }
 }
 
 /// <summary>

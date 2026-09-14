@@ -3,10 +3,11 @@ using LmKitOmniApi.Application.Schedules.Queries;
 using LmKitOmniApi.Infrastructure.Data;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using LmKitOmniApi.Application.Common;
 
 namespace LmKitOmniApi.Application.Schedules.Handlers;
 
-public class ListScheduledTasksQueryHandler : IRequestHandler<ListScheduledTasksQuery, List<ScheduledTaskDto>>
+public class ListScheduledTasksQueryHandler : IRequestHandler<ListScheduledTasksQuery, Common.PagedResult<ScheduledTaskDto>>
 {
     private readonly HermesDbContext _db;
 
@@ -15,17 +16,27 @@ public class ListScheduledTasksQueryHandler : IRequestHandler<ListScheduledTasks
         _db = db;
     }
 
-    public async Task<List<ScheduledTaskDto>> Handle(ListScheduledTasksQuery request, CancellationToken cancellationToken)
+    public async Task<Common.PagedResult<ScheduledTaskDto>> Handle(ListScheduledTasksQuery request, CancellationToken cancellationToken)
     {
-        return await _db.ScheduledTasks
+        var query = _db.ScheduledTasks
             .AsNoTracking()
-            .Where(task => task.TenantId == request.TenantId && task.UserId == request.UserId)
+            .Where(task => task.TenantId == request.TenantId && task.UserId == request.UserId);
+
+        var search = request.Search?.Trim();
+        if (!string.IsNullOrEmpty(search))
+        {
+            var pattern = $"%{search}%";
+            query = query.Where(task => EF.Functions.Like(task.Name, pattern) || EF.Functions.Like(task.Prompt, pattern));
+        }
+
+        return await query
             .OrderByDescending(task => task.CreatedAtUtc)
             .Select(task => new ScheduledTaskDto
             {
                 Id = task.Id,
                 Name = task.Name,
                 Prompt = task.Prompt,
+                RunMode = task.RunMode,
                 ScheduleKind = task.ScheduleKind,
                 IntervalMinutes = task.IntervalMinutes,
                 TimeOfDayMinutes = task.TimeOfDayMinutes,
@@ -36,6 +47,6 @@ public class ListScheduledTasksQueryHandler : IRequestHandler<ListScheduledTasks
                 LastStatus = task.LastStatus,
                 LastError = task.LastError
             })
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(request.Page, request.PageSize, cancellationToken);
     }
 }

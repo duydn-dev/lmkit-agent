@@ -64,7 +64,7 @@ public sealed class DbQueryService
         if (MongoDatabaseService.Handles(connection.Provider))
             return await _mongo.GetSchemaAsync(connection.Name, _protector.Unprotect(connection.ConnectionStringProtected), ct);
 
-        var context = await _schema.RetrieveContextAsync(tenantId, connection.Id, question, SchemaTopK, ct);
+        var context = await _schema.RetrieveContextAsync(connection.TenantId, connection.Id, question, SchemaTopK, ct);
         if (string.IsNullOrWhiteSpace(context))
             return $"[CSDL] Chưa lấy được schema cho '{connection.Name}'. Hãy lập chỉ mục lại kết nối rồi thử lại.";
 
@@ -204,7 +204,7 @@ public sealed class DbQueryService
     private async Task<ConnectionResolution> ResolveConnectionAsync(Guid tenantId, string? nameHint, CancellationToken ct)
     {
         var connections = await _dbContext.DatabaseConnections
-            .Where(c => c.TenantId == tenantId && c.IsActive && c.IsIndexed)
+            .Where(c => (c.TenantId == tenantId || c.TenantId == null) && c.IsActive && c.IsIndexed)
             .OrderBy(c => c.Name)
             .ToListAsync(ct);
 

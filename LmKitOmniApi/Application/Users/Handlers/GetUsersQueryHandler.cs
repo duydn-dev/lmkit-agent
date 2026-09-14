@@ -2,10 +2,11 @@ using LmKitOmniApi.Application.Users.Queries;
 using LmKitOmniApi.Infrastructure.Data;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using LmKitOmniApi.Application.Common;
 
 namespace LmKitOmniApi.Application.Users.Handlers;
 
-public class GetUsersQueryHandler : IRequestHandler<GetUsersQuery, List<UserSummaryDto>>
+public class GetUsersQueryHandler : IRequestHandler<GetUsersQuery, Common.PagedResult<UserSummaryDto>>
 {
     private readonly HermesDbContext _dbContext;
 
@@ -14,10 +15,20 @@ public class GetUsersQueryHandler : IRequestHandler<GetUsersQuery, List<UserSumm
         _dbContext = dbContext;
     }
 
-    public async Task<List<UserSummaryDto>> Handle(GetUsersQuery request, CancellationToken cancellationToken)
+    public async Task<Common.PagedResult<UserSummaryDto>> Handle(GetUsersQuery request, CancellationToken cancellationToken)
     {
-        return await _dbContext.Users
-            .Where(user => user.TenantId == request.TenantId)
+        var query = _dbContext.Users
+            .Where(user => user.TenantId == request.TenantId);
+
+        var search = request.Search?.Trim();
+        if (!string.IsNullOrEmpty(search))
+        {
+            var pattern = $"%{search}%";
+            query = query.Where(u => EF.Functions.Like(u.Email, pattern) || EF.Functions.Like(u.FullName, pattern));
+        }
+
+        return await query
+            .OrderByDescending(u => u.CreatedAt)
             .Select(u => new UserSummaryDto
             {
                 Id = u.Id,
@@ -31,7 +42,6 @@ public class GetUsersQueryHandler : IRequestHandler<GetUsersQuery, List<UserSumm
                 LockoutEnd = u.LockoutEnd,
                 TenantId = u.TenantId
             })
-            .OrderByDescending(u => u.CreatedAt)
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(request.Page, request.PageSize, cancellationToken);
     }
 }

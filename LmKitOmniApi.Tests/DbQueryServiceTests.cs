@@ -218,7 +218,7 @@ public sealed class DbQueryServiceTests : IDisposable
 
     private sealed class FakeSchemaRetriever : ISchemaRetriever
     {
-        public Task<string> RetrieveContextAsync(Guid tenantId, Guid connectionId, string nlQuery, int topK, CancellationToken ct) =>
+        public Task<string> RetrieveContextAsync(Guid? tenantId, Guid connectionId, string nlQuery, int topK, CancellationToken ct) =>
             Task.FromResult($"SCHEMA_CONTEXT_FOR: {nlQuery}\nTable: t\n- id integer PRIMARY KEY\n- name text");
     }
 }

@@ -52,7 +52,7 @@ public sealed class McpServerOAuthApiTests : IClassFixture<LmKitApiFactory>
         Assert.DoesNotContain("super-secret-value", rawBody);
         Assert.DoesNotContain("Protected", rawBody, StringComparison.OrdinalIgnoreCase);
 
-        var list = JsonSerializer.Deserialize<JsonElement[]>(rawBody)!;
+        var list = PagedJson.Items(rawBody);
         var entry = Assert.Single(list, e => e.GetProperty("name").GetString() == name);
         Assert.Equal("ClientCredentials", entry.GetProperty("authMode").GetString());
         Assert.True(entry.GetProperty("hasOAuthSecret").GetBoolean());
@@ -124,7 +124,7 @@ public sealed class McpServerOAuthApiTests : IClassFixture<LmKitApiFactory>
         });
         Assert.Equal(HttpStatusCode.NoContent, update.StatusCode);
 
-        var list = await client.GetFromJsonAsync<JsonElement[]>("/api/mcp-servers");
+        var list = await PagedJson.ItemsAsync(client, "/api/mcp-servers");
         var entry = list!.Single(e => e.GetProperty("name").GetString() == name);
         Assert.Equal("Static", entry.GetProperty("authMode").GetString());
         Assert.False(entry.GetProperty("hasOAuthSecret").GetBoolean());
