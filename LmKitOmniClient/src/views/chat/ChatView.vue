@@ -138,7 +138,7 @@
               <button v-if="msg.webUrls && msg.webUrls.length > 0" type="button" class="mb-3 min-h-11 flex items-center gap-2 cursor-pointer group/chip w-max" @click="openDrawer(msg.webUrls)">
                 <div class="bg-blue-50 hover:bg-blue-100 text-gray-700 border border-gray-200 px-3 py-1.5 rounded-full flex items-center gap-2 transition-colors shadow-sm inline-flex">
                   <i class="pi pi-search text-xs"></i>
-                  <span class="text-sm font-medium">Read {{ msg.webUrls.length }} web pages</span>
+                  <span class="text-sm font-medium">Đã đọc {{ msg.webUrls.length }} trang web</span>
                   <div class="flex -space-x-1.5 ml-1">
                     <span v-for="(url, i) in msg.webUrls.slice(0, 3)" :key="i" class="relative w-5 h-5 rounded-full border border-gray-200 bg-white flex items-center justify-center overflow-hidden">
                       <i class="pi pi-globe text-[10px] text-blue-600"></i>

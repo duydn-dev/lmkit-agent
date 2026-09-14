@@ -29,6 +29,22 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                 scopedSessions = scopedSessions.Where(x => x.ProjectId == projectId);
             }
 
+            // Keyset pagination (?before=<iso>&limit=N): only when Limit is set —
+            // absent keeps the full-list behavior for existing callers.
+            if (request.Limit > 0)
+            {
+                if (request.Before is DateTime before)
+                {
+                    scopedSessions = scopedSessions.Where(x => x.CreatedAt < before);
+                }
+
+                return await scopedSessions
+                    .OrderByDescending(x => x.CreatedAt)
+                    .Take(request.Limit)
+                    .Select(ChatSessionProjections.ToDto)
+                    .ToListAsync(cancellationToken);
+            }
+
             var sessions = await scopedSessions
                 .OrderByDescending(x => x.CreatedAt)
                 .Select(ChatSessionProjections.ToDto)

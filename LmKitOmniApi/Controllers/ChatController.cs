@@ -295,16 +295,25 @@ public class ChatController : ApiControllerBase
 
     /// <summary>
     /// The caller's chat sessions, newest first. Optional <c>?projectId=</c>
-    /// narrows the list to the sessions of that project (exact match); omitting
-    /// it keeps the pre-existing full-list behavior unchanged.
+    /// narrows the list to the sessions of that project (exact match).
+    /// Optional keyset pagination: <c>?limit=N</c> returns at most N newest rows,
+    /// <c>?before=&lt;ISO-8601 UTC&gt;</c> returns rows strictly older than that
+    /// instant (the CreatedAt of the last row already rendered). Omitting both
+    /// keeps the pre-existing full-list behavior unchanged.
     /// </summary>
     [Authorize]
     [HttpGet("sessions")]
-    public async Task<IActionResult> GetSessions([FromQuery] Guid? projectId, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetSessions([FromQuery] Guid? projectId, [FromQuery] int? limit, [FromQuery] DateTime? before, CancellationToken cancellationToken)
     {
         if (!TryGetUserId(out var currentUserId)) return Unauthorized();
 
-        var query = new GetChatSessionsQuery { UserId = currentUserId, ProjectId = projectId };
+        var query = new GetChatSessionsQuery
+        {
+            UserId = currentUserId,
+            ProjectId = projectId,
+            Limit = Math.Clamp(limit ?? 0, 0, 100),
+            Before = before
+        };
         var result = await _mediator.Send(query, cancellationToken);
         return Ok(result);
     }

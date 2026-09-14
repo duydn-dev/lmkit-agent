@@ -37,6 +37,11 @@ export const GovPreset = definePreset(Aura, {
     }
   },
   semantic: {
+    // Font toàn cục cho mọi component PrimeVue: cùng Be Vietnam Pro với app
+    // (thay vì Inter của Aura mặc định) — hết cảnh dialog một font, app một font.
+    typography: {
+      fontFamily: "'Be Vietnam Pro', ui-sans-serif, system-ui, sans-serif"
+    },
     primary: {
       50: '{red.50}',
       100: '{red.100}',

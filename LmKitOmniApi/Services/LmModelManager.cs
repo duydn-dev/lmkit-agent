@@ -39,7 +39,44 @@ public class LmModelManager : IDisposable
     private readonly long _maxDownloadBytes;
     private readonly TimeSpan _downloadTimeout;
     private readonly string _modelsDirectory;
+    private readonly int _minContextSize;
     private readonly ILogger<LmModelManager> _logger;
+
+    /// <summary>
+    /// Default floor for a chat conversation's token window (<c>AiModels:MinContextSize</c>).
+    /// </summary>
+    /// <remarks>
+    /// LM-Kit sizes a conversation from the hardware and is free to pick far less than the model
+    /// can hold: on this machine (gemma4:e4b, 128K trained window) it picked 2048 while the
+    /// Vietnamese synthesis prompt alone claimed ~1771 of those tokens. The answering pass then
+    /// had ~270 tokens left and stopped mid-sentence — the "Đã đọc N trang web" chip rendered while
+    /// the answer was cut inside a URL. Measured after raising the floor to 4096: the same turn
+    /// finished at 973 chars with 1917 tokens still free.
+    ///
+    /// 16384 is deliberate headroom, not padding: the prompt is only the FIRST turn's occupant.
+    /// A conversation carries its history forward, so a window sized to just fit turn 1 truncates
+    /// a later turn that happens to have more history and tool evidence in front of it. Doubling
+    /// the measured-sufficient 8192 keeps several turns of slack; the cost is a larger KV cache
+    /// and a slightly slower first token, which is the right trade against half answers.
+    /// </remarks>
+    internal const int DefaultMinContextSize = 16384;
+
+    /// <summary>
+    /// Smallest floor measured to leave the answering pass room to finish on its own once the
+    /// Vietnamese system prompt is rendered (4096: the turn closed at 973 chars with 1917 tokens
+    /// still free; at 2048 it stopped inside a URL). It is a lower bound for the shipped
+    /// configuration, not the shipped value: the prompt is only the first turn's occupant.
+    /// </summary>
+    internal const int MeasuredSufficientContextSize = 4096;
+
+    /// <summary>
+    /// Lowest accepted floor. Below this the answering pass has no room left once the Vietnamese
+    /// system prompt is rendered, which is exactly the truncation this setting exists to prevent.
+    /// </summary>
+    internal const int MinAllowedContextSize = 2048;
+
+    /// <summary>Highest accepted floor; above this a 4B chat model's KV cache outgrows a dev box.</summary>
+    internal const int MaxAllowedContextSize = 131072;
 
     // LM-Kit catalog IDs are the normal configuration. The optional legacy registry is still
     // understood for compatibility with existing test/deployment overrides, but appsettings
@@ -77,6 +114,14 @@ public class LmModelManager : IDisposable
         if (timeoutMinutes is < 1 or > 180)
             throw new InvalidOperationException("AiModels:DownloadTimeoutMinutes must be between 1 and 180.");
         _downloadTimeout = TimeSpan.FromMinutes(timeoutMinutes);
+
+        // Applied here rather than per request: LM-Kit reads this floor when it SIZES a
+        // conversation's window, and sizing happens once per conversation. See
+        // ApplyMinContextSize for why the floor is what keeps answers from being cut off.
+        _minContextSize = ApplyMinContextSize(config.GetValue<int?>("MinContextSize"));
+        _logger.LogInformation(
+            "Chat conversations require a minimum context of {MinContextSize} tokens (AiModels:MinContextSize).",
+            _minContextSize);
 
         _modelsDirectory = ResolveModelsDirectory(config["ModelsDirectory"]);
         _registeredModels = ParseRegisteredModels(_modelsDirectory, config.GetSection("Models"));
@@ -319,6 +364,41 @@ public class LmModelManager : IDisposable
                 ? new LM(registered.ResolvedModelPath)
                 : new LM(new Uri(registered.ResolvedModelPath), new Uri(registered.ResolvedMmprojPath)),
             ct);
+    }
+
+    /// <summary>
+    /// Validates and applies the chat context floor, returning the value that was applied.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the constructor so the range rule and the LM-Kit call it makes are testable
+    /// without a model, a container or a host.
+    /// </remarks>
+    internal static int ApplyMinContextSize(int? configured)
+    {
+        var value = ResolveMinContextSize(configured);
+        LMKit.Global.Configuration.MinContextSize = value;
+        return value;
+    }
+
+    /// <summary>
+    /// Resolves <c>AiModels:MinContextSize</c>: the configured floor, or
+    /// <see cref="DefaultMinContextSize"/> when unset.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The configured value is outside <see cref="MinAllowedContextSize"/>..<see cref="MaxAllowedContextSize"/>.
+    /// A too-small window is refused loudly rather than accepted, because accepting it is
+    /// invisible until answers start being truncated mid-sentence.
+    /// </exception>
+    internal static int ResolveMinContextSize(int? configured)
+    {
+        if (configured is null) return DefaultMinContextSize;
+        if (configured is < MinAllowedContextSize or > MaxAllowedContextSize)
+        {
+            throw new InvalidOperationException(
+                $"AiModels:MinContextSize must be between {MinAllowedContextSize} and {MaxAllowedContextSize}; "
+                + $"a smaller window truncates answers mid-sentence once the system prompt is rendered (configured: {configured}).");
+        }
+        return configured.Value;
     }
 
     private static int GetPositiveLimit(IConfigurationSection section, string name, int fallback)

@@ -5,7 +5,7 @@
     <Toast position="top-right" />
     
     <!-- Sidebar -->
-    <aside class="w-[260px] bg-white border-r border-gray-200 flex flex-col hidden md:flex transition-all duration-300" aria-label="Thanh bên ứng dụng">
+    <aside class="w-[260px] bg-white flex flex-col hidden md:flex transition-all duration-300" aria-label="Thanh bên ứng dụng">
       <!-- Brand: dải nhận diện xanh nước biển đậm — tên đầy đủ của cơ quan
            hiển thị trên top header để reuse khoảng trống, đỡ trống trải. -->
       <div class="h-14 shrink-0 px-4 bg-[var(--color-gov-blue-dark)] flex items-center">
@@ -43,21 +43,6 @@
           </template>
         </template>
 
-        <!-- Lịch sử chat: hiện ở MỌI trang (không chỉ /chat) qua component dùng chung.
-             Mobile drawer bên dưới tái sử dụng đúng block này. -->
-        <ChatHistoryPanel
-          v-model:query="searchQuery"
-          v-model:editing-title="editingTitle"
-          :sessions="displayedSessions"
-          :loading="searchLoading"
-          :searching="isSearching"
-          :editing-session-id="editingSessionId"
-          @new="newChat"
-          @select="selectSession"
-          @start-rename="startRename"
-          @save-rename="saveRename"
-          @cancel-rename="cancelRename"
-          @delete="deleteSession" />
       </nav>
 
       <!-- User Profile -->
@@ -93,6 +78,9 @@
           <p class="text-[13px] font-medium text-blue-100 truncate" title="Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi trường quốc gia">Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi trường quốc gia</p>
         </div>
         <div class="flex items-center gap-1.5">
+          <button @click="openHistoryDrawer" class="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors cursor-pointer" aria-label="Lịch sử chat" aria-haspopup="true">
+            <i class="pi pi-history text-lg text-blue-100"></i>
+          </button>
           <div ref="notificationRoot" class="relative" @keydown.escape="closeNotifications(true)">
             <button
               ref="notificationButton"
@@ -157,6 +145,21 @@
             <i :class="item.icon + ' text-gray-400'" aria-hidden="true"></i>{{ item.label }}
           </router-link>
         </template>
+        <button @click="logout" class="min-h-10 text-left px-2.5 py-2 rounded-lg text-red-600 hover:bg-red-50 text-sm flex items-center gap-2"><i class="pi pi-sign-out text-gray-400"></i>Đăng xuất</button>
+      </nav>
+
+      <!-- Lịch sử chat: Drawer riêng của PrimeVue, mở từ nút trên header (mọi trang).
+           Không nhét vào sidebar nữa theo yêu cầu thiết kế. -->
+      <Drawer
+        v-model:visible="historyDrawerOpen"
+        header="Lịch sử chat"
+        position="left"
+        :modal="true"
+        class="!w-[300px] max-w-[85vw]"
+        :pt="{
+          header: '!border-b !border-gray-100',
+          content: '!p-3'
+        }">
         <ChatHistoryPanel
           v-model:query="searchQuery"
           v-model:editing-title="editingTitle"
@@ -164,14 +167,16 @@
           :loading="searchLoading"
           :searching="isSearching"
           :editing-session-id="editingSessionId"
-          @new="selectSessionMobileNew"
-          @select="selectSessionMobile"
+          :loading-more="loadingMore"
+          :has-more="hasMoreSessions"
+          @new="historyDrawerNew"
+          @select="historyDrawerSelect"
           @start-rename="startRename"
           @save-rename="saveRename"
           @cancel-rename="cancelRename"
-          @delete="deleteSessionMobile" />
-        <button @click="logout" class="min-h-10 text-left px-2.5 py-2 rounded-lg text-red-600 hover:bg-red-50 text-sm flex items-center gap-2"><i class="pi pi-sign-out text-gray-400"></i>Đăng xuất</button>
-      </nav>
+          @delete="historyDrawerDelete"
+          @load-more="loadMoreSessions" />
+      </Drawer>
 
       <div v-if="appError" role="alert" class="m-3 mb-0 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
         {{ appError }}
@@ -520,17 +525,19 @@ const selectSession = (id: string) => {
   router.push(`/chat?id=${id}`);
 };
 
-// Wrapper cho mobile drawer: chọn phiên/tạo mới/xóa xong thì đóng drawer.
-const selectSessionMobile = (id: string) => {
-  mobileNavOpen.value = false;
+// --- Drawer lịch sử chat (mở từ nút header) ---------------------------------
+const historyDrawerOpen = ref(false);
+const openHistoryDrawer = () => { historyDrawerOpen.value = true; };
+const historyDrawerSelect = (id: string) => {
+  historyDrawerOpen.value = false;
   selectSession(id);
 };
-const selectSessionMobileNew = () => {
-  mobileNavOpen.value = false;
+const historyDrawerNew = () => {
+  historyDrawerOpen.value = false;
   void newChat();
 };
-const deleteSessionMobile = (id: string) => {
-  mobileNavOpen.value = false;
+const historyDrawerDelete = (id: string) => {
+  historyDrawerOpen.value = false;
   deleteSession(id);
 };
 
@@ -563,15 +570,55 @@ const performDeleteSession = async (id: string) => {
   }
 };
 
+// --- Lịch sử chat: phân trang keyset + infinite scroll ----------------------
+// Lần đầu chỉ tải trang mới nhất (PAGE_SIZE phiên); cuộn tới đáy danh sách
+// mới tải trang kế bằng ?before=<CreatedAt của phiên cuối> — ổn định kể cả khi
+// có phiên mới được tạo giữa lúc cuộn.
+const PAGE_SIZE = 10;
+const chatSessionsTotalLoaded = ref(0);
+const loadingMore = ref(false);
+const hasMoreSessions = ref(false);
+
+const buildSessionsUrl = (before?: string) => {
+  const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+  if (before) params.set('before', before);
+  return `${ApiFactory.CHAT.SESSIONS}?${params.toString()}`;
+};
+
 const loadChatSessions = async () => {
   appError.value = '';
   try {
-    const response = await http.get(ApiFactory.CHAT.SESSIONS);
+    const response = await http.get(buildSessionsUrl());
     if (response.ok) {
       chatSessions.value = await response.json();
+      chatSessionsTotalLoaded.value = chatSessions.value.length;
+      hasMoreSessions.value = chatSessions.value.length === PAGE_SIZE;
     } else appError.value = await readApiError(response, 'Không thể tải lịch sử trò chuyện');
   } catch (error) {
     appError.value = errorMessage(error, 'Không thể tải lịch sử trò chuyện.');
+  }
+};
+
+/** Infinite scroll: tải trang kế bằng mốc CreatedAt của phiên cuối đã render. */
+const loadMoreSessions = async () => {
+  if (loadingMore.value || !hasMoreSessions.value || isSearching.value) return;
+  const oldest = chatSessions.value[chatSessions.value.length - 1];
+  if (!oldest) return;
+  loadingMore.value = true;
+  try {
+    const response = await http.get(buildSessionsUrl(oldest.createdAt));
+    if (response.ok) {
+      const next: ChatSession[] = await response.json();
+      const known = new Set(chatSessions.value.map((session) => session.id));
+      for (const session of next) {
+        if (!known.has(session.id)) chatSessions.value.push(session);
+      }
+      hasMoreSessions.value = next.length === PAGE_SIZE;
+    }
+  } catch (error) {
+    console.warn('[history] không thể tải thêm lịch sử', error);
+  } finally {
+    loadingMore.value = false;
   }
 };
 

@@ -5,12 +5,8 @@ import App from './App.vue'
 import PrimeVue from 'primevue/config'
 import { GovPreset } from './theme/gov-preset'
 import 'primeicons/primeicons.css'
-// Font quốc ngữ chính thức của giao diện: Be Vietnam Pro (self-host qua
-// @fontsource — không phụ thuộc CDN ngoài, đúng yêu cầu hạ tầng nội bộ).
-import '@fontsource/be-vietnam-pro/400.css'
-import '@fontsource/be-vietnam-pro/500.css'
-import '@fontsource/be-vietnam-pro/600.css'
-import '@fontsource/be-vietnam-pro/700.css'
+// Font quốc ngữ chính thức của giao diện: Be Vietnam Pro — được @import ngay
+// đầu style.css (trước Tailwind) nên mọi trang đều dùng chung một font.
 import router from './router'
 import ToastService from 'primevue/toastservice'
 import ConfirmationService from 'primevue/confirmationservice'

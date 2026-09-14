@@ -13,6 +13,20 @@ namespace LmKitOmniApi.Application.Chat.Queries
         /// the pre-existing default behavior: every session of the caller.
         /// </summary>
         public Guid? ProjectId { get; set; }
+
+        /// <summary>
+        /// Keyset pagination: only return sessions created BEFORE this UTC
+        /// timestamp (null = from the newest). Combined with Limit it powers
+        /// infinite scroll — stable under inserts because the anchor is the
+        /// CreatedAt of the last row already rendered, not a row offset.
+        /// </summary>
+        public DateTime? Before { get; set; }
+
+        /// <summary>
+        /// Page size cap. Null/0 = the pre-existing behavior: the full list
+        /// (older clients and the search endpoint are unaffected).
+        /// </summary>
+        public int Limit { get; set; }
     }
 
     public class ChatSessionDto
