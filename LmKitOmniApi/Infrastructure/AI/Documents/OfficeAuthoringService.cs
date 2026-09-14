@@ -30,8 +30,10 @@ public sealed class OfficeAuthoringOptions
     public string Engine { get; set; } = "Aspose";
 
     /// <summary>
-    /// Đường dẫn file .lic Aspose (Total/Words+Cells). KHÔNG commit vào repo —
-    /// mount/copy khi triển khai. Trống/sai → Aspose chạy chế độ đánh giá
+    /// Đường dẫn file license Aspose (Total hoặc Words+Cells), tuyệt đối hoặc tương
+    /// đối theo ContentRootPath. KHÔNG commit vào repo. Để TRỐNG thì hệ thống tự dò
+    /// thư mục quy ước <c>&lt;ContentRoot&gt;/Aspose</c> (tệp <c>*.lic</c> trước, rồi
+    /// <c>License Key.txt</c>). Không tìm thấy → Aspose chạy chế độ đánh giá
     /// (watermark) và thông điệp trả về có cảnh báo.
     /// </summary>
     public string? AsposeLicensePath { get; set; }
@@ -76,14 +78,60 @@ public sealed class OfficeAuthoringService
     private readonly OfficeAuthoringOptions _options;
     private readonly ILogger<OfficeAuthoringService> _logger;
 
+    /// <summary>
+    /// Đường dẫn license đã resolve một lần lúc khởi tạo — mọi nhánh Aspose dùng
+    /// chung. Ưu tiên <see cref="OfficeAuthoringOptions.AsposeLicensePath"/> (tuyệt
+    /// đối, hoặc tương đối theo ContentRootPath); nếu trống thì tự dò thư mục quy
+    /// ước <c>&lt;ContentRoot&gt;/Aspose</c> — lấy tệp <c>*.lic</c> đầu tiên, sau đó
+    /// tới <c>License Key.txt</c>. Null = không có license → Aspose chạy đánh giá.
+    /// </summary>
+    private readonly string? _licensePath;
+
+    /// <summary>Test seam: đường dẫn license đã resolve (null = chạy chế độ đánh giá).</summary>
+    internal string? ResolvedLicensePath => _licensePath;
+
     public OfficeAuthoringService(
         UserResourceAccessService resources,
         IOptions<OfficeAuthoringOptions> options,
+        Microsoft.Extensions.Hosting.IHostEnvironment environment,
         ILogger<OfficeAuthoringService> logger)
     {
         _resources = resources;
         _options = options.Value;
         _logger = logger;
+        _licensePath = ResolveLicensePath(environment.ContentRootPath);
+    }
+
+    /// <summary>
+    /// Xác định file license theo thứ tự ưu tiên: cấu hình tường minh trước, rồi
+    /// mới tới thư mục quy ước <c>&lt;ContentRoot&gt;/Aspose</c>. Trả null khi không
+    /// tìm thấy (caller sẽ chạy chế độ đánh giá và cảnh báo trong thông điệp).
+    /// </summary>
+    private string? ResolveLicensePath(string contentRootPath)
+    {
+        var configured = _options.AsposeLicensePath;
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            var resolved = Path.IsPathRooted(configured)
+                ? configured
+                : Path.Combine(contentRootPath, configured);
+            if (File.Exists(resolved)) return resolved;
+            _logger.LogError(
+                "📄 [Aspose] OfficeAuthoring:AsposeLicensePath trỏ tới tệp không tồn tại: {Path} — thử thư mục Aspose/.", resolved);
+        }
+
+        var asposeDir = Path.Combine(contentRootPath, "Aspose");
+        if (!Directory.Exists(asposeDir)) return null;
+
+        // *.lic là định dạng chuẩn; ưu tiên trước "License Key.txt" (thường là bản
+        // xuất text của cùng license). Sắp theo tên để chọn tất định khi có nhiều tệp.
+        var licFile = Directory.EnumerateFiles(asposeDir, "*.lic")
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        if (licFile is not null) return licFile;
+
+        var keyTxt = Path.Combine(asposeDir, "License Key.txt");
+        return File.Exists(keyTxt) ? keyTxt : null;
     }
 
     public bool IsEnabled => _options.Enabled;
@@ -117,7 +165,7 @@ public sealed class OfficeAuthoringService
 
         if (UseAspose)
         {
-            var licensed = AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+            var licensed = AsposeLicensing.EnsureApplied(_licensePath, _logger);
             try
             {
                 AsposeOfficeEngine.BuildDocx(spec, path);
@@ -158,7 +206,7 @@ public sealed class OfficeAuthoringService
 
         var safeName = SanitizeFileName(spec!.FileName, ".pdf", "tai-lieu.pdf");
         var (storedName, path) = ReserveStoredFile(tenantId, userId, ".pdf");
-        var licensed = AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+        var licensed = AsposeLicensing.EnsureApplied(_licensePath, _logger);
 
         try
         {
@@ -189,7 +237,7 @@ public sealed class OfficeAuthoringService
 
         if (UseAspose)
         {
-            var licensed = AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+            var licensed = AsposeLicensing.EnsureApplied(_licensePath, _logger);
             try
             {
                 AsposeOfficeEngine.BuildXlsx(spec, path);
@@ -226,7 +274,7 @@ public sealed class OfficeAuthoringService
         if (!spec!.HasAnyOperation)
             return ("[Tài liệu] Không có phép sửa nào — cần replacements/appendMarkdown/header/footer/pageNumbers.", null);
 
-        var licensed = AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+        var licensed = AsposeLicensing.EnsureApplied(_licensePath, _logger);
         try
         {
             var data = AsposeOfficeEngine.EditDocx(source, spec);
@@ -252,7 +300,7 @@ public sealed class OfficeAuthoringService
         if (spec!.Operations.Count == 0)
             return ("[Tài liệu] Không có phép sửa nào trong \"operations\".", null);
 
-        var licensed = AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+        var licensed = AsposeLicensing.EnsureApplied(_licensePath, _logger);
         try
         {
             var data = AsposeOfficeEngine.EditXlsx(source, spec);
@@ -274,7 +322,7 @@ public sealed class OfficeAuthoringService
     public string ReadDocxFromBytes(byte[] source)
     {
         if (AsposeGateError() is { } gate) return gate;
-        AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+        AsposeLicensing.EnsureApplied(_licensePath, _logger);
         try
         {
             var text = AsposeOfficeEngine.ExtractDocxText(source).Trim();
@@ -293,7 +341,7 @@ public sealed class OfficeAuthoringService
     public string ReadXlsxFromBytes(byte[] source, JsonElement payload)
     {
         if (AsposeGateError() is { } gate) return gate;
-        AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+        AsposeLicensing.EnsureApplied(_licensePath, _logger);
         try
         {
             var sheet = GetString(payload, "sheet");
@@ -317,7 +365,7 @@ public sealed class OfficeAuthoringService
 
         var target = (GetString(payload, "to") ?? string.Empty).Trim().TrimStart('.').ToLowerInvariant();
         var sourceExt = Path.GetExtension(sourceName).TrimStart('.').ToLowerInvariant();
-        var licensed = AsposeLicensing.EnsureApplied(_options.AsposeLicensePath, _logger);
+        var licensed = AsposeLicensing.EnsureApplied(_licensePath, _logger);
 
         // Hai tuyến: Words cho văn bản, Cells cho bảng tính — chọn theo ĐUÔI NGUỒN.
         var wordsSources = new[] { "docx", "doc", "rtf", "html", "htm", "txt", "md" };

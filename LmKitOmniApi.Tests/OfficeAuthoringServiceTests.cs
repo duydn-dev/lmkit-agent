@@ -28,7 +28,7 @@ public sealed class OfficeAuthoringServiceTests
         configure?.Invoke(options);
         var resources = new UserResourceAccessService(new ToolSandboxService(NullLogger<ToolSandboxService>.Instance));
         var service = new OfficeAuthoringService(
-            resources, Options.Create(options), NullLogger<OfficeAuthoringService>.Instance);
+            resources, Options.Create(options), new TestHostEnvironment(), NullLogger<OfficeAuthoringService>.Instance);
         return (service, resources);
     }
 
