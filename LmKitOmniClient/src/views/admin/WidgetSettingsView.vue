@@ -2,7 +2,7 @@
   <div class="flex-1 overflow-y-auto bg-gray-50 p-4 md:p-6">
     <div class="max-w-3xl mx-auto">
       <header class="mb-6 flex items-center gap-4">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-teal-600 flex items-center justify-center shadow-md shadow-cyan-500/20 flex-shrink-0">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20 flex-shrink-0">
           <i class="pi pi-objects-column text-white text-sm" aria-hidden="true"></i>
         </div>
         <div>
@@ -17,7 +17,7 @@
         <!-- Enable -->
         <section class="rounded-xl border border-gray-200 bg-white p-5">
           <label class="flex items-center gap-3">
-            <input v-model="form.isActive" type="checkbox" class="h-4 w-4 accent-teal-600" />
+            <input v-model="form.isActive" type="checkbox" class="h-4 w-4 accent-blue-600" />
             <span class="text-sm font-semibold text-gray-900">Bật widget công khai</span>
           </label>
           <p class="mt-2 text-xs text-gray-500">Khi bật, bất kỳ trang nào có khóa widget và origin khớp allowlist đều có thể trò chuyện bằng tài nguyên AI của tenant này.</p>
@@ -31,7 +31,7 @@
             id="origins"
             v-model="originsText"
             rows="4"
-            class="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-teal-400 focus:ring-1 focus:ring-teal-300"
+            class="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
             placeholder="https://example.com"
           ></textarea>
         </section>
@@ -67,7 +67,7 @@
         </section>
 
         <div class="flex items-center gap-3">
-          <button type="submit" :disabled="saving" class="rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50">
+          <button type="submit" :disabled="saving" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
             {{ saving ? 'Đang lưu…' : 'Lưu cấu hình' }}
           </button>
           <button type="button" :disabled="saving || rotating" class="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50" @click="rotateKey">

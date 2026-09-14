@@ -31,11 +31,11 @@
             </div>
             <div class="grid gap-1">
               <label for="audit-from" class="text-sm font-medium text-gray-700">Từ ngày</label>
-              <input id="audit-from" v-model="filters.fromDate" type="date" class="min-h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-sky-500 focus:ring-2 focus:ring-sky-500" />
+              <input id="audit-from" v-model="filters.fromDate" type="date" class="min-h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500" />
             </div>
             <div class="grid gap-1">
               <label for="audit-to" class="text-sm font-medium text-gray-700">Đến ngày</label>
-              <input id="audit-to" v-model="filters.toDate" type="date" class="min-h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-sky-500 focus:ring-2 focus:ring-sky-500" />
+              <input id="audit-to" v-model="filters.toDate" type="date" class="min-h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500" />
             </div>
             <div class="grid gap-1">
               <label for="audit-pagesize" class="text-sm font-medium text-gray-700">Số dòng mỗi trang</label>
@@ -43,7 +43,7 @@
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <Button type="submit" label="Lọc" icon="pi pi-filter" :loading="loading" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
+            <Button type="submit" label="Lọc" icon="pi pi-filter" :loading="loading" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950" />
             <Button type="button" label="Xóa lọc" icon="pi pi-filter-slash" outlined severity="secondary" :disabled="loading" class="!min-h-11 !px-4 !rounded-xl !text-sm" @click="resetFilters" />
           </div>
         </form>
@@ -88,7 +88,7 @@
                   <td class="px-4 py-3 text-right">
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1.5 min-h-11 px-3 rounded-lg text-sm font-medium text-sky-700 hover:bg-sky-50 transition-colors cursor-pointer"
+                      class="inline-flex items-center gap-1.5 min-h-11 px-3 rounded-lg text-sm font-medium text-blue-700 hover:bg-blue-50 transition-colors cursor-pointer"
                       :aria-label="`Xem chi tiết bản ghi ${item.action} lúc ${formatDateTime(item.createdAtUtc)}`"
                       @click="openDetail(item)"
                     >

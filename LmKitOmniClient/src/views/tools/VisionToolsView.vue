@@ -17,7 +17,7 @@
 
     <!-- Main Content -->
     <div class="flex-1 max-w-5xl mx-auto w-full px-6 py-6">
-      <div class="mb-6 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 flex items-start gap-2">
+      <div class="mb-6 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 flex items-start gap-2">
         <i class="pi pi-info-circle mt-0.5 flex-shrink-0" aria-hidden="true"></i>
         <span>Cần model VLM được cấu hình trên máy chủ để chạy suy luận.</span>
       </div>
@@ -89,8 +89,8 @@
           <!-- 1) Describe -->
           <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
             <div class="flex items-center gap-2.5 mb-1">
-              <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-50 to-sky-100 flex items-center justify-center flex-shrink-0">
-                <i class="pi pi-comment text-sky-600 text-sm" aria-hidden="true"></i>
+              <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center flex-shrink-0">
+                <i class="pi pi-comment text-blue-600 text-sm" aria-hidden="true"></i>
               </div>
               <h3 class="text-sm font-semibold text-gray-900">Mô tả ảnh</h3>
             </div>
@@ -274,7 +274,7 @@ import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 
 const PRIMARY_BTN =
-  '!min-h-11 !px-4 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800';
+  '!min-h-11 !px-4 !rounded-xl !text-sm !font-medium !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950';
 
 const ACCEPTED_TYPES = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/tiff';
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB

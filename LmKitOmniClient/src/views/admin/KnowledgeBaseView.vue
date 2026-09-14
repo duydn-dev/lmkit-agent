@@ -67,7 +67,7 @@
               icon="pi pi-cloud-upload"
               :loading="ingesting"
               :disabled="ingesting || !ingestForm.content.trim()"
-              class="!min-h-11 !px-5 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+              class="!min-h-11 !px-5 !rounded-xl !text-sm !font-medium !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
             />
           </div>
         </form>
@@ -118,7 +118,7 @@
                 icon="pi pi-search"
                 :loading="querying"
                 :disabled="querying || !queryForm.query.trim()"
-                class="!min-h-11 !px-5 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+                class="!min-h-11 !px-5 !rounded-xl !text-sm !font-medium !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
               />
             </div>
           </div>

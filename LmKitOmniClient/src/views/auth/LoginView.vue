@@ -47,7 +47,7 @@
             icon="pi pi-sign-in" 
             fluid 
             severity="info" 
-            class="mt-2 !min-h-11 !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+            class="mt-2 !min-h-11 !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
           />
         </form>
         

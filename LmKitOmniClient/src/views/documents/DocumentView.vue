@@ -18,7 +18,7 @@
             label="Tải tài liệu lên"
             icon="pi pi-cloud-upload"
             severity="info"
-            class="!px-4 !py-2.5 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800 !shadow-md !shadow-blue-500/20"
+            class="!px-4 !py-2.5 !rounded-xl !text-sm !font-medium !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950 !shadow-md !shadow-blue-500/20"
           />
         </div>
       </div>
@@ -121,7 +121,7 @@
             :style="{ animationDelay: `${index * 50}ms` }"
           >
             <!-- Top accent bar -->
-            <div class="h-1.5 w-full bg-gradient-to-r from-blue-500 via-cyan-400 to-blue-300 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+            <div class="h-1.5 w-full bg-gradient-to-r from-blue-500 via-blue-400 to-blue-300 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
             
             <div class="p-5">
               <!-- File icon -->
@@ -163,7 +163,7 @@
             </div>
 
             <!-- Hover glow effect -->
-            <div class="absolute -inset-0.5 bg-gradient-to-r from-blue-500/0 via-blue-500/5 to-cyan-500/0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 -z-10 blur-xl"></div>
+            <div class="absolute -inset-0.5 bg-gradient-to-r from-blue-500/0 via-blue-500/5 to-blue-500/0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 -z-10 blur-xl"></div>
           </div>
         </div>
       </div>
@@ -313,7 +313,7 @@
               <p class="font-medium text-gray-800 text-sm truncate">{{ selectedFile.name }}</p>
               <p class="text-xs text-gray-400 mt-0.5">{{ formatFileSize(selectedFile.size) }}</p>
               <div class="mt-2 h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
-                <div class="h-full bg-gradient-to-r from-blue-400 to-cyan-400 rounded-full w-full"></div>
+                <div class="h-full bg-gradient-to-r from-blue-400 to-blue-400 rounded-full w-full"></div>
               </div>
             </div>
             <button
@@ -333,9 +333,9 @@
 
         <!-- Uploading status: fetch() has no upload-progress events, so we show an
              honest indeterminate activity indicator rather than a fabricated percentage. -->
-        <div v-if="uploading" class="mt-5 p-4 rounded-xl bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-100">
+        <div v-if="uploading" class="mt-5 p-4 rounded-xl bg-gradient-to-r from-blue-50 to-blue-50 border border-blue-100">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-cyan-400 flex items-center justify-center">
+            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-400 flex items-center justify-center">
               <i class="pi pi-spin pi-spinner text-white text-sm"></i>
             </div>
             <div class="flex-1 min-w-0">
@@ -343,7 +343,7 @@
                 <span class="font-medium text-gray-700">Đang tải lên & xử lý...</span>
               </div>
               <div class="h-2 w-full bg-blue-100 rounded-full overflow-hidden" role="progressbar" aria-label="Đang tải tài liệu lên" aria-busy="true">
-                <div class="h-full w-2/5 bg-gradient-to-r from-blue-400 to-cyan-400 rounded-full doc-upload-indeterminate"></div>
+                <div class="h-full w-2/5 bg-gradient-to-r from-blue-400 to-blue-400 rounded-full doc-upload-indeterminate"></div>
               </div>
               <p class="text-xs text-gray-400 mt-1.5">Đang vector hóa tài liệu để sẵn sàng cho RAG...</p>
             </div>

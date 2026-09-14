@@ -3,7 +3,7 @@
     <div class="max-w-5xl mx-auto">
       <!-- Page header -->
       <header class="mb-6 flex items-center gap-4">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-sky-600 flex items-center justify-center shadow-md shadow-cyan-500/20 flex-shrink-0">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20 flex-shrink-0">
           <i class="pi pi-server text-white text-sm" aria-hidden="true"></i>
         </div>
         <div>
@@ -92,7 +92,7 @@
               label="Thêm máy chủ"
               icon="pi pi-plus"
               :loading="creating"
-              class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+              class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
             />
           </div>
         </form>
@@ -153,7 +153,7 @@
                 <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border" :class="server.isActive ? 'bg-emerald-50 text-emerald-900 border-emerald-200' : 'bg-gray-50 text-gray-600 border-gray-200'">
                   {{ server.isActive ? 'Đang hoạt động' : 'Đã tắt' }}
                 </span>
-                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border" :class="server.hasHeaders ? 'bg-sky-50 text-sky-800 border-sky-200' : 'bg-gray-50 text-gray-600 border-gray-200'">
+                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border" :class="server.hasHeaders ? 'bg-blue-50 text-blue-800 border-blue-200' : 'bg-gray-50 text-gray-600 border-gray-200'">
                   {{ server.hasHeaders ? 'Có header bảo mật' : 'Không có header' }}
                 </span>
                 <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border" :class="server.trustReadOnlyAnnotations ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-gray-50 text-gray-600 border-gray-200'">
@@ -304,7 +304,7 @@
 
         <div class="flex items-center justify-end gap-2 pt-1">
           <Button type="button" label="Hủy" text severity="secondary" :disabled="savingEdit" class="!min-h-11 !px-4 !rounded-xl !text-sm" @click="editVisible = false" />
-          <Button type="submit" label="Lưu thay đổi" icon="pi pi-check" :loading="savingEdit" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
+          <Button type="submit" label="Lưu thay đổi" icon="pi pi-check" :loading="savingEdit" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950" />
         </div>
       </form>
     </Dialog>

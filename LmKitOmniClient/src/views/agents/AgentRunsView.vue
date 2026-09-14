@@ -79,7 +79,7 @@
                   icon="pi pi-bolt"
                   :loading="isStreaming"
                   :disabled="isStreaming || !goal.trim() || goalTooLong"
-                  class="!min-h-11 !px-5 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+                  class="!min-h-11 !px-5 !rounded-xl !text-sm !font-medium !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
                 />
               </div>
             </form>
@@ -94,23 +94,23 @@
           <section
             v-if="approvalTaskId"
             aria-labelledby="approval-heading"
-            class="rounded-2xl border border-sky-200 bg-sky-50 p-5"
+            class="rounded-2xl border border-blue-200 bg-blue-50 p-5"
           >
-            <h2 id="approval-heading" class="text-sm font-semibold text-sky-950 flex items-center gap-2">
+            <h2 id="approval-heading" class="text-sm font-semibold text-blue-950 flex items-center gap-2">
               <i class="pi pi-shield" aria-hidden="true"></i>Cần bạn phê duyệt
             </h2>
-            <p class="mt-1 text-sm text-sky-900">
+            <p class="mt-1 text-sm text-blue-900">
               Agent đã dừng ở một hành động nhạy cảm và sẽ không chạy tiếp cho tới khi bạn quyết định.
             </p>
 
-            <div v-if="approvalActionName" class="mt-3 text-xs font-semibold text-sky-900">
+            <div v-if="approvalActionName" class="mt-3 text-xs font-semibold text-blue-900">
               Hành động: {{ approvalActionName }}
             </div>
             <pre
               v-if="approvalDetails"
-              class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-sky-200 bg-white p-3 text-xs text-gray-800"
+              class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-blue-200 bg-white p-3 text-xs text-gray-800"
             >{{ approvalDetails }}</pre>
-            <p v-if="approvalExpiryLabel" class="mt-2 text-xs text-sky-800">
+            <p v-if="approvalExpiryLabel" class="mt-2 text-xs text-blue-800">
               <i class="pi pi-hourglass mr-1.5" aria-hidden="true"></i>{{ approvalExpiryLabel }}
             </p>
 
@@ -144,7 +144,7 @@
               />
               <router-link
                 to="/approvals"
-                class="inline-flex items-center min-h-11 px-2 text-sm font-semibold text-sky-900 underline underline-offset-2 hover:text-sky-950 focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
+                class="inline-flex items-center min-h-11 px-2 text-sm font-semibold text-blue-900 underline underline-offset-2 hover:text-blue-950 focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
               >
                 Mở trang phê duyệt
               </router-link>
@@ -163,7 +163,7 @@
               Yêu cầu phê duyệt này không còn xử lý được nữa. Trạng thái mới nhất của lần chạy hiển thị bên dưới.
             </p>
 
-            <p v-if="runRefreshing" role="status" class="mt-3 flex items-center gap-2 text-xs text-sky-900">
+            <p v-if="runRefreshing" role="status" class="mt-3 flex items-center gap-2 text-xs text-blue-900">
               <i class="pi pi-spin pi-spinner" aria-hidden="true"></i>Đang cập nhật lần chạy...
             </p>
           </section>
@@ -221,7 +221,7 @@
                 <ol class="grid gap-2.5">
                   <li v-for="step in detail.steps" :key="step.ordinal" class="rounded-xl border border-gray-200 bg-white p-4">
                     <div class="flex items-center gap-2.5 flex-wrap">
-                      <span class="w-6 h-6 rounded-full bg-sky-50 border border-sky-200 text-sky-700 text-xs font-semibold flex items-center justify-center flex-shrink-0" aria-hidden="true">{{ step.ordinal }}</span>
+                      <span class="w-6 h-6 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold flex items-center justify-center flex-shrink-0" aria-hidden="true">{{ step.ordinal }}</span>
                       <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-100 border border-gray-200 text-xs font-mono text-gray-700">
                         <i class="pi pi-wrench text-[10px] text-gray-400" aria-hidden="true"></i>{{ step.action || 'công cụ' }}
                       </span>
@@ -268,7 +268,7 @@
             >
               <div class="flex items-center justify-between gap-3 mb-3">
                 <h2 id="live-heading" class="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                  <i v-if="isStreaming" class="pi pi-spin pi-spinner text-sky-600" aria-hidden="true"></i>
+                  <i v-if="isStreaming" class="pi pi-spin pi-spinner text-blue-600" aria-hidden="true"></i>
                   Phiên hiện tại
                 </h2>
                 <span
@@ -296,7 +296,7 @@
                 <ol aria-live="polite" class="grid gap-2.5">
                   <li v-for="step in steps" :key="step.ordinal" class="rounded-xl border border-gray-200 bg-white p-4">
                     <div class="flex items-center gap-2.5 flex-wrap">
-                      <span class="w-6 h-6 rounded-full bg-sky-50 border border-sky-200 text-sky-700 text-xs font-semibold flex items-center justify-center flex-shrink-0" aria-hidden="true">{{ step.ordinal }}</span>
+                      <span class="w-6 h-6 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold flex items-center justify-center flex-shrink-0" aria-hidden="true">{{ step.ordinal }}</span>
                       <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-100 border border-gray-200 text-xs font-mono text-gray-700">
                         <i class="pi pi-wrench text-[10px] text-gray-400" aria-hidden="true"></i>{{ step.action || 'công cụ' }}
                       </span>
@@ -334,7 +334,7 @@
                       target="_blank"
                       rel="noopener"
                       :aria-label="`Tải ảnh ${file.name}`"
-                      class="block rounded-lg overflow-hidden focus-visible:ring-2 focus-visible:ring-sky-500"
+                      class="block rounded-lg overflow-hidden focus-visible:ring-2 focus-visible:ring-blue-500"
                     >
                       <img :src="fileUrl(file.id)" :alt="file.name" class="max-w-xs max-h-64 rounded-lg border border-gray-200 object-contain" />
                     </a>
@@ -343,7 +343,7 @@
                       :href="fileUrl(file.id)"
                       :download="file.name"
                       :aria-label="`Tải tệp ${file.name}`"
-                      class="min-h-11 flex items-center gap-2 px-3 py-1.5 rounded-xl border border-gray-200 bg-white text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors focus-visible:ring-2 focus-visible:ring-sky-500"
+                      class="min-h-11 flex items-center gap-2 px-3 py-1.5 rounded-xl border border-gray-200 bg-white text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors focus-visible:ring-2 focus-visible:ring-blue-500"
                     >
                       <i class="pi pi-file text-base text-gray-500" aria-hidden="true"></i>
                       <span class="max-w-[160px] truncate font-medium">{{ file.name }}</span>
@@ -412,8 +412,8 @@
                 @click="openRun(run.id)"
                 :aria-current="selectedRunId === run.id ? 'true' : undefined"
                 :aria-label="`Xem lần chạy: ${run.goal}`"
-                class="w-full text-left rounded-xl border bg-white p-3 transition-colors hover:border-sky-300 hover:bg-sky-50/40 focus-visible:ring-2 focus-visible:ring-sky-500"
-                :class="selectedRunId === run.id ? 'border-sky-300 bg-sky-50/60' : 'border-gray-200'"
+                class="w-full text-left rounded-xl border bg-white p-3 transition-colors hover:border-blue-300 hover:bg-blue-50/40 focus-visible:ring-2 focus-visible:ring-blue-500"
+                :class="selectedRunId === run.id ? 'border-blue-300 bg-blue-50/60' : 'border-gray-200'"
               >
                 <div class="flex items-start justify-between gap-2">
                   <span class="flex-1 min-w-0 text-sm font-medium text-gray-900 line-clamp-2">{{ run.goal }}</span>

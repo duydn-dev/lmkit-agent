@@ -22,9 +22,9 @@
           :title="canvasCount > 0 ? `Canvas (${canvasCount} phiên bản)` : 'Canvas'"
           :aria-expanded="canvasPanelOpen"
           class="relative w-9 h-9 flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors"
-          :class="canvasPanelOpen ? 'bg-sky-50 text-sky-700' : ''">
+          :class="canvasPanelOpen ? 'bg-blue-50 text-blue-700' : ''">
           <i class="pi pi-palette text-base" aria-hidden="true"></i>
-          <span v-if="canvasCount > 0" class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-sky-600 text-white text-[10px] font-semibold leading-4 flex items-center justify-center">{{ canvasCount > 9 ? '9+' : canvasCount }}</span>
+          <span v-if="canvasCount > 0" class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-blue-900 text-white text-[10px] font-semibold leading-4 flex items-center justify-center">{{ canvasCount > 9 ? '9+' : canvasCount }}</span>
         </button>
         <button
           @click="shareSession"
@@ -141,7 +141,7 @@
                   <span class="text-sm font-medium">Read {{ msg.webUrls.length }} web pages</span>
                   <div class="flex -space-x-1.5 ml-1">
                     <span v-for="(url, i) in msg.webUrls.slice(0, 3)" :key="i" class="relative w-5 h-5 rounded-full border border-gray-200 bg-white flex items-center justify-center overflow-hidden">
-                      <i class="pi pi-globe text-[10px] text-sky-600"></i>
+                      <i class="pi pi-globe text-[10px] text-blue-600"></i>
                       <img v-if="faviconUrl(url)" :src="faviconUrl(url)" alt="" loading="lazy" class="absolute inset-0 w-full h-full object-contain" @error="onFaviconError" />
                     </span>
                   </div>
@@ -255,12 +255,12 @@
           {{ chatError }}
         </div>
         <!-- Edit-last-message mode banner -->
-        <div v-if="isEditing" class="mb-2 flex items-center justify-between gap-3 rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-800">
+        <div v-if="isEditing" class="mb-2 flex items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-800">
           <span class="flex items-center gap-2 min-w-0">
             <i class="pi pi-pencil text-xs" aria-hidden="true"></i>
             <span class="truncate">Đang sửa tin nhắn cuối — gửi để thay thế cặp hỏi đáp trước.</span>
           </span>
-          <button @click="cancelEditing" class="min-h-11 px-2 flex items-center gap-1 font-medium text-sky-800 hover:text-sky-950 transition-colors flex-shrink-0" aria-label="Hủy sửa tin nhắn">
+          <button @click="cancelEditing" class="min-h-11 px-2 flex items-center gap-1 font-medium text-blue-800 hover:text-blue-950 transition-colors flex-shrink-0" aria-label="Hủy sửa tin nhắn">
             <i class="pi pi-times text-xs" aria-hidden="true"></i>
             <span>Hủy</span>
           </button>
@@ -311,7 +311,7 @@
                 :aria-pressed="webSearchEnabled"
                 aria-label="Tìm kiếm web"
                 class="min-w-10 min-h-10 px-2.5 flex items-center justify-center rounded-full border transition-colors"
-                :class="webSearchEnabled ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100' : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-100'">
+                :class="webSearchEnabled ? 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100' : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-100'">
                 <i class="pi pi-globe text-base" aria-hidden="true"></i>
               </button>
               <button
@@ -355,9 +355,8 @@
                 aria-label="Gửi tin nhắn"
                 @click="sendMessage"
                 :disabled="(!inputMessage.trim() && attachedFiles.length === 0) || isGenerating"
-                severity="info"
                 rounded
-                class="!w-11 !h-11"
+                class="!w-11 !h-11 !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
               />
             </div>
           </div>
@@ -379,11 +378,11 @@
         <a v-for="(url, index) in drawerUrls" :key="index" :href="url" target="_blank" rel="noopener noreferrer" class="block p-3 rounded-xl border border-gray-100 bg-gray-200/50 hover:bg-gray-200 hover:border-gray-300 transition-all group">
           <div class="flex items-start gap-3">
             <div class="relative w-8 h-8 rounded-lg bg-white shadow-sm flex-shrink-0 flex items-center justify-center overflow-hidden">
-                <i class="pi pi-globe text-sky-600"></i>
+                <i class="pi pi-globe text-blue-600"></i>
                 <img v-if="faviconUrl(url)" :src="faviconUrl(url)" alt="" loading="lazy" class="absolute inset-0 w-full h-full object-contain" @error="onFaviconError" />
             </div>
             <div class="flex-1 min-w-0">
-              <div class="text-sm font-medium text-gray-800 truncate group-hover:text-cyan-400 transition-colors">{{ getCleanHostname(url) }}</div>
+              <div class="text-sm font-medium text-gray-800 truncate group-hover:text-blue-600 transition-colors">{{ getCleanHostname(url) }}</div>
               <div class="text-xs text-gray-500 truncate mt-1">{{ url }}</div>
             </div>
           </div>

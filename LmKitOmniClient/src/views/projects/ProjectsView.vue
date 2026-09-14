@@ -5,7 +5,7 @@
       <div class="max-w-7xl mx-auto px-6 py-4">
         <div class="flex items-center justify-between gap-4">
           <div class="flex items-center gap-4">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center shadow-md shadow-sky-500/20">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20">
               <i class="pi pi-folder text-white text-sm"></i>
             </div>
             <div>
@@ -17,7 +17,7 @@
             @click="openCreateForm"
             label="Tạo dự án"
             icon="pi pi-plus"
-            class="!min-h-11 !px-4 !py-2.5 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+            class="!min-h-11 !px-4 !py-2.5 !rounded-xl !text-sm !font-medium !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
           />
         </div>
       </div>
@@ -48,7 +48,7 @@
         </div>
         <h3 class="text-lg font-semibold text-gray-600 mb-1">{{ list.search.value ? 'Không tìm thấy dự án phù hợp' : 'Chưa có dự án nào' }}</h3>
         <p class="text-sm text-gray-400 max-w-xs mb-4">Tạo dự án đầu tiên để nhóm các đoạn chat và áp dụng hướng dẫn chung cho trợ lý.</p>
-        <Button label="Tạo dự án" icon="pi pi-plus" @click="openCreateForm" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
+        <Button label="Tạo dự án" icon="pi pi-plus" @click="openCreateForm" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950" />
       </div>
 
       <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -65,9 +65,9 @@
               :aria-controls="`project-sessions-${project.id}`"
               class="flex items-center gap-3 min-w-0 flex-1 min-h-11 text-left rounded-xl cursor-pointer"
             >
-              <span class="w-11 h-11 rounded-xl bg-gradient-to-br from-sky-50 to-blue-100 flex items-center justify-center flex-shrink-0 text-xl" aria-hidden="true">
+              <span class="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center flex-shrink-0 text-xl" aria-hidden="true">
                 <span v-if="project.icon">{{ project.icon }}</span>
-                <i v-else class="pi pi-folder text-sky-700"></i>
+                <i v-else class="pi pi-folder text-blue-700"></i>
               </span>
               <span class="min-w-0 flex-1">
                 <span class="block text-sm font-semibold text-gray-900 truncate">{{ project.name }}</span>
@@ -101,7 +101,7 @@
           <p class="text-xs text-gray-500 leading-relaxed line-clamp-2 mt-3">{{ project.description || 'Chưa có mô tả.' }}</p>
           <span
             v-if="project.instructions"
-            class="inline-flex items-center gap-1 self-start px-2 py-0.5 rounded-full text-[11px] font-medium bg-sky-50 text-sky-800 border border-sky-200 mt-2"
+            class="inline-flex items-center gap-1 self-start px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-800 border border-blue-200 mt-2"
           >
             <i class="pi pi-book text-[10px]" aria-hidden="true"></i> Có hướng dẫn riêng
           </span>
@@ -116,7 +116,7 @@
                 :loading="chatStartingId === project.id"
                 :disabled="chatStartingId !== null"
                 @click="startChatInProject(project)"
-                class="!min-h-11 !px-3 !rounded-xl !text-xs !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+                class="!min-h-11 !px-3 !rounded-xl !text-xs !font-medium !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
               />
             </div>
 
@@ -204,7 +204,7 @@
             :label="editingId ? 'Lưu thay đổi' : 'Tạo dự án'"
             icon="pi pi-check"
             :loading="saving"
-            class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+            class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
           />
         </div>
       </form>

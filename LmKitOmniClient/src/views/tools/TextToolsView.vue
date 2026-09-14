@@ -56,8 +56,8 @@
         <section aria-labelledby="tool-analyze-heading" class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
           <div class="flex flex-wrap items-center justify-between gap-3 mb-1">
             <div class="flex items-center gap-2.5 min-w-0">
-              <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-50 to-sky-100 flex items-center justify-center flex-shrink-0">
-                <i class="pi pi-chart-bar text-sky-600 text-sm" aria-hidden="true"></i>
+              <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center flex-shrink-0">
+                <i class="pi pi-chart-bar text-blue-600 text-sm" aria-hidden="true"></i>
               </div>
               <h2 id="tool-analyze-heading" class="text-sm font-semibold text-gray-900">Phân tích tổng hợp</h2>
             </div>
@@ -95,7 +95,7 @@
                   <li
                     v-for="(entity, index) in analyzeResult.extractedEntities"
                     :key="`${entity}-${index}`"
-                    class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-sky-50 text-sky-900 border border-sky-200"
+                    class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-900 border border-blue-200"
                   >{{ entity }}</li>
                 </ul>
                 <p v-else class="text-xs text-gray-400">Không phát hiện thực thể.</p>
@@ -291,7 +291,7 @@ import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 
 const PRIMARY_BTN =
-  '!min-h-11 !px-4 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800';
+  '!min-h-11 !px-4 !rounded-xl !text-sm !font-medium !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950';
 
 const MAX_CHARS = 50000;
 const maxCharsLabel = MAX_CHARS.toLocaleString('vi-VN');
@@ -317,7 +317,7 @@ const sentimentClasses = (sentiment: string): string => {
   if (/(pos|tích cực|good|happy|vui)/.test(value)) return 'bg-emerald-50 text-emerald-900 border-emerald-200';
   if (/(neg|tiêu cực|bad|angry|sad|buồn|giận)/.test(value)) return 'bg-red-50 text-red-800 border-red-200';
   if (/(neu|trung)/.test(value)) return 'bg-gray-100 text-gray-700 border-gray-200';
-  return 'bg-sky-50 text-sky-900 border-sky-200';
+  return 'bg-blue-50 text-blue-900 border-blue-200';
 };
 
 // --- 1) Analyze -----------------------------------------------------------

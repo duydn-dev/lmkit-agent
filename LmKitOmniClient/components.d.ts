@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    Avatar: typeof import('primevue/avatar')['default']
     Button: typeof import('primevue/button')['default']
     CanvasPanel: typeof import('./src/components/canvas/CanvasPanel.vue')['default']
     Chart: typeof import('primevue/chart')['default']

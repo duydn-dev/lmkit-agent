@@ -28,7 +28,7 @@
       :class="[
         isConnected 
           ? 'bg-red-500 hover:bg-red-600 text-white' 
-          : 'bg-chatgpt-brand hover:bg-sky-600 text-white hover:scale-105'
+          : 'bg-chatgpt-brand hover:bg-blue-900 text-white hover:scale-105'
       ]"
     >
       <!-- Ripple effect when connected and speaking -->

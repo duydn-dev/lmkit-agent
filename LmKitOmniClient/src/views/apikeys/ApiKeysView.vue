@@ -17,7 +17,7 @@
             @click="openCreateForm"
             label="Tạo API key"
             icon="pi pi-plus"
-            class="!min-h-11 !px-4 !py-2.5 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+            class="!min-h-11 !px-4 !py-2.5 !rounded-xl !text-sm !font-medium !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
           />
         </div>
       </div>
@@ -46,7 +46,7 @@
             :icon="rawKeyCopied ? 'pi pi-check' : 'pi pi-copy'"
             :label="rawKeyCopied ? 'Đã sao chép' : 'Sao chép'"
             @click="copyRawKey"
-            class="!min-h-11 !rounded-xl !text-sm flex-shrink-0 !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+            class="!min-h-11 !rounded-xl !text-sm flex-shrink-0 !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
           />
           <Button
             label="Tôi đã lưu khóa"
@@ -173,7 +173,7 @@
             label="Tạo khóa"
             icon="pi pi-check"
             :loading="saving"
-            class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+            class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
           />
         </div>
       </form>

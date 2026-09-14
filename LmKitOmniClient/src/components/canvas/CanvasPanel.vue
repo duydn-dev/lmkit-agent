@@ -47,7 +47,7 @@
           <li v-for="artifact in artifacts" :key="artifact.rootId">
             <button
               @click="selectArtifact(artifact)"
-              class="w-full text-left p-3 rounded-xl border border-gray-200 bg-white hover:border-sky-300 hover:bg-sky-50/50 transition-colors"
+              class="w-full text-left p-3 rounded-xl border border-gray-200 bg-white hover:border-blue-300 hover:bg-blue-50/50 transition-colors"
               :aria-label="`Mở canvas ${artifact.title || 'không có tiêu đề'}`">
               <span class="flex items-center justify-between gap-2">
                 <span class="font-medium text-gray-800 truncate">{{ artifact.title || 'Không có tiêu đề' }}</span>
@@ -129,7 +129,7 @@
           <button
             @click="save"
             :disabled="actionBusy || isViewingOldVersion"
-            class="min-h-11 px-4 rounded-lg bg-sky-700 text-white text-sm font-medium hover:bg-sky-800 disabled:opacity-50 transition-colors">
+            class="min-h-11 px-4 rounded-lg bg-blue-900 text-white text-sm font-medium hover:bg-blue-950 disabled:opacity-50 transition-colors">
             Lưu
           </button>
           <button
@@ -203,7 +203,7 @@
           <button
             @click="submitCreate"
             :disabled="actionBusy"
-            class="min-h-11 px-4 rounded-lg bg-sky-700 text-white text-sm font-medium hover:bg-sky-800 disabled:opacity-50 transition-colors">
+            class="min-h-11 px-4 rounded-lg bg-blue-900 text-white text-sm font-medium hover:bg-blue-950 disabled:opacity-50 transition-colors">
             Tạo mới
           </button>
           <button
@@ -295,7 +295,7 @@ const kindLabel = (kind: string): string => {
 };
 
 const kindChipClass = (kind: string): string => {
-  if (kind === 'code') return 'bg-sky-50 text-sky-700 border-sky-200';
+  if (kind === 'code') return 'bg-blue-50 text-blue-700 border-blue-200';
   if (kind === 'markdown') return 'bg-violet-50 text-violet-700 border-violet-200';
   return 'bg-gray-100 text-gray-700 border-gray-200';
 };

@@ -17,7 +17,7 @@
             @click="openCreateForm"
             label="Tạo agent"
             icon="pi pi-plus"
-            class="!min-h-11 !px-4 !py-2.5 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+            class="!min-h-11 !px-4 !py-2.5 !rounded-xl !text-sm !font-medium !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
           />
         </div>
       </div>
@@ -48,7 +48,7 @@
         </div>
         <h3 class="text-lg font-semibold text-gray-600 mb-1">Chưa có agent nào</h3>
         <p class="text-sm text-gray-400 max-w-xs mb-4">Tạo agent đầu tiên với persona riêng để bắt đầu.</p>
-        <Button label="Tạo agent" icon="pi pi-plus" @click="openCreateForm" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
+        <Button label="Tạo agent" icon="pi pi-plus" @click="openCreateForm" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950" />
       </div>
 
       <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -69,7 +69,7 @@
           <p class="text-xs text-gray-500 leading-relaxed line-clamp-3 flex-1">{{ agent.description || 'Chưa có mô tả.' }}</p>
 
           <div class="flex flex-wrap items-center gap-1.5 mt-3">
-            <span v-if="agent.isOwner" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-50 text-sky-800 border border-sky-200">
+            <span v-if="agent.isOwner" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-800 border border-blue-200">
               <i class="pi pi-user text-[10px]" aria-hidden="true"></i> Của tôi
             </span>
             <span v-if="agent.isSharedWithTenant" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-900 border border-emerald-200">
@@ -90,7 +90,7 @@
               :loading="chatStartingId === agent.id"
               :disabled="chatStartingId !== null"
               @click="startChatWithAgent(agent)"
-              class="flex-1 !min-h-11 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+              class="flex-1 !min-h-11 !rounded-xl !text-sm !font-medium !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
             />
             <Button
               v-if="agent.isOwner"
@@ -214,7 +214,7 @@
 
         <div class="flex items-center justify-end gap-2 pt-1">
           <Button type="button" label="Hủy" text severity="secondary" :disabled="saving" @click="showForm = false" class="!min-h-11 !px-4 !rounded-xl !text-sm" />
-          <Button type="submit" :label="editingId ? 'Lưu thay đổi' : 'Tạo agent'" icon="pi pi-check" :loading="saving" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
+          <Button type="submit" :label="editingId ? 'Lưu thay đổi' : 'Tạo agent'" icon="pi pi-check" :loading="saving" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950" />
         </div>
       </form>
     </Dialog>

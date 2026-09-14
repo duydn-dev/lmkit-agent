@@ -13,6 +13,8 @@ export interface User {
   id: string;
   email: string;
   fullName: string;
+  /** Optional profile image; Avatar falls back to initials when absent. */
+  avatarUrl?: string;
   role: UserRole;
   tenantId: string;
 }

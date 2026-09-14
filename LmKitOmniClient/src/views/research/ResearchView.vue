@@ -4,7 +4,7 @@
     <div class="sticky top-0 z-10 bg-chatgpt-dark/80 backdrop-blur-xl border-b border-gray-200/60">
       <div class="max-w-4xl mx-auto px-6 py-4">
         <div class="flex items-center gap-4">
-          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 flex items-center justify-center shadow-md shadow-teal-500/20">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20">
             <i class="pi pi-compass text-white text-sm"></i>
           </div>
           <div>
@@ -61,7 +61,7 @@
               icon="pi pi-compass"
               :loading="isRunning"
               :disabled="isRunning || !query.trim()"
-              class="!min-h-11 !px-5 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
+              class="!min-h-11 !px-5 !rounded-xl !text-sm !font-medium !bg-blue-900 !border-blue-900 hover:!bg-blue-950 hover:!border-blue-950"
             />
           </div>
         </div>
@@ -78,13 +78,13 @@
       <!-- Live progress steps -->
       <section v-if="thinkingSteps.length > 0" class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-6" aria-label="Tiến trình nghiên cứu">
         <h2 class="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
-          <i v-if="isRunning" class="pi pi-spin pi-spinner text-sky-600" aria-hidden="true"></i>
+          <i v-if="isRunning" class="pi pi-spin pi-spinner text-blue-600" aria-hidden="true"></i>
           <i v-else class="pi pi-check-circle text-emerald-600" aria-hidden="true"></i>
           Tiến trình nghiên cứu
         </h2>
         <ol class="grid gap-2" aria-live="polite">
           <li v-for="(step, index) in thinkingSteps" :key="index" class="flex items-start gap-2.5 text-xs text-gray-600">
-            <span class="mt-0.5 w-5 h-5 rounded-full bg-sky-50 border border-sky-200 text-sky-700 text-[10px] font-semibold flex items-center justify-center flex-shrink-0" aria-hidden="true">{{ index + 1 }}</span>
+            <span class="mt-0.5 w-5 h-5 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-semibold flex items-center justify-center flex-shrink-0" aria-hidden="true">{{ index + 1 }}</span>
             <span class="leading-relaxed">{{ step }}</span>
           </li>
         </ol>
@@ -93,7 +93,7 @@
       <!-- Report -->
       <section v-if="reportContent" class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6" aria-label="Báo cáo nghiên cứu">
         <h2 class="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
-          <i class="pi pi-file-edit text-teal-600" aria-hidden="true"></i>
+          <i class="pi pi-file-edit text-blue-600" aria-hidden="true"></i>
           Báo cáo
         </h2>
         <!-- Content passes through formatSafeMessage (escape-then-format), the

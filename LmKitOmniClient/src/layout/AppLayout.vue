@@ -6,16 +6,14 @@
     
     <!-- Sidebar -->
     <aside class="w-[260px] bg-white border-r border-gray-200 flex flex-col hidden md:flex transition-all duration-300" aria-label="Thanh bên ứng dụng">
-      <!-- Brand: dải nhận diện cơ quan (khối Chính phủ — đỏ quốc kỳ, sao vàng) -->
-      <div class="px-4 py-3.5 bg-gradient-to-r from-[--color-gov-red-dark] to-[--color-gov-red] border-b-2 border-[--color-gov-yellow]">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-full bg-[--color-gov-yellow] flex items-center justify-center shadow-md flex-shrink-0 ring-2 ring-white/30">
-            <i class="pi pi-star-fill text-[--color-gov-red] text-lg" aria-hidden="true"></i>
+      <!-- Brand: dải nhận diện xanh nước biển đậm — tên đầy đủ của cơ quan
+           hiển thị trên top header để reuse khoảng trống, đỡ trống trải. -->
+      <div class="h-14 shrink-0 px-4 bg-[var(--color-gov-blue-dark)] flex items-center">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div class="w-9 h-9 rounded-full bg-white flex items-center justify-center flex-shrink-0 overflow-hidden p-0.5">
+            <img src="@/assets/quochuy.svg" alt="Quốc huy Việt Nam" class="w-full h-full object-contain" />
           </div>
-          <div class="min-w-0">
-            <div class="text-sm font-bold text-white truncate tracking-wide">CILA · AI AGENT</div>
-            <div class="text-[10.5px] text-red-100 leading-tight">Trung tâm Thông tin lưu trữ<br>Tài nguyên môi trường quốc gia</div>
-          </div>
+          <div class="text-sm font-bold text-white truncate tracking-wide">CILA · AI AGENT</div>
         </div>
       </div>
 
@@ -38,73 +36,42 @@
               :key="item.to"
               :to="item.to"
               class="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-gray-50 text-gray-600 hover:text-gray-900 text-[13px] font-medium rounded-lg transition-colors cursor-pointer group/item"
-              active-class="!bg-red-50 !text-[--color-gov-red] border-l-2 border-[--color-gov-red] -ml-[2px] pl-[12px] font-semibold">
+              active-class="!bg-blue-50 !text-[var(--color-gov-blue-dark)] border-l-2 border-[var(--color-gov-blue-dark)] -ml-[2px] pl-[12px] font-semibold">
               <i :class="item.icon + ' text-gray-400 group-hover/item:text-gray-600'" aria-hidden="true"></i>
               <span>{{ item.label }}</span>
             </router-link>
           </template>
         </template>
 
-        <!-- Lịch sử chat: chỉ hữu ích trên màn Chat — nằm trong CÙNG vùng cuộn -->
-        <div v-if="isChatRoute" class="mt-4 border-t border-gray-100 pt-1">
-          <div class="text-[10px] text-gray-400 font-semibold mb-1.5 mt-2 px-2 uppercase tracking-widest flex items-center justify-between">
-            <span>Lịch sử chat</span>
-            <button @click="newChat" class="hover:text-gray-600 transition-colors rounded-md hover:bg-gray-100 w-8 h-8 flex items-center justify-center" aria-label="Tạo phiên chat mới">
-              <i class="pi pi-plus text-xs"></i>
-            </button>
-          </div>
-          <div class="relative mb-2">
-            <i class="pi pi-search absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs" aria-hidden="true"></i>
-            <input
-              v-model="searchQuery"
-              type="search"
-              class="w-full h-9 rounded-lg border border-gray-200 bg-gray-50 pl-8 pr-3 text-xs text-gray-900 placeholder:text-gray-400 focus:border-sky-400 focus:bg-white transition-colors"
-              placeholder="Tìm kiếm..."
-              aria-label="Tìm kiếm đoạn chat" />
-          </div>
-        <div v-if="searchLoading" class="px-3 py-2 text-xs text-gray-400 italic" role="status">Đang tìm kiếm...</div>
-        <template v-else>
-          <div v-if="displayedSessions.length === 0" class="px-3 py-2 text-xs text-gray-400 italic text-center">
-            {{ isSearching ? 'Không tìm thấy.' : 'Chưa có đoạn chat.' }}
-          </div>
-          <div v-for="session in displayedSessions" :key="session.id" class="w-full flex items-center gap-2 px-3 py-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors text-xs truncate group mx-1 my-0.5">
-            <template v-if="editingSessionId === session.id">
-              <input
-                :ref="focusRenameInput"
-                v-model="editingTitle"
-                type="text"
-                class="flex-1 min-w-0 h-8 rounded-md border border-sky-400 bg-white px-2 text-xs text-gray-900"
-                :aria-label="`Tên mới cho đoạn chat ${session.title || 'mới'}`"
-                @keydown.enter.prevent="saveRename(session.id)"
-                @keydown.esc.prevent="cancelRename"
-                @blur="cancelRename" />
-            </template>
-            <template v-else>
-              <button type="button" class="flex items-center gap-2 truncate flex-1 cursor-pointer text-left min-h-8" @click="selectSession(session.id)">
-                <i class="pi pi-message text-gray-400 text-[11px]"></i>
-                <span class="truncate text-left flex-1">{{ session.title || 'Đoạn chat mới' }}</span>
-              </button>
-              <button @click.stop="startRename(session)" class="text-gray-400 hover:text-gray-700 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 w-7 h-7 rounded hover:bg-gray-200/60 transition-all flex-shrink-0 cursor-pointer flex items-center justify-center" :aria-label="`Đổi tên đoạn chat ${session.title || 'mới'}`">
-                <i class="pi pi-pencil text-[10px]"></i>
-              </button>
-              <button @click.stop="deleteSession(session.id)" class="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 w-7 h-7 rounded hover:bg-gray-200/60 transition-all flex-shrink-0 cursor-pointer flex items-center justify-center" :aria-label="`Xóa đoạn chat ${session.title || 'mới'}`">
-                <i class="pi pi-trash text-[10px]"></i>
-              </button>
-            </template>
-          </div>
-        </template>
-        </div>
+        <!-- Lịch sử chat: hiện ở MỌI trang (không chỉ /chat) qua component dùng chung.
+             Mobile drawer bên dưới tái sử dụng đúng block này. -->
+        <ChatHistoryPanel
+          v-model:query="searchQuery"
+          v-model:editing-title="editingTitle"
+          :sessions="displayedSessions"
+          :loading="searchLoading"
+          :searching="isSearching"
+          :editing-session-id="editingSessionId"
+          @new="newChat"
+          @select="selectSession"
+          @start-rename="startRename"
+          @save-rename="saveRename"
+          @cancel-rename="cancelRename"
+          @delete="deleteSession" />
       </nav>
 
       <!-- User Profile -->
       <div class="p-3 border-t border-gray-100">
         <button type="button" class="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer group" @click="openSettings" :aria-expanded="false">
-          <div class="w-8 h-8 rounded-full bg-gradient-to-br from-[--color-gov-red] to-[--color-gov-red-dark] flex items-center justify-center flex-shrink-0">
-            <span class="text-[11px] font-bold text-white">{{ userInitials }}</span>
-          </div>
-          <div class="min-w-0 flex-1">
-            <div class="text-xs font-semibold text-gray-900 truncate">{{ userName }}</div>
-            <div class="text-[10px] text-gray-400 truncate">{{ userRole }}</div>
+          <Avatar
+            :image="authStore.currentUser?.avatarUrl || undefined"
+            :label="userInitials"
+            shape="circle"
+            :aria-label="`Ảnh đại diện của ${userName}`"
+            class="!w-8 !h-8 flex-shrink-0 !bg-blue-50 !text-[var(--color-gov-blue-dark)] !font-bold" />
+          <div class="min-w-0 flex-1 text-left">
+            <div class="text-xs font-semibold text-slate-800 truncate">{{ userName }}</div>
+            <div class="text-[10px] text-slate-500 truncate">{{ userRole }}</div>
           </div>
           <div class="flex items-center gap-1">
             <i v-if="isAdmin" class="pi pi-cog text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-gray-600 text-xs" aria-hidden="true"></i>
@@ -120,9 +87,11 @@
     <main class="flex-1 flex flex-col relative bg-chatgpt-dark min-w-0">
       
       <!-- Header -->
-      <header class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-200 bg-white">
-        <button @click="mobileNavOpen = !mobileNavOpen" :aria-expanded="mobileNavOpen" aria-controls="mobile-navigation" class="w-10 h-10 md:hidden flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors" :aria-label="mobileNavOpen ? 'Đóng menu điều hướng' : 'Mở menu điều hướng'"><i class="pi pi-bars text-lg text-gray-600"></i></button>
-        <div class="flex-1"></div>
+      <header class="h-14 shrink-0 flex items-center justify-between gap-3 px-5 bg-[var(--color-gov-blue-dark)]">
+        <div class="flex items-center gap-3 min-w-0 flex-1">
+          <button @click="mobileNavOpen = !mobileNavOpen" :aria-expanded="mobileNavOpen" aria-controls="mobile-navigation" class="w-10 h-10 md:hidden flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors" :aria-label="mobileNavOpen ? 'Đóng menu điều hướng' : 'Mở menu điều hướng'"><i class="pi pi-bars text-lg text-blue-100"></i></button>
+          <p class="text-[13px] font-medium text-blue-100 truncate" title="Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi trường quốc gia">Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi trường quốc gia</p>
+        </div>
         <div class="flex items-center gap-1.5">
           <div ref="notificationRoot" class="relative" @keydown.escape="closeNotifications(true)">
             <button
@@ -132,8 +101,8 @@
               aria-haspopup="true"
               aria-controls="notification-panel"
               aria-label="Thông báo"
-              class="relative w-10 h-10 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
-              <i class="pi pi-bell text-lg text-gray-600"></i>
+              class="relative w-10 h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors cursor-pointer">
+              <i class="pi pi-bell text-lg text-blue-100"></i>
               <span v-if="unreadCount > 0" aria-hidden="true" class="absolute top-1.5 right-1.5 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
             </button>
 
@@ -143,7 +112,7 @@
                 <button
                   @click="markAllNotificationsRead"
                   :disabled="notificationsBusy || unreadCount === 0"
-                  class="px-2 py-1 text-xs font-medium text-sky-600 hover:text-sky-800 disabled:text-gray-400 disabled:cursor-not-allowed rounded-md hover:bg-gray-100 transition-colors cursor-pointer">
+                  class="px-2 py-1 text-xs font-medium text-blue-600 hover:text-blue-800 disabled:text-gray-400 disabled:cursor-not-allowed rounded-md hover:bg-gray-100 transition-colors cursor-pointer">
                   Đọc tất cả
                 </button>
               </div>
@@ -160,7 +129,7 @@
                     @click="markNotificationRead(notification)"
                     :title="notification.isRead ? undefined : 'Đánh dấu đã đọc'"
                     class="w-full min-h-11 flex items-start gap-3 px-4 py-3 text-left border-b border-gray-50 last:border-b-0 hover:bg-gray-50 transition-colors cursor-pointer">
-                    <span class="mt-1.5 w-2 h-2 rounded-full flex-shrink-0" :class="notification.isRead ? 'bg-transparent' : 'bg-sky-500'" aria-hidden="true"></span>
+                    <span class="mt-1.5 w-2 h-2 rounded-full flex-shrink-0" :class="notification.isRead ? 'bg-transparent' : 'bg-blue-600'" aria-hidden="true"></span>
                     <span class="min-w-0 flex-1">
                       <span class="block text-sm truncate" :class="notification.isRead ? 'text-gray-500' : 'font-semibold text-gray-900'">{{ notification.title }}</span>
                       <span v-if="notification.body" class="block text-xs text-gray-500 line-clamp-2 mt-0.5">{{ notification.body }}</span>
@@ -171,12 +140,12 @@
               </div>
             </div>
           </div>
-          <button @click="newChat" class="w-10 h-10 md:hidden flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors" aria-label="Tạo phiên chat mới"><i class="pi pi-plus text-lg text-gray-600"></i></button>
+          <button @click="newChat" class="w-10 h-10 md:hidden flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors" aria-label="Tạo phiên chat mới"><i class="pi pi-plus text-lg text-blue-100"></i></button>
         </div>
       </header>
 
-      <!-- Mobile Navigation -->
-      <nav v-if="mobileNavOpen" id="mobile-navigation" class="md:hidden bg-white border-b border-gray-200 p-3 grid gap-1" aria-label="Điều hướng di động">
+      <!-- Mobile Navigation: menu + lịch sử chat (component dùng chung) + đăng xuất -->
+      <nav v-if="mobileNavOpen" id="mobile-navigation" class="md:hidden bg-white border-b border-gray-200 p-3 grid gap-1 max-h-[calc(100vh-3.5rem)] overflow-y-auto" aria-label="Điều hướng di động">
         <template v-for="group in visibleNavGroups" :key="group.title">
           <div class="text-[10px] text-gray-400 font-semibold mt-2 first:mt-0 px-2 uppercase tracking-widest">{{ group.title }}</div>
           <router-link
@@ -188,6 +157,19 @@
             <i :class="item.icon + ' text-gray-400'" aria-hidden="true"></i>{{ item.label }}
           </router-link>
         </template>
+        <ChatHistoryPanel
+          v-model:query="searchQuery"
+          v-model:editing-title="editingTitle"
+          :sessions="displayedSessions"
+          :loading="searchLoading"
+          :searching="isSearching"
+          :editing-session-id="editingSessionId"
+          @new="selectSessionMobileNew"
+          @select="selectSessionMobile"
+          @start-rename="startRename"
+          @save-rename="saveRename"
+          @cancel-rename="cancelRename"
+          @delete="deleteSessionMobile" />
         <button @click="logout" class="min-h-10 text-left px-2.5 py-2 rounded-lg text-red-600 hover:bg-red-50 text-sm flex items-center gap-2"><i class="pi pi-sign-out text-gray-400"></i>Đăng xuất</button>
       </nav>
 
@@ -209,7 +191,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
@@ -223,12 +205,10 @@ interface ChatSession {
 }
 
 const router = useRouter();
-const route = useRoute();
 const confirm = useConfirm();
 const authStore = useAuthStore();
 
-/** Lịch sử chat chỉ hiện trên màn Chat — nơi duy nhất chọn phiên có ý nghĩa. */
-const isChatRoute = computed(() => route.path.startsWith('/chat'));
+/** Lịch sử chat giờ hiện ở mọi trang qua ChatHistoryPanel — isChatRoute không còn cần thiết. */
 
 // --- Nhóm menu gập/mở, lưu qua localStorage ---------------------------------
 const NAV_COLLAPSED_KEY = 'cila.nav.collapsed';
@@ -245,6 +225,8 @@ const toggleGroup = (title: string) => {
   collapsedGroups.value = next;
   try { localStorage.setItem(NAV_COLLAPSED_KEY, JSON.stringify([...next])); } catch { /* im lặng */ }
 };
+import ChatHistoryPanel from './ChatHistoryPanel.vue';
+
 const userName = computed(() => authStore.currentUser?.fullName || authStore.currentUser?.email || 'Người dùng');
 const userRole = computed(() => authStore.currentUser?.role || 'Member');
 
@@ -495,11 +477,6 @@ const cancelRename = () => {
   editingTitle.value = '';
 };
 
-/** Template function-ref: focuses the rename input as soon as it mounts. */
-const focusRenameInput = (el: unknown) => {
-  if (el instanceof HTMLInputElement && document.activeElement !== el) el.focus();
-};
-
 const saveRename = async (id: string) => {
   if (editingSessionId.value !== id) return;
   const title = editingTitle.value.trim();
@@ -541,6 +518,20 @@ const newChat = async () => {
 
 const selectSession = (id: string) => {
   router.push(`/chat?id=${id}`);
+};
+
+// Wrapper cho mobile drawer: chọn phiên/tạo mới/xóa xong thì đóng drawer.
+const selectSessionMobile = (id: string) => {
+  mobileNavOpen.value = false;
+  selectSession(id);
+};
+const selectSessionMobileNew = () => {
+  mobileNavOpen.value = false;
+  void newChat();
+};
+const deleteSessionMobile = (id: string) => {
+  mobileNavOpen.value = false;
+  deleteSession(id);
 };
 
 const deleteSession = (id: string) => {
@@ -585,7 +576,11 @@ const loadChatSessions = async () => {
 };
 
 const userInitials = computed(() => {
-  return userName.value.substring(0, 2).toUpperCase();
+  const name = userName.value.trim();
+  if (!name) return '?';
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length > 1) return parts.slice(0, 2).map((part) => Array.from(part)[0] || '').join('').toUpperCase();
+  return Array.from(parts[0])[0]?.toUpperCase() || '?';
 });
 
 onMounted(() => {

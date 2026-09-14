@@ -40,7 +40,7 @@ const META: Record<string, AgentRunStatusMeta> = {
   },
   AwaitingApproval: {
     label: 'Chờ phê duyệt',
-    classes: 'bg-sky-50 text-sky-900 border-sky-200',
+    classes: 'bg-blue-50 text-blue-900 border-blue-200',
     description: 'Agent đã dừng ở một hành động cần bạn phê duyệt trước khi thực thi.',
     terminal: false
   },

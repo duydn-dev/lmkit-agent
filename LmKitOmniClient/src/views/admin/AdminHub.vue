@@ -3,7 +3,7 @@
     <div class="max-w-6xl mx-auto">
       <!-- Page header -->
       <header class="mb-6 flex items-center gap-4">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center shadow-md shadow-sky-500/20 flex-shrink-0">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20 flex-shrink-0">
           <i class="pi pi-th-large text-white text-sm" aria-hidden="true"></i>
         </div>
         <div>
@@ -50,7 +50,7 @@
             v-for="nav in navCards"
             :key="nav.to"
             :to="nav.to"
-            class="group flex items-start gap-4 rounded-xl border border-gray-200 bg-white p-5 transition-colors hover:border-sky-300 hover:bg-sky-50/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"
+            class="group flex items-start gap-4 rounded-xl border border-gray-200 bg-white p-5 transition-colors hover:border-blue-300 hover:bg-blue-50/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
           >
             <div :class="['w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0', nav.accent]">
               <i :class="nav.icon" class="text-white text-sm" aria-hidden="true"></i>
@@ -80,21 +80,21 @@ type StatStatus = 'loading' | 'ok' | 'error';
 // Each card's count is loaded independently; a single failure shows "—" for that
 // card only (never an error banner), so the dashboard always renders.
 const statCards = [
-  { key: 'users', label: 'Người dùng', icon: 'pi pi-users', accent: 'bg-gradient-to-br from-sky-500 to-sky-600', url: '/api/users' },
+  { key: 'users', label: 'Người dùng', icon: 'pi pi-users', accent: 'bg-gradient-to-br from-blue-500 to-blue-600', url: '/api/users' },
   { key: 'documents', label: 'Tài liệu', icon: 'pi pi-file', accent: 'bg-gradient-to-br from-violet-500 to-violet-600', url: ApiFactory.DOCUMENT.BASE },
   { key: 'mcp', label: 'Máy chủ MCP', icon: 'pi pi-server', accent: 'bg-gradient-to-br from-emerald-500 to-emerald-600', url: ApiFactory.MCP.BASE },
   { key: 'pending', label: 'Chờ phê duyệt', icon: 'pi pi-check-square', accent: 'bg-gradient-to-br from-amber-500 to-orange-600', url: ApiFactory.TASK_APPROVAL.PENDING }
 ] as const satisfies ReadonlyArray<{ key: StatKey; label: string; icon: string; accent: string; url: string }>;
 
 const navCards = [
-  { to: '/admin/users', icon: 'pi pi-users', accent: 'bg-gradient-to-br from-sky-500 to-sky-600', title: 'User Management', description: 'Cấp tài khoản, phân quyền và khóa người dùng.' },
+  { to: '/admin/users', icon: 'pi pi-users', accent: 'bg-gradient-to-br from-blue-500 to-blue-600', title: 'User Management', description: 'Cấp tài khoản, phân quyền và khóa người dùng.' },
   { to: '/admin/mcp-servers', icon: 'pi pi-server', accent: 'bg-gradient-to-br from-emerald-500 to-emerald-600', title: 'MCP Servers', description: 'Kết nối và quản lý máy chủ Model Context Protocol.' },
   { to: '/admin/knowledge', icon: 'pi pi-database', accent: 'bg-gradient-to-br from-violet-500 to-violet-600', title: 'Knowledge Base', description: 'Quản lý nguồn tri thức dùng chung cho tenant.' },
   { to: '/admin/databases', icon: 'pi pi-table', accent: 'bg-gradient-to-br from-indigo-500 to-blue-600', title: 'Database Connections', description: 'Kết nối cơ sở dữ liệu ngoài để agent truy vấn và lập chỉ mục lược đồ.' },
   { to: '/admin/tenants', icon: 'pi pi-building', accent: 'bg-gradient-to-br from-rose-500 to-red-600', title: 'Tenant Management', description: 'Quản lý đơn vị/tổ chức sử dụng hệ thống.' },
   { to: '/admin/lora', icon: 'pi pi-sliders-h', accent: 'bg-gradient-to-br from-fuchsia-500 to-purple-600', title: 'LoRA Adapters', description: 'Đăng ký adapter tinh chỉnh hot-swap cho model chat.' },
   { to: '/admin/audit', icon: 'pi pi-shield', accent: 'bg-gradient-to-br from-slate-500 to-slate-600', title: 'Audit Log', description: 'Theo dõi hoạt động của agent và hệ thống.' },
-  { to: '/admin/widget', icon: 'pi pi-objects-column', accent: 'bg-gradient-to-br from-cyan-500 to-teal-600', title: 'Embed Widget', description: 'Bật widget chat công khai, cho phép origin và quản lý khóa.' },
+  { to: '/admin/widget', icon: 'pi pi-objects-column', accent: 'bg-gradient-to-br from-blue-500 to-blue-700', title: 'Embed Widget', description: 'Bật widget chat công khai, cho phép origin và quản lý khóa.' },
   { to: '/approvals', icon: 'pi pi-check-square', accent: 'bg-gradient-to-br from-amber-500 to-orange-600', title: 'HITL Approvals', description: 'Xem xét và duyệt các tác vụ đang chờ.' }
 ];
 

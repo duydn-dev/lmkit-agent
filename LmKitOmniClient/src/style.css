@@ -10,10 +10,13 @@
   --color-gov-red: #b81f33;
   --color-gov-red-dark: #7f1826;
   --color-gov-yellow: #ffcd00;
+  /* Xanh nước biển đậm: màu chrome thống nhất (sidebar brand + top header +
+     trạng thái active của menu). Dark tone giữ tương trắng AA trên nền sáng. */
+  --color-gov-blue-dark: #1e3a8a;
   --color-chatgpt-dark: #f8fafc;
   --color-chatgpt-light: #e2e8f0;
   --color-chatgpt-text: #111827;
-  --color-chatgpt-brand: #0369a1;
+  --color-chatgpt-brand: #1e3a8a;
   --color-glass: rgba(255, 255, 255, 0.82);
   --color-glass-border: rgba(15, 23, 42, 0.12);
   --color-gray-400: #1f2937;
