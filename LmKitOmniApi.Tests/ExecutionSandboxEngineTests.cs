@@ -189,20 +189,25 @@ public class ExecutionSandboxEngineTests
     [Fact]
     public async Task ClrNamespaces_AreNotExposedToScripts()
     {
+        // Truy cập qua CHUỖI GHÉP để cố tình lách tầng quy tắc tĩnh
+        // (CodeExecutionGuard) — chứng minh ranh giới THẬT: engine không có CLR
+        // global nào, kể cả khi mã né được kiểm tra mẫu.
         var probe = await CreateEngine().ExecuteCodeSafelyAsync(
-            "(typeof System === 'undefined' && typeof importNamespace === 'undefined') ? 'no-clr' : 'clr-exposed'",
+            "(typeof globalThis['Sys'+'tem'] === 'undefined' && typeof globalThis['importName'+'space'] === 'undefined') ? 'no-clr' : 'clr-exposed'",
             "javascript");
 
         Assert.Equal("no-clr", probe);
     }
 
     [Fact]
-    public async Task ClrAccessAttempt_FailsSafely()
+    public async Task ClrAccessAttempt_IsRefusedByPolicy_BeforeTheEngineRuns()
     {
+        // Gọi thẳng System.* giờ bị TẦNG QUY TẮC chặn trước khi engine chạy —
+        // thông điệp chính sách thay cho ReferenceError khó hiểu.
         var result = await CreateEngine().ExecuteCodeSafelyAsync(
             "System.IO.File.ReadAllText('C:/windows/win.ini')", "javascript");
 
-        Assert.StartsWith("[Sandbox Error]", result);
+        Assert.StartsWith("[Sandbox Policy]", result);
     }
 
     // ─────────────────────────────────────────────

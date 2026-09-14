@@ -45,6 +45,7 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
     private readonly CodeInterpreterOptions _options;
     private readonly IProcessRunner _runner;
     private readonly UserResourceAccessService _resources;
+    private readonly IReadOnlyList<CodeExecutionGuard.GuardRule> _extraGuardRules;
     private readonly ILogger<PythonContainerExecutor> _logger;
 
     public PythonContainerExecutor(
@@ -57,6 +58,10 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
         _runner = runner;
         _resources = resources;
         _logger = logger;
+        _extraGuardRules = CodeExecutionGuard.CompileExtraRules(
+            _options.ExtraDenyPatterns,
+            (pattern, error) => _logger.LogError(error,
+                "⚠️ [Sandbox Policy] Mẫu ExtraDenyPatterns không hợp lệ và bị bỏ qua: {Pattern}", pattern));
     }
 
     /// <inheritdoc />
@@ -73,6 +78,19 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
 
         if (code.Length > _options.MaxScriptChars)
             return PythonExecutionResult.TextOnly($"[Code Interpreter] Đoạn mã vượt quá giới hạn {_options.MaxScriptChars} ký tự.");
+
+        // Tầng quy tắc tĩnh (CodeExecutionGuard): chặn TRƯỚC khi container được tạo —
+        // subprocess/os.system, đổi định danh, driver CSDL, thư viện mạng, dò bí mật.
+        // Container (--network none, nobody, cap-drop ALL, no-new-privileges, rootfs
+        // chỉ-đọc) vẫn là ranh giới thật; tầng này cho từ chối sớm + audit + giữ chính
+        // sách nếu cấu hình container về sau bị nới.
+        var violation = CodeExecutionGuard.Inspect(
+            code, GuardedCodeLanguage.Python, _extraGuardRules, out var guardReason);
+        if (violation is not null)
+        {
+            _logger.LogWarning("⛔ [Sandbox Policy] Chặn Python trước khi thực thi: {Reason}", guardReason);
+            return PythonExecutionResult.TextOnly(violation);
+        }
 
         // Per-run scratch dir under the system temp root. It is mounted rw into the
         // container as /work so the script can do file I/O during the run, and is

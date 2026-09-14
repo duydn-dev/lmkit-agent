@@ -1,5 +1,3 @@
-
-
 using Jint;
 using Jint.Constraints;
 using Jint.Native;
@@ -93,12 +91,17 @@ public class ExecutionSandboxEngine : IExecutionSandboxEngine
         """;
 
     private readonly CodeInterpreterOptions _options;
+    private readonly IReadOnlyList<CodeExecutionGuard.GuardRule> _extraGuardRules;
     private readonly ILogger<ExecutionSandboxEngine> _logger;
 
     public ExecutionSandboxEngine(IOptions<CodeInterpreterOptions> options, ILogger<ExecutionSandboxEngine> logger)
     {
         _options = options.Value;
         _logger = logger;
+        _extraGuardRules = CodeExecutionGuard.CompileExtraRules(
+            _options.ExtraDenyPatterns,
+            (pattern, error) => _logger.LogError(error,
+                "⚠️ [Sandbox Policy] Mẫu ExtraDenyPatterns không hợp lệ và bị bỏ qua: {Pattern}", pattern));
     }
 
     /// <inheritdoc />
@@ -115,6 +118,17 @@ public class ExecutionSandboxEngine : IExecutionSandboxEngine
             && !string.Equals(language, "js", StringComparison.OrdinalIgnoreCase))
         {
             return "[Sandbox Error] Chỉ hỗ trợ thực thi an toàn ngôn ngữ JavaScript (qua Jint).";
+        }
+
+        // Tầng quy tắc tĩnh (CodeExecutionGuard): từ chối sớm mã có dấu hiệu leo
+        // thang quyền hạn / gọi CLR / mạng — kèm log audit. Ranh giới thật vẫn là
+        // engine (không CLR, không I/O), đây là chính sách + khả năng truy vết.
+        var violation = CodeExecutionGuard.Inspect(
+            codeSnippet, GuardedCodeLanguage.JavaScript, _extraGuardRules, out var guardReason);
+        if (violation is not null)
+        {
+            _logger.LogWarning("⛔ [Sandbox Policy] Chặn JavaScript trước khi thực thi: {Reason}", guardReason);
+            return violation;
         }
 
         try

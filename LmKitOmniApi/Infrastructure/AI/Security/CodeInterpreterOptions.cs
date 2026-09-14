@@ -28,6 +28,15 @@ public sealed class CodeInterpreterOptions
     /// </summary>
     public bool JavaScriptEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Mẫu regex BỔ SUNG do vận hành khai báo, chặn thêm mã trước khi vào sandbox
+    /// (áp cho cả run_python lẫn run_javascript, không phân biệt hoa thường).
+    /// Các quy tắc lõi (leo thang quyền hạn, driver CSDL, mạng, dò bí mật) là
+    /// TĨNH trong <see cref="CodeExecutionGuard"/> và không tắt được từ cấu hình.
+    /// Mẫu hỏng cú pháp bị bỏ qua kèm log lỗi — xem CompileExtraRules.
+    /// </summary>
+    public List<string> ExtraDenyPatterns { get; set; } = [];
+
     /// <summary>Container image with a Python runtime, e.g. "python:3.12-alpine".</summary>
     public string Image { get; set; } = string.Empty;
 

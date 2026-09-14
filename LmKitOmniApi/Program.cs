@@ -429,6 +429,10 @@ builder.Services.AddScoped<IRagPipelineService, RagPipelineService>();
 // Đăng ký Background Worker cho RAG Bất đồng bộ
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DocumentVectorizationWorker>();
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.SchemaVectorizationWorker>();
+// Vòng đời dữ liệu Automation Agent (run/step/phiên ẩn/notification đã đọc) —
+// bound từ section "Retention"; 0 = giữ vĩnh viễn.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.Workers.RetentionOptions>(
+    builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.Workers.RetentionOptions.SectionName));
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DataRetentionWorker>();
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ModelWarmupWorker>();
 // Tier 2: user-defined recurring prompts delivered as notifications.

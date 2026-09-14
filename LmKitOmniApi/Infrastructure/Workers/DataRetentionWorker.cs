@@ -1,5 +1,6 @@
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Infrastructure.Data;
+using Microsoft.Extensions.Options;
 using Microsoft.EntityFrameworkCore;
 using LmKitOmniApi.Infrastructure.Security;
 
@@ -48,7 +49,15 @@ public sealed class DataRetentionWorker : BackgroundService
                     || (session.RevokedAtUtc != null && session.RevokedAtUtc < sessionCutoff))
                 .ExecuteDeleteAsync(ct);
             if (legacyMcpServers.Count > 0) await db.SaveChangesAsync(ct);
-            _logger.LogInformation("Retention cleanup completed; removed {SessionCount} stale sessions", deletedSessions);
+
+            // Sản phẩm phụ của Automation Agent (run/step/phiên ẩn/notification):
+            // lịch chế độ agent sinh chúng MỖI LẦN chạy nên phải có vòng đời.
+            var retention = scope.ServiceProvider.GetRequiredService<IOptions<RetentionOptions>>().Value;
+            var sweep = await AgentRunRetentionSweeper.SweepAsync(db, retention, DateTime.UtcNow, ct);
+
+            _logger.LogInformation(
+                "Retention cleanup completed; removed {SessionCount} stale sessions, {Runs} agent runs ({Steps} steps, {HiddenSessions} hidden sessions, {Messages} messages), {Notifications} read notifications",
+                deletedSessions, sweep.Runs, sweep.Steps, sweep.Sessions, sweep.Messages, sweep.Notifications);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
