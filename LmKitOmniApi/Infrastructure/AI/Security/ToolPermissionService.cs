@@ -46,6 +46,7 @@ public class ToolPermissionService : IToolPermissionService
             "ReadPdfForm", "FillPdfForm", "RedactPdf", "RedactOffice", "ValidatePdfA",
             "CallApi", "CallApiWrite", // generic REST tool — write variant is approval-required below
             "ScheduleTask", "ScheduleManage", // tạo/tắt lịch qua hội thoại — create là approval-required bên dưới
+            "AuthorDocument", // soạn file Word/Excel vào kho riêng của user — local thuần, không egress
             "Delegate", "MCP" // C3 Fix: added for action→tool mapping
         },
         ["User"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -57,6 +58,7 @@ public class ToolPermissionService : IToolPermissionService
             "ReadPdfForm", "FillPdfForm", "RedactPdf", "RedactOffice", "ValidatePdfA", // native document tools (see Admin)
             "CallApi", "CallApiWrite", // generic REST tool (see Admin)
             "ScheduleTask", "ScheduleManage", // tạo/tắt lịch qua hội thoại (see Admin)
+            "AuthorDocument", // soạn file Word/Excel (see Admin)
             "Delegate" // C3 Fix: Users can delegate but not use MCP
         },
         ["Guest"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -118,6 +120,9 @@ public class ToolPermissionService : IToolPermissionService
         ["CallApiWrite"] = 3,
         ["ScheduleTask"] = 5,
         ["ScheduleManage"] = 10,
+        // Soạn file Office: local + có trần kích thước, nhưng mỗi lần là một file mới
+        // trong kho user — giữ nhịp vừa phải.
+        ["AuthorDocument"] = 10,
         ["ReadWordDocument"] = 15,
         ["ReadExcelDocument"] = 15,
         // Native document tools: reads are cheap; fill/redact derive a new file, so a

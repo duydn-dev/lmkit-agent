@@ -62,7 +62,7 @@ public sealed class AgentRunsController : ApiControllerBase
             Goal = goal,
             TenantId = tenantId,
             UserId = userId,
-            CustomAgentId = request.CustomAgentId
+            CustomAgentId = request?.CustomAgentId
         };
         await StreamResponseAsync(_mediator.CreateStream(command, cancellationToken), cancellationToken);
     }

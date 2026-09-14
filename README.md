@@ -40,6 +40,7 @@ Mọi thứ trong mục này **bật sẵn** trừ khi ghi rõ. Danh sách chứ
 **Tools & tích hợp**
 - MCP server integration chuẩn 2026-07-28 (SDK chính thức, secrets mã hóa, SSRF/DNS guard, OAuth per-user)
 - Tool sandbox JavaScript (Jint) — bật sẵn
+- Soạn file Office ngay trong chat: agent tạo **Word (.docx)** từ markdown và **Excel (.xlsx)** từ dữ liệu bảng (ô số thật), trả về thẻ tải file trong câu trả lời — thuần OpenXML local, file nằm trong kho riêng của người dùng
 - Web search: **SearXNG self-hosted** (mặc định, không cần API key) → Brave → Tavily (đều tùy chọn, cần API key) → fallback DuckDuckGo scraping
 
 **Widget & API**

@@ -70,6 +70,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     private readonly IWebReadService _webRead;
     private readonly LmKitOmniApi.Infrastructure.AI.Web.ApiCallService _apiCall;
     private readonly LmKitOmniApi.Infrastructure.AI.Schedules.ScheduleToolService _scheduleTool;
+    private readonly LmKitOmniApi.Infrastructure.AI.Documents.OfficeAuthoringService _officeAuthoring;
     private readonly LmKitOmniApi.Infrastructure.AI.Database.DbQueryService _dbQuery;
 
     // Native document tools (PDF form read/fill + PDF/Office redaction + PDF/A validate).
@@ -191,6 +192,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["SCHEDULE_CREATE"] = "ScheduleTask",
         ["SCHEDULE_LIST"] = "ScheduleManage",
         ["SCHEDULE_CANCEL"] = "ScheduleManage",
+        ["CREATE_DOCX"] = "AuthorDocument",
+        ["CREATE_XLSX"] = "AuthorDocument",
     };
 
     // H6 path-extraction regexes moved to AgentActionDispatcher alongside the
@@ -213,6 +216,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         IWebReadService webRead,
         LmKitOmniApi.Infrastructure.AI.Web.ApiCallService apiCallService,
         LmKitOmniApi.Infrastructure.AI.Schedules.ScheduleToolService scheduleToolService,
+        LmKitOmniApi.Infrastructure.AI.Documents.OfficeAuthoringService officeAuthoringService,
         LmKitOmniApi.Infrastructure.AI.Documents.IPdfFormService pdfForm,
         LmKitOmniApi.Infrastructure.AI.Documents.IDocumentRedactionService documentRedaction,
         LmKitOmniApi.Infrastructure.AI.Lora.ILoraAdapterService loraService,
@@ -243,6 +247,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         _webRead = webRead;
         _apiCall = apiCallService;
         _scheduleTool = scheduleToolService;
+        _officeAuthoring = officeAuthoringService;
         _pdfForm = pdfForm;
         _documentRedaction = documentRedaction;
         _loraService = loraService;
@@ -272,6 +277,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             webRead,
             apiCallService,
             scheduleToolService,
+            officeAuthoringService,
             dbQueryService,
             resources,
             multiAgent,
@@ -1330,6 +1336,29 @@ public class AgentOrchestrator : IAgentOrchestrator
                 "cancel_schedule",
                 "TẮT một lịch tự động theo id (8 ký tự đầu) hoặc tên. Chỉ tắt (đảo ngược được ở màn Task Scheduler), không xóa.",
                 (q, ct) => invoke("SCHEDULE_CANCEL", q, ct)));
+        }
+
+        // Soạn file Office (create_docx / create_xlsx) — bật mặc định vì thuần local
+        // (OpenXML, không model/mạng/tiến trình ngoài), file rơi vào kho upload cô lập
+        // của người dùng và trả về chat qua [FILE:] như run_python.
+        if (_officeAuthoring.IsEnabled && ActionAllowed("CREATE_DOCX"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "create_docx",
+                "Tạo file WORD (.docx) từ nội dung và trả về cho người dùng tải ngay trong chat. "
+                    + "Payload JSON: {\"fileName\":\"bao-cao.docx\",\"title\":\"Tiêu đề\",\"markdown\":\"# Mục 1\\nNội dung **đậm**, *nghiêng*\\n- gạch đầu dòng\\n|Cột A|Cột B|\\n|1|2|\"}. "
+                    + "Hỗ trợ markdown tập con: #/##/### tiêu đề, đoạn văn, - và 1. danh sách, **đậm**/*nghiêng*, bảng |…|. "
+                    + "Dùng khi người dùng muốn KẾT QUẢ DẠNG FILE Word (báo cáo, công văn, tổng hợp bài viết…).",
+                (q, ct) => invoke("CREATE_DOCX", q, ct)));
+        }
+        if (_officeAuthoring.IsEnabled && ActionAllowed("CREATE_XLSX"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "create_xlsx",
+                "Tạo file EXCEL (.xlsx) từ dữ liệu bảng và trả về cho người dùng tải ngay trong chat. "
+                    + "Payload JSON: {\"fileName\":\"so-lieu.xlsx\",\"sheets\":[{\"name\":\"Q3\",\"headers\":[\"Chỉ tiêu\",\"Giá trị\"],\"rows\":[[\"pH\",7.2],[\"COD\",15]]}]}. "
+                    + "Số viết dạng số JSON (không bọc chuỗi) để thành ô số thật. Dùng khi người dùng muốn dữ liệu dạng bảng tính.",
+                (q, ct) => invoke("CREATE_XLSX", q, ct)));
         }
 
         // Native document tools (PDF forms + redaction + PDF/A validation). Pure LM-Kit

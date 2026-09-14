@@ -87,6 +87,7 @@ public sealed class AgentActionDispatcher
     private readonly PromptTemplateEngine _promptTemplate;
     private readonly LmKitOmniApi.Infrastructure.AI.Web.ApiCallService _apiCall;
     private readonly LmKitOmniApi.Infrastructure.AI.Schedules.ScheduleToolService _scheduleTool;
+    private readonly LmKitOmniApi.Infrastructure.AI.Documents.OfficeAuthoringService _officeAuthoring;
     private readonly LmKitOmniApi.Infrastructure.AI.Documents.IPdfFormService _pdfForm;
     private readonly LmKitOmniApi.Infrastructure.AI.Documents.IDocumentRedactionService _documentRedaction;
     private readonly ILogger _logger;
@@ -102,6 +103,7 @@ public sealed class AgentActionDispatcher
         IWebReadService webRead,
         LmKitOmniApi.Infrastructure.AI.Web.ApiCallService apiCall,
         LmKitOmniApi.Infrastructure.AI.Schedules.ScheduleToolService scheduleTool,
+        LmKitOmniApi.Infrastructure.AI.Documents.OfficeAuthoringService officeAuthoring,
         LmKitOmniApi.Infrastructure.AI.Database.DbQueryService dbQuery,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
@@ -122,6 +124,7 @@ public sealed class AgentActionDispatcher
         _webRead = webRead;
         _apiCall = apiCall;
         _scheduleTool = scheduleTool;
+        _officeAuthoring = officeAuthoring;
         _dbQuery = dbQuery;
         _resources = resources;
         _multiAgent = multiAgent;
@@ -208,6 +211,11 @@ public sealed class AgentActionDispatcher
                 // Reached ONLY on the approved-resume path (CallApiWrite is approval-
                 // required, so the first call returns [HITL_APPROVAL_REQUIRED] upstream).
                 return await ExecuteCallApiAsync(tenantId, userId, query, allowWrite: true, ct);
+
+            case "CREATE_DOCX":
+                return await ExecuteCreateOfficeAsync(tenantId, userId, query, isDocx: true, fileSink, ct);
+            case "CREATE_XLSX":
+                return await ExecuteCreateOfficeAsync(tenantId, userId, query, isDocx: false, fileSink, ct);
 
             case "SCHEDULE_CREATE":
                 // Reached ONLY on the approved-resume path (ScheduleTask is approval-
@@ -682,6 +690,21 @@ public sealed class AgentActionDispatcher
         await _toolPermission.RecordToolInvocationAsync(
             tenantId, userId, allowWrite ? "CallApiWrite" : "CallApi", null, ct);
         return result;
+    }
+
+    private async Task<string> ExecuteCreateOfficeAsync(
+        Guid tenantId, Guid? userId, string query, bool isDocx,
+        IList<LmKitOmniApi.Infrastructure.AI.Security.ProducedFile>? fileSink, CancellationToken ct)
+    {
+        if (userId is not { } ownerId)
+            return "[Tài liệu] Không xác định được người dùng — file luôn nằm trong kho riêng của một tài khoản.";
+        _logger.LogInformation("📄 Executing {Kind} authoring...", isDocx ? "docx" : "xlsx");
+        var (message, file) = isDocx
+            ? _officeAuthoring.CreateDocx(tenantId, ownerId, query)
+            : _officeAuthoring.CreateXlsx(tenantId, ownerId, query);
+        if (file is not null) fileSink?.Add(file);
+        await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "AuthorDocument", null, ct);
+        return message;
     }
 
     private async Task<string> ExecuteScheduleCreateAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)

@@ -295,6 +295,9 @@ builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Web.ScheduleWebhookOpt
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.ScheduleWebhookDeliverer>();
 // Tool lịch qua hội thoại (schedule_task / list_schedules / cancel_schedule).
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Schedules.ScheduleToolService>();
+// Soạn file Office (create_docx / create_xlsx) — thuần local, bật mặc định, có trần kích thước.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Documents.OfficeAuthoringOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Documents.OfficeAuthoringOptions.SectionName));
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Documents.OfficeAuthoringService>();
 builder.Services.AddHttpClient(LmKitOmniApi.Infrastructure.AI.Web.ScheduleWebhookDeliverer.HttpClientName, client =>
 {
     client.Timeout = Timeout.InfiniteTimeSpan; // ngân sách nằm trong CTS của deliverer
