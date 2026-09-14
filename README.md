@@ -68,8 +68,65 @@ Mọi thứ trong mục này **bật sẵn** trừ khi ghi rõ. Các chức năn
 | Chat reasoning | `ChatReasoning:Enabled` | — |
 | Text-to-speech (Piper) | `Voice:TtsEnabled` | `Voice:PiperExecutablePath` + voice model |
 | Voice room agent qua LiveKit | `Voice:LiveAgentEnabled` | LiveKit URL/key/secret **và** `Voice:AgentTenantId` + `Voice:AgentUserId` |
+| Tool gọi REST tổng quát `call_api` / `call_api_write` (SSRF 3 lớp; method ghi luôn cần phê duyệt HITL) | `ApiTool:Enabled` | tùy chọn `ApiTool:AllowedHosts` |
+| Webhook nhận kết quả lịch chạy (Task Scheduler) | `ScheduleWebhooks:Enabled` | tùy chọn `ScheduleWebhooks:AllowedHosts` |
 
 Chi tiết từng mục: [ai-agent-capabilities.md](LmKitOmniApi/docs/ai-agent-capabilities.md#chức-năng-opt-in).
+
+## Danh mục màn hình (theo sidebar)
+
+Toàn bộ màn hình của frontend, dóng đúng thứ tự và tên nhóm trên sidebar. URL là route phía FE (Vue Router, `createWebHistory`); mọi màn trừ nhóm "Màn công khai" đều yêu cầu đăng nhập, nhóm **Quản trị** yêu cầu role `Admin`.
+
+### Không gian làm việc
+
+| Màn (sidebar) | URL | Ý nghĩa · mục đích tạo ra |
+|---|---|---|
+| AI Chat | `/chat` | Màn làm việc trung tâm: chat streaming (SSE) với CILA Agent — ReAct + tool calling, đính kèm tệp, canvas, reasoning panel, chia sẻ link, lịch sử phiên (tìm kiếm/đổi tên/xóa ngay trên sidebar). Tạo ra để mọi tương tác hỏi–đáp và điều khiển agent diễn ra ở một chỗ. |
+| Projects | `/projects` | Nhóm các đoạn chat theo dự án, kèm **instructions riêng** tự áp cho mọi phiên trong dự án. Tạo ra để tách ngữ cảnh từng mảng việc thay vì một dòng hội thoại lẫn lộn. |
+| RAG Documents | `/documents` | Kho tài liệu cá nhân: upload → hàng đợi vector hóa vào Qdrant → thành nguồn RAG có citation khi chat. Tạo ra để agent trả lời dựa trên tài liệu nội bộ thay vì chỉ kiến thức model. |
+| Agent Memory | `/memory` | Xem / **xác nhận** / xóa các fact agent tự suy luận về bạn — chỉ fact đã xác nhận mới được recall vào ngữ cảnh. Tạo ra để cá nhân hóa có kiểm soát, không để agent "tự nhớ" tùy tiện. |
+| Custom Instructions | `/settings/custom-instructions` | Hướng dẫn cá nhân cấp user (xưng hô, phong cách, ràng buộc trả lời) áp cho mọi phiên chat. Tạo ra để cá nhân hóa mà không phải lặp lại yêu cầu mỗi phiên. |
+
+### AI Studio
+
+| Màn (sidebar) | URL | Ý nghĩa · mục đích tạo ra |
+|---|---|---|
+| Agent Studio | `/agents` | Tạo/sửa agent chuyên biệt kiểu Gems/GPTs: persona prompt, whitelist công cụ, tài liệu tri thức ghim, chia sẻ toàn tenant, gán LoRA adapter. Tạo ra để đóng gói "chuyên gia" dùng lại được ở Chat, Automation Agent và Task Scheduler. |
+| Content Studio | `/agents/content-creation` | Pipeline tạo nội dung nhiều bước (nghiên cứu → dàn ý → viết → kiểm tra) có UI theo dõi từng bước. Tạo ra cho bài viết/báo cáo dài cần quy trình, không ra được từ một lượt chat. |
+| Automation Agent | `/agent-mode` | Giao **một mục tiêu**, agent tự hành chuỗi bước ReAct: timeline từng tool call, kết quả cuối, chọn persona, hủy run đang đỗ, danh sách lần chạy (phân trang + tìm kiếm). Tạo ra cho tác vụ chạy-đến-xong không cần hội thoại; hành động nhạy cảm vẫn dừng chờ phê duyệt. |
+| Task Scheduler | `/schedules` | Lịch chạy prompt định kỳ (interval / hàng ngày / hàng tuần) với 2 chế độ: *completion* (một lượt, nhẹ) và *agent* (đủ tool — query CSDL đã index, tri thức, web…), kèm persona và webhook nhận kết quả. Tạo ra cho báo cáo/tác vụ tự động, vd "8h sáng query số liệu hôm qua và tổng hợp thành bảng". |
+| Deep Research | `/research` | Nghiên cứu sâu: nhiều vòng tìm kiếm + đọc web, tổng hợp có trích nguồn, kết quả được lưu lại. Tạo ra cho câu hỏi cần khảo cứu nhiều nguồn, vượt khả năng một lượt trả lời. |
+| Text Analytics | `/tools/text` | Bộ công cụ NLP đứng riêng: phân tích/phân loại văn bản, phát hiện ngôn ngữ, trích từ khóa, embeddings. Tạo ra để dùng nhanh chức năng NLP như công cụ, không phải mở phiên chat. |
+| Vision & OCR | `/tools/vision` | Phân tích ảnh, OCR trích chữ, phân loại ảnh, xóa nền. Tạo ra để xử lý ảnh/tài liệu scan trực tiếp trên nền vision model local. |
+
+### Vận hành
+
+| Màn (sidebar) | URL | Ý nghĩa · mục đích tạo ra |
+|---|---|---|
+| HITL Approvals | `/approvals` | Hộp phê duyệt human-in-the-loop: mọi hành động nhạy cảm agent muốn chạy (ghi CSDL, browser, computer-use, `call_api_write`, MCP tool…) hiện ở đây với **tham số thật** để Duyệt/Từ chối; run liên quan tự chạy tiếp sau khi quyết. Tạo ra làm chốt an toàn bắt buộc — agent không bao giờ tự thực thi hành vi ghi. |
+| API Keys | `/api-keys` | Tạo/thu hồi API key cho tích hợp máy-máy (header `X-Api-Key`, hiện khóa đúng một lần, hạn dùng + giới hạn lượt gọi). Tạo ra để hệ thống ngoài gọi API mà không đi qua đăng nhập cookie. |
+
+### Quản trị (chỉ role Admin)
+
+| Màn (sidebar) | URL | Ý nghĩa · mục đích tạo ra |
+|---|---|---|
+| Dashboard | `/admin` | Tổng quan quản trị: thẻ số liệu nhanh (người dùng, tài liệu, MCP, chờ phê duyệt) + lối tắt tới mọi màn quản trị. Tạo ra làm điểm vào duy nhất cho admin. |
+| User Management | `/admin/users` | Cấp tài khoản, phân quyền Admin/Member, khóa/mở khóa, xem trạng thái lockout do sai mật khẩu. Tạo ra để quản trị vòng đời tài khoản trong tenant. |
+| Tenant Management | `/admin/tenants` | Quản lý đơn vị/tổ chức sử dụng hệ thống (multi-tenant): tạo/đổi tên, đếm user + kết nối CSDL; chỉ xóa được tenant **rỗng**. Tạo ra để tách dữ liệu theo đơn vị và làm nguồn gán phạm vi cho kết nối CSDL. |
+| Database Connections | `/admin/databases` | Khai báo CSDL ngoài (PostgreSQL, MySQL, SQL Server, Oracle, SQLite, MongoDB) cho agent truy vấn **read-only**: index schema vào Qdrant, test kết nối, re-index, phạm vi theo tenant hoặc **toàn hệ thống**; cho phép ghi là opt-in từng kết nối và vẫn qua HITL + backup. Tạo ra để agent trả lời bằng dữ liệu nghiệp vụ thật một cách an toàn. |
+| Knowledge Base | `/admin/knowledge` | Nguồn tri thức dùng chung cấp tenant: ingest nội dung và query thử. Tạo ra để chia sẻ tri thức chuẩn cho mọi người dùng trong đơn vị, tách khỏi tài liệu cá nhân. |
+| MCP Servers | `/admin/mcp-servers` | Kết nối MCP server ngoài (Streamable HTTP; headers bí mật mã hóa; OAuth client-credentials hoặc authorization-code per-user) để agent có thêm tool bên ngoài. Tạo ra làm cổng mở rộng hệ tool theo chuẩn MCP thay vì viết tool cứng. |
+| LoRA Adapters | `/admin/lora` | Upload/quản lý adapter fine-tune **hot-swap** cho model chat (scale, model đích, bật/tắt); gán cho agent tại Agent Studio. Tạo ra để chuyên biệt hóa model theo nghiệp vụ mà không đổi model gốc. |
+| Embed Widget | `/admin/widget` | Bật widget chat nhúng lên website ngoài: widget key theo tenant (rotate, hash at rest), origin allowlist, quota phút/ngày, tùy biến tiêu đề/màu/lời chào. Tạo ra để đưa trợ lý ra cổng thông tin công khai có kiểm soát. |
+| Audit Log | `/admin/audit` | Nhật ký hoạt động agent/hệ thống, lọc theo actor/hành động/loại đối tượng, phân trang. Tạo ra để truy vết ai/agent đã làm gì — yêu cầu bắt buộc với hệ thống có agent tự hành. |
+
+### Màn công khai (ngoài sidebar, không cần đăng nhập)
+
+| Màn | URL | Ý nghĩa · mục đích tạo ra |
+|---|---|---|
+| Đăng nhập | `/login` | Đăng nhập email + mật khẩu, nhận cặp cookie JWT HttpOnly. |
+| Chat chia sẻ | `/share/:token` | Xem **read-only** một đoạn chat được chia sẻ qua link (link thu hồi được, có hạn). Tạo ra để gửi kết quả hội thoại cho người ngoài hệ thống. |
+| Widget Chat | `/widget/chat?key=…` | Trang chat nhúng trong iframe cho khách vãng lai — chỉ gọi endpoint công khai (đổi key lấy token ngắn hạn, quota + origin allowlist phía server). Là mặt tiền của cấu hình ở màn Embed Widget. |
 
 ## Chạy trên máy local
 
