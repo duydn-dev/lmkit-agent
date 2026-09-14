@@ -86,6 +86,7 @@ public sealed class AgentActionDispatcher
     private readonly LmModelManager _modelManager;
     private readonly PromptTemplateEngine _promptTemplate;
     private readonly LmKitOmniApi.Infrastructure.AI.Web.ApiCallService _apiCall;
+    private readonly LmKitOmniApi.Infrastructure.AI.Schedules.ScheduleToolService _scheduleTool;
     private readonly LmKitOmniApi.Infrastructure.AI.Documents.IPdfFormService _pdfForm;
     private readonly LmKitOmniApi.Infrastructure.AI.Documents.IDocumentRedactionService _documentRedaction;
     private readonly ILogger _logger;
@@ -100,6 +101,7 @@ public sealed class AgentActionDispatcher
         IBrowserFetchExecutor browserExecutor,
         IWebReadService webRead,
         LmKitOmniApi.Infrastructure.AI.Web.ApiCallService apiCall,
+        LmKitOmniApi.Infrastructure.AI.Schedules.ScheduleToolService scheduleTool,
         LmKitOmniApi.Infrastructure.AI.Database.DbQueryService dbQuery,
         UserResourceAccessService resources,
         MultiAgentOrchestrator multiAgent,
@@ -119,6 +121,7 @@ public sealed class AgentActionDispatcher
         _browserExecutor = browserExecutor;
         _webRead = webRead;
         _apiCall = apiCall;
+        _scheduleTool = scheduleTool;
         _dbQuery = dbQuery;
         _resources = resources;
         _multiAgent = multiAgent;
@@ -205,6 +208,15 @@ public sealed class AgentActionDispatcher
                 // Reached ONLY on the approved-resume path (CallApiWrite is approval-
                 // required, so the first call returns [HITL_APPROVAL_REQUIRED] upstream).
                 return await ExecuteCallApiAsync(tenantId, userId, query, allowWrite: true, ct);
+
+            case "SCHEDULE_CREATE":
+                // Reached ONLY on the approved-resume path (ScheduleTask is approval-
+                // required, so the first call returns [HITL_APPROVAL_REQUIRED] upstream).
+                return await ExecuteScheduleCreateAsync(tenantId, userId, query, ct);
+            case "SCHEDULE_LIST":
+                return await ExecuteScheduleListAsync(tenantId, userId, ct);
+            case "SCHEDULE_CANCEL":
+                return await ExecuteScheduleCancelAsync(tenantId, userId, query, ct);
 
             case "DBSCHEMA":
                 return await ExecuteDbSchemaAsync(tenantId, userId, query, ct);
@@ -669,6 +681,34 @@ public sealed class AgentActionDispatcher
         var result = await _apiCall.ExecuteAsync(query, allowWrite, ct);
         await _toolPermission.RecordToolInvocationAsync(
             tenantId, userId, allowWrite ? "CallApiWrite" : "CallApi", null, ct);
+        return result;
+    }
+
+    private async Task<string> ExecuteScheduleCreateAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
+    {
+        if (userId is not { } ownerId)
+            return "[Lịch] Không xác định được người dùng — lịch luôn thuộc về một tài khoản cụ thể.";
+        _logger.LogInformation("📅 Executing APPROVED schedule_task...");
+        var result = await _scheduleTool.CreateAsync(tenantId, ownerId, query, ct);
+        await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "ScheduleTask", null, ct);
+        return result;
+    }
+
+    private async Task<string> ExecuteScheduleListAsync(Guid tenantId, Guid? userId, CancellationToken ct)
+    {
+        if (userId is not { } ownerId)
+            return "[Lịch] Không xác định được người dùng.";
+        var result = await _scheduleTool.ListAsync(tenantId, ownerId, ct);
+        await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "ScheduleManage", null, ct);
+        return result;
+    }
+
+    private async Task<string> ExecuteScheduleCancelAsync(Guid tenantId, Guid? userId, string query, CancellationToken ct)
+    {
+        if (userId is not { } ownerId)
+            return "[Lịch] Không xác định được người dùng.";
+        var result = await _scheduleTool.CancelAsync(tenantId, ownerId, query, ct);
+        await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "ScheduleManage", null, ct);
         return result;
     }
 

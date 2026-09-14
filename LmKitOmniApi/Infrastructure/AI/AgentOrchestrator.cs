@@ -69,6 +69,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     // check IsEnabled to decide whether to offer the fetch_web tool.
     private readonly IWebReadService _webRead;
     private readonly LmKitOmniApi.Infrastructure.AI.Web.ApiCallService _apiCall;
+    private readonly LmKitOmniApi.Infrastructure.AI.Schedules.ScheduleToolService _scheduleTool;
     private readonly LmKitOmniApi.Infrastructure.AI.Database.DbQueryService _dbQuery;
 
     // Native document tools (PDF form read/fill + PDF/Office redaction + PDF/A validate).
@@ -187,6 +188,9 @@ public class AgentOrchestrator : IAgentOrchestrator
         ["VALIDATE_PDFA"] = "ValidatePdfA",
         ["CALL_API"] = "CallApi",
         ["CALL_API_WRITE"] = "CallApiWrite",
+        ["SCHEDULE_CREATE"] = "ScheduleTask",
+        ["SCHEDULE_LIST"] = "ScheduleManage",
+        ["SCHEDULE_CANCEL"] = "ScheduleManage",
     };
 
     // H6 path-extraction regexes moved to AgentActionDispatcher alongside the
@@ -208,6 +212,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         IBrowserFetchExecutor browserExecutor,
         IWebReadService webRead,
         LmKitOmniApi.Infrastructure.AI.Web.ApiCallService apiCallService,
+        LmKitOmniApi.Infrastructure.AI.Schedules.ScheduleToolService scheduleToolService,
         LmKitOmniApi.Infrastructure.AI.Documents.IPdfFormService pdfForm,
         LmKitOmniApi.Infrastructure.AI.Documents.IDocumentRedactionService documentRedaction,
         LmKitOmniApi.Infrastructure.AI.Lora.ILoraAdapterService loraService,
@@ -237,6 +242,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         _browserExecutor = browserExecutor;
         _webRead = webRead;
         _apiCall = apiCallService;
+        _scheduleTool = scheduleToolService;
         _pdfForm = pdfForm;
         _documentRedaction = documentRedaction;
         _loraService = loraService;
@@ -265,6 +271,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             browserExecutor,
             webRead,
             apiCallService,
+            scheduleToolService,
             dbQueryService,
             resources,
             multiAgent,
@@ -1294,6 +1301,35 @@ public class AgentOrchestrator : IAgentOrchestrator
                     + "Payload JSON: {\"method\":\"POST\",\"url\":\"https://…\",\"headers\":{…},\"body\":{…}}. "
                     + "Chỉ dùng khi người dùng yêu cầu rõ ràng việc ghi/gửi dữ liệu ra ngoài.",
                 (q, ct) => invoke("CALL_API_WRITE", q, ct)));
+        }
+
+        // Lịch tự động qua hội thoại (Task Scheduler tools) — LUÔN bật vì Task
+        // Scheduler là tính năng lõi. schedule_task nằm trong ApprovalRequiredTools:
+        // card phê duyệt hiện đúng JSON (tên/prompt/chu kỳ) trước khi lịch được tạo.
+        if (ActionAllowed("SCHEDULE_CREATE"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "schedule_task",
+                "Tạo LỊCH TỰ ĐỘNG theo yêu cầu người dùng — CẦN người dùng phê duyệt trước khi tạo. "
+                    + "Payload JSON: {\"name\":\"Báo cáo sáng\",\"prompt\":\"nội dung chạy mỗi lần\",\"kind\":\"interval|daily|weekly|once\","
+                    + "\"intervalMinutes\":30,\"timeOfDayUtc\":\"01:00\",\"dayOfWeek\":1,\"runAtUtc\":\"2026-09-15T01:00:00Z\",\"runMode\":\"agent|completion\"}. "
+                    + "GIỜ THEO UTC — Việt Nam = UTC+7 (8h sáng VN = 01:00 UTC). kind \"once\" = chạy đúng một lần lúc runAtUtc rồi tự tắt. "
+                    + "runMode \"agent\" cho phép lịch dùng tool (query CSDL, web…); \"completion\" là một lượt suy luận thuần.",
+                (q, ct) => invoke("SCHEDULE_CREATE", q, ct)));
+        }
+        if (ActionAllowed("SCHEDULE_LIST"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "list_schedules",
+                "Liệt kê các lịch tự động hiện có của người dùng (id, tên, chu kỳ, trạng thái) — dùng trước khi hủy/sửa.",
+                (q, ct) => invoke("SCHEDULE_LIST", q, ct)));
+        }
+        if (ActionAllowed("SCHEDULE_CANCEL"))
+        {
+            tools.Add(new DelegatedActionTool(
+                "cancel_schedule",
+                "TẮT một lịch tự động theo id (8 ký tự đầu) hoặc tên. Chỉ tắt (đảo ngược được ở màn Task Scheduler), không xóa.",
+                (q, ct) => invoke("SCHEDULE_CANCEL", q, ct)));
         }
 
         // Native document tools (PDF forms + redaction + PDF/A validation). Pure LM-Kit

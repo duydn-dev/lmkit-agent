@@ -174,15 +174,10 @@ public class ScheduledTaskWorker : BackgroundService
         task.ClaimedUntilUtc = null;
         try
         {
-            var now = DateTime.UtcNow;
-            var scheduledNextRun = ScheduleCalculator.ComputeNextRun(task, now);
-            // A Skipped outcome means the model was only transiently unavailable, so retry within
-            // ~10 minutes instead of advancing the whole cycle (a daily task would otherwise jump
-            // to tomorrow and silently drop this run). Cap at the normal next run so an interval
-            // task shorter than 10 minutes is never pushed LATER than its regular cadence.
-            task.NextRunUtc = status == SkippedStatus
-                ? (now.AddMinutes(10) < scheduledNextRun ? now.AddMinutes(10) : scheduledNextRun)
-                : scheduledNextRun;
+            // Toàn bộ sổ sách sau-run (kể cả kind "once" tự tắt sau phát duy nhất và
+            // Skipped thử lại ~10 phút) nằm trong ScheduledTaskRules.AdvanceAfterRun
+            // — thuần logic, test được không cần worker.
+            ScheduledTaskRules.AdvanceAfterRun(task, status, DateTime.UtcNow);
         }
         catch (InvalidOperationException scheduleError)
         {

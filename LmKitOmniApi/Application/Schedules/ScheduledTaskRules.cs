@@ -19,6 +19,8 @@ public static class ScheduledTaskRules
     public const int MaxWebhookUrlLength = 500;
     public const int MaxPromptLength = 2000;
     public const int MinIntervalMinutes = 15;
+    /// <summary>Lịch "once" phải hẹn trong tương lai gần: tối đa 366 ngày tới.</summary>
+    public const int MaxOnceLeadDays = 366;
     public const int MaxIntervalMinutes = 10080; // 7 days
     public const int MaxEnabledTasksPerUser = 10;
 
@@ -69,8 +71,16 @@ public static class ScheduledTaskRules
                 if (request.DayOfWeek is not (>= 0 and <= 6))
                     return "Thứ trong tuần phải từ 0 (Chủ nhật) đến 6 (Thứ bảy).";
                 break;
+            case ScheduleCalculator.OnceKind:
+                if (request.RunAtUtc is not { } runAt)
+                    return "Lịch một lần cần thời điểm chạy (runAtUtc, giờ UTC).";
+                if (runAt <= DateTime.UtcNow.AddMinutes(1))
+                    return "Thời điểm chạy phải ở tương lai (ít nhất 1 phút nữa, giờ UTC).";
+                if (runAt > DateTime.UtcNow.AddDays(MaxOnceLeadDays))
+                    return $"Thời điểm chạy tối đa {MaxOnceLeadDays} ngày tới.";
+                break;
             default:
-                return "Loại lịch không hợp lệ. Chỉ hỗ trợ: interval, daily, weekly.";
+                return "Loại lịch không hợp lệ. Chỉ hỗ trợ: interval, daily, weekly, once.";
         }
 
         return null;
@@ -96,7 +106,42 @@ public static class ScheduledTaskRules
             ? request.TimeOfDayMinutes
             : null;
         task.DayOfWeek = kind == ScheduleCalculator.WeeklyKind ? request.DayOfWeek : null;
-        task.NextRunUtc = ScheduleCalculator.ComputeNextRun(task, nowUtc);
+        // "once": thời điểm chạy là chính giá trị người dùng đặt (đã validate ở trên);
+        // các kind lặp lại mới cần tính lần kế tiếp.
+        task.NextRunUtc = kind == ScheduleCalculator.OnceKind
+            ? DateTime.SpecifyKind(request.RunAtUtc!.Value, DateTimeKind.Utc)
+            : ScheduleCalculator.ComputeNextRun(task, nowUtc);
+    }
+
+    /// <summary>
+    /// Sổ sách SAU MỘT LẦN CHẠY — thuần logic để test không cần worker:
+    /// <list type="bullet">
+    ///   <item>Kind lặp lại: NextRunUtc = lần kế tiếp; riêng Skipped (model/hàng đợi bận
+    ///   tạm thời) thử lại sau ~10 phút nhưng không bao giờ MUỘN hơn nhịp bình thường.</item>
+    ///   <item>Kind "once": Skipped → thử lại sau 10 phút (vẫn bật); mọi kết quả khác
+    ///   (Succeeded/Failed/AwaitingApproval) → lịch TỰ TẮT — đã bắn phát duy nhất.</item>
+    /// </list>
+    /// Ném InvalidOperationException cho định nghĩa hỏng (caller quyết định vô hiệu hóa).
+    /// </summary>
+    public static void AdvanceAfterRun(ScheduledTask task, string status, DateTime nowUtc)
+    {
+        const string skipped = "Skipped";
+
+        if (string.Equals(task.ScheduleKind, ScheduleCalculator.OnceKind, StringComparison.OrdinalIgnoreCase))
+        {
+            if (status == skipped)
+            {
+                task.NextRunUtc = nowUtc.AddMinutes(10);
+                return;
+            }
+            task.Enabled = false;
+            return;
+        }
+
+        var scheduledNextRun = ScheduleCalculator.ComputeNextRun(task, nowUtc);
+        task.NextRunUtc = status == skipped
+            ? (nowUtc.AddMinutes(10) < scheduledNextRun ? nowUtc.AddMinutes(10) : scheduledNextRun)
+            : scheduledNextRun;
     }
 
     public static Task<int> CountEnabledAsync(HermesDbContext db, Guid tenantId, Guid userId, CancellationToken ct) =>

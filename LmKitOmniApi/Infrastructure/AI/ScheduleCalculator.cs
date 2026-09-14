@@ -12,6 +12,13 @@ public static class ScheduleCalculator
     public const string DailyKind = "daily";
     public const string WeeklyKind = "weekly";
 
+    /// <summary>
+    /// Lịch MỘT LẦN theo hẹn giờ. Cố ý không có nhánh trong <see cref="ComputeNextRun"/>:
+    /// thời điểm chạy là <c>NextRunUtc</c> do người dùng đặt lúc tạo, và sau khi bắn
+    /// xong lịch tự TẮT thay vì tính lần kế tiếp — xem ScheduledTaskRules.AdvanceAfterRun.
+    /// </summary>
+    public const string OnceKind = "once";
+
     /// <summary>Inclusive upper bound for a time-of-day expressed as minutes after midnight UTC (23:59).</summary>
     public const int MaxTimeOfDayMinutes = 1439;
 

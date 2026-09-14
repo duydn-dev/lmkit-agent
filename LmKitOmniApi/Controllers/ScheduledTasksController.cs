@@ -57,7 +57,8 @@ public sealed class ScheduledTasksController : ApiControllerBase
             ScheduleKind = request.ScheduleKind,
             IntervalMinutes = request.IntervalMinutes,
             TimeOfDayMinutes = request.TimeOfDayMinutes,
-            DayOfWeek = request.DayOfWeek
+            DayOfWeek = request.DayOfWeek,
+            RunAtUtc = request.RunAtUtc
         }, ct);
 
         return result.Status switch
@@ -85,7 +86,8 @@ public sealed class ScheduledTasksController : ApiControllerBase
             ScheduleKind = request.ScheduleKind,
             IntervalMinutes = request.IntervalMinutes,
             TimeOfDayMinutes = request.TimeOfDayMinutes,
-            DayOfWeek = request.DayOfWeek
+            DayOfWeek = request.DayOfWeek,
+            RunAtUtc = request.RunAtUtc
         }, ct);
 
         return result.Status switch

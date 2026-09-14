@@ -293,6 +293,8 @@ builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.IWebReadService, L
 // Cùng khuôn SSRF với call_api: client riêng không auto-redirect + SsrfSafeConnect.
 builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Web.ScheduleWebhookOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Web.ScheduleWebhookOptions.SectionName));
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.ScheduleWebhookDeliverer>();
+// Tool lịch qua hội thoại (schedule_task / list_schedules / cancel_schedule).
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Schedules.ScheduleToolService>();
 builder.Services.AddHttpClient(LmKitOmniApi.Infrastructure.AI.Web.ScheduleWebhookDeliverer.HttpClientName, client =>
 {
     client.Timeout = Timeout.InfiniteTimeSpan; // ngân sách nằm trong CTS của deliverer

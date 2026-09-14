@@ -23,6 +23,9 @@ public sealed class SaveScheduledTaskRequest
     public int? IntervalMinutes { get; set; }
     public int? TimeOfDayMinutes { get; set; }
     public int? DayOfWeek { get; set; }
+
+    /// <summary>Kind "once": thời điểm chạy duy nhất (UTC). Các kind khác bỏ qua trường này.</summary>
+    public DateTime? RunAtUtc { get; set; }
 }
 
 /// <summary>
@@ -43,6 +46,7 @@ public abstract class SaveScheduledTaskCommandBase
     public int? IntervalMinutes { get; set; }
     public int? TimeOfDayMinutes { get; set; }
     public int? DayOfWeek { get; set; }
+    public DateTime? RunAtUtc { get; set; }
 }
 
 /// <summary>

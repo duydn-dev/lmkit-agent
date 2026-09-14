@@ -170,6 +170,17 @@
             <Select v-model="form.scheduleKind" :options="kindOptions" optionLabel="label" optionValue="value" inputId="schedule-kind" class="w-full" />
           </div>
 
+          <div v-if="form.scheduleKind === 'once'" class="grid gap-1">
+            <label for="schedule-runat" class="text-sm font-medium text-gray-700">Chạy lúc (giờ máy bạn)</label>
+            <input
+              id="schedule-runat"
+              v-model="form.runAtLocal"
+              type="datetime-local"
+              required
+              class="min-h-11 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-[--color-gov-red]" />
+            <p class="text-xs text-gray-400">Chạy đúng một lần rồi lịch tự tắt (vẫn nằm trong danh sách để xem kết quả).</p>
+          </div>
+
           <div v-if="form.scheduleKind === 'interval'" class="grid gap-1">
             <label for="schedule-interval" class="text-sm font-medium text-gray-700">Chạy mỗi (phút)</label>
             <InputNumber v-model="form.intervalMinutes" inputId="schedule-interval" :min="15" :useGrouping="false" showButtons suffix=" phút" class="w-full" />
@@ -181,7 +192,7 @@
             <Select v-model="form.dayOfWeek" :options="dayOptions" optionLabel="label" optionValue="value" inputId="schedule-day" class="w-full" />
           </div>
 
-          <div v-if="form.scheduleKind !== 'interval'" class="grid gap-1">
+          <div v-if="form.scheduleKind === 'daily' || form.scheduleKind === 'weekly'" class="grid gap-1">
             <label for="schedule-time" class="text-sm font-medium text-gray-700">Giờ chạy (UTC)</label>
             <input
               id="schedule-time"
@@ -210,7 +221,7 @@ import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import { useServerPage } from '@/composables/useServerPage';
 
-type ScheduleKind = 'interval' | 'daily' | 'weekly';
+type ScheduleKind = 'interval' | 'daily' | 'weekly' | 'once';
 type RunMode = 'completion' | 'agent';
 
 interface Schedule {
@@ -242,6 +253,8 @@ interface ScheduleForm {
   /** "HH:mm" from the native time input; converted to minutes on save. */
   timeOfDay: string;
   dayOfWeek: number;
+  /** kind "once": giá trị datetime-local (giờ máy người dùng); đổi sang UTC ISO khi lưu. */
+  runAtLocal: string;
 }
 
 const confirm = useConfirm();
@@ -251,7 +264,8 @@ const list = useServerPage<Schedule>(ApiFactory.SCHEDULES.BASE, { errorLabel: 'l
 const kindOptions = [
   { label: 'Theo chu kỳ (phút)', value: 'interval' },
   { label: 'Hàng ngày', value: 'daily' },
-  { label: 'Hàng tuần', value: 'weekly' }
+  { label: 'Hàng tuần', value: 'weekly' },
+  { label: 'Một lần (hẹn giờ)', value: 'once' }
 ];
 const runModeOptions = [
   { label: 'Completion — một lượt, không tool', value: 'completion' },
@@ -294,11 +308,20 @@ const emptyForm = (): ScheduleForm => ({
   scheduleKind: 'interval',
   intervalMinutes: 60,
   timeOfDay: '08:00',
-  dayOfWeek: 1
+  dayOfWeek: 1,
+  runAtLocal: ''
 });
 const form = ref<ScheduleForm>(emptyForm());
 
 // --- Formatting helpers -----------------------------------------------------
+
+/** ISO UTC → giá trị input datetime-local theo giờ máy người dùng. */
+const toDatetimeLocal = (iso: string): string => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
 
 const formatUtcTime = (minutes: number | null): string => {
   const total = minutes ?? 0;
@@ -308,6 +331,9 @@ const formatUtcTime = (minutes: number | null): string => {
 };
 
 const scheduleSummary = (schedule: Schedule): string => {
+  if (schedule.scheduleKind === 'once') {
+    return schedule.enabled ? `Một lần — ${formatUtcDate(schedule.nextRunUtc)}` : 'Một lần — đã chạy';
+  }
   if (schedule.scheduleKind === 'interval') return `Mỗi ${schedule.intervalMinutes ?? 0} phút`;
   if (schedule.scheduleKind === 'daily') return `Hàng ngày ${formatUtcTime(schedule.timeOfDayMinutes)} UTC`;
   const day = DAY_FULL[schedule.dayOfWeek ?? 0] ?? 'Chủ nhật';
@@ -362,7 +388,10 @@ const openEditForm = (schedule: Schedule) => {
     scheduleKind: schedule.scheduleKind,
     intervalMinutes: schedule.intervalMinutes ?? 60,
     timeOfDay: formatUtcTime(schedule.timeOfDayMinutes ?? 480),
-    dayOfWeek: schedule.dayOfWeek ?? 1
+    dayOfWeek: schedule.dayOfWeek ?? 1,
+    runAtLocal: schedule.scheduleKind === 'once' && schedule.nextRunUtc
+      ? toDatetimeLocal(schedule.nextRunUtc)
+      : ''
   };
   formError.value = '';
   showForm.value = true;
@@ -387,8 +416,21 @@ const saveSchedule = async () => {
   let intervalMinutes: number | null = null;
   let timeOfDayMinutes: number | null = null;
   let dayOfWeek: number | null = null;
+  let runAtUtc: string | null = null;
 
-  if (kind === 'interval') {
+  if (kind === 'once') {
+    const local = form.value.runAtLocal;
+    const parsed = new Date(local);
+    if (!local || Number.isNaN(parsed.getTime())) {
+      formError.value = 'Vui lòng chọn thời điểm chạy.';
+      return;
+    }
+    if (parsed.getTime() <= Date.now() + 60_000) {
+      formError.value = 'Thời điểm chạy phải ở tương lai (ít nhất 1 phút nữa).';
+      return;
+    }
+    runAtUtc = parsed.toISOString();
+  } else if (kind === 'interval') {
     intervalMinutes = form.value.intervalMinutes;
     if (intervalMinutes === null || intervalMinutes < 15) {
       formError.value = 'Chu kỳ tối thiểu là 15 phút.';
@@ -415,6 +457,7 @@ const saveSchedule = async () => {
     intervalMinutes,
     timeOfDayMinutes,
     dayOfWeek,
+    runAtUtc,
     // New schedules start enabled; edits preserve the current switch state
     // (the dedicated toggle endpoint owns on/off changes).
     enabled: editingId.value ? editingEnabled.value : true
