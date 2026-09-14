@@ -31,7 +31,7 @@ public sealed class AgentRunsController : ApiControllerBase
         _logger = logger;
     }
 
-    public sealed record StartAgentRunRequest(string Goal);
+    public sealed record StartAgentRunRequest(string Goal, Guid? CustomAgentId = null);
 
     [HttpPost]
     [EnableRateLimiting("ai-agent")]
@@ -57,16 +57,55 @@ public sealed class AgentRunsController : ApiControllerBase
         Response.Headers.Append("Cache-Control", "no-cache");
         Response.Headers.Append("Connection", "keep-alive");
 
-        var command = new StreamAgentRunCommand { Goal = goal, TenantId = tenantId, UserId = userId };
+        var command = new StreamAgentRunCommand
+        {
+            Goal = goal,
+            TenantId = tenantId,
+            UserId = userId,
+            CustomAgentId = request.CustomAgentId
+        };
         await StreamResponseAsync(_mediator.CreateStream(command, cancellationToken), cancellationToken);
     }
 
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List(
+        [FromQuery] int? page, [FromQuery] int? pageSize, [FromQuery] string? search, CancellationToken ct)
     {
         if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
-        var runs = await _mediator.Send(new GetAgentRunsQuery { TenantId = tenantId, UserId = userId }, ct);
+        var (p, size) = Application.Common.Paging.Normalize(page, pageSize);
+        var runs = await _mediator.Send(new GetAgentRunsQuery
+        {
+            TenantId = tenantId,
+            UserId = userId,
+            Page = p,
+            PageSize = size,
+            Search = search
+        }, ct);
         return Ok(runs);
+    }
+
+    /// <summary>
+    /// Hủy run đang đỗ (chờ phê duyệt / chờ lượt resume / mồ côi). 204 khi hủy được;
+    /// 409 khi run đã kết thúc hoặc đang stream sống (dừng stream bằng cách ngắt kết
+    /// nối SSE phía client); 404 khi không thuộc về người gọi.
+    /// </summary>
+    [HttpPost("{id:guid}/cancel")]
+    public async Task<IActionResult> Cancel(Guid id, CancellationToken ct)
+    {
+        if (!TryGetIdentity(out var tenantId, out var userId)) return Unauthorized();
+        var outcome = await _mediator.Send(new CancelAgentRunCommand
+        {
+            RunId = id,
+            TenantId = tenantId,
+            UserId = userId
+        }, ct);
+        return outcome switch
+        {
+            CancelAgentRunOutcome.Cancelled => NoContent(),
+            CancelAgentRunOutcome.NotFound => NotFound(),
+            CancelAgentRunOutcome.AlreadyFinished => Conflict(new { message = "Run đã kết thúc — không có gì để hủy." }),
+            _ => Conflict(new { message = "Run đang stream trực tiếp — hãy dừng bằng cách ngắt kết nối stream (nút Dừng trên màn hình đang chạy)." })
+        };
     }
 
     [HttpGet("{id:guid}")]

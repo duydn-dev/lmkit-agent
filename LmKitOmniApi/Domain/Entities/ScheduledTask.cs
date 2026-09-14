@@ -31,6 +31,22 @@ public sealed class ScheduledTask
     [MaxLength(20)]
     public string RunMode { get; set; } = "completion";
 
+    /// <summary>
+    /// Persona cho lần chạy: soft reference tới <see cref="CustomAgent"/> (không FK
+    /// cứng — agent bị xóa thì lịch chạy tiếp KHÔNG persona thay vì gãy). Áp cho cả
+    /// hai chế độ: completion → SystemPrompt; agent → persona + tool whitelist +
+    /// knowledge + LoRA của agent, đúng như một phiên chat với agent đó.
+    /// </summary>
+    public Guid? CustomAgentId { get; set; }
+
+    /// <summary>
+    /// Webhook nhận kết quả mỗi lần chạy THÀNH CÔNG (POST JSON). Null = chỉ giao qua
+    /// notification. Chỉ lưu được khi vận hành bật ScheduleWebhooks; URL bị chặn địa
+    /// chỉ nội bộ (SSRF) cả lúc lưu lẫn lúc gửi.
+    /// </summary>
+    [MaxLength(500)]
+    public string? DeliveryWebhookUrl { get; set; }
+
     /// <summary>"interval" | "daily" | "weekly".</summary>
     [MaxLength(20)]
     public string ScheduleKind { get; set; } = "daily";

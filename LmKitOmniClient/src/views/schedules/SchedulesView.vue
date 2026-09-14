@@ -57,6 +57,10 @@
         <Column field="runMode" header="Chế độ" style="min-width: 9rem">
           <template #body="{ data }">
             <Tag :value="data.runMode === 'agent' ? 'Automation Agent' : 'Completion'" :severity="data.runMode === 'agent' ? 'danger' : 'secondary'" />
+            <div class="mt-1 flex flex-wrap gap-1">
+              <Tag v-if="data.customAgentId" :value="personaName(data.customAgentId)" severity="info" v-tooltip.top="'Persona'" />
+              <Tag v-if="data.deliveryWebhookUrl" value="Webhook" severity="warn" v-tooltip.top="data.deliveryWebhookUrl" />
+            </div>
           </template>
         </Column>
         <Column header="Chu kỳ" style="min-width: 11rem">
@@ -130,6 +134,37 @@
             </p>
           </div>
 
+          <div v-if="personaOptions.length > 0" class="grid gap-1">
+            <label for="schedule-persona" class="text-sm font-medium text-gray-700">Persona (tùy chọn)</label>
+            <Select
+              v-model="form.customAgentId"
+              :options="personaOptions"
+              optionLabel="label"
+              optionValue="value"
+              inputId="schedule-persona"
+              showClear
+              placeholder="Agent mặc định"
+              class="w-full" />
+            <p class="text-xs text-gray-500">
+              Lịch chạy với persona của agent được chọn — chế độ agent dùng cả tool whitelist + tri thức + LoRA của agent đó.
+            </p>
+          </div>
+
+          <div class="grid gap-1">
+            <label for="schedule-webhook" class="text-sm font-medium text-gray-700">Webhook nhận kết quả (tùy chọn)</label>
+            <InputText
+              id="schedule-webhook"
+              v-model="form.deliveryWebhookUrl"
+              type="url"
+              maxlength="500"
+              placeholder="https://he-thong-cua-ban/api/nhan-bao-cao"
+              class="w-full" />
+            <p class="text-xs text-gray-500">
+              Mỗi lần chạy thành công, hệ thống POST JSON kết quả tới URL này (ngoài thông báo trong app).
+              Cần vận hành bật <code class="font-mono text-[11px]">ScheduleWebhooks</code>; địa chỉ nội bộ bị chặn.
+            </p>
+          </div>
+
           <div class="grid gap-1">
             <label for="schedule-kind" class="text-sm font-medium text-gray-700">Chu kỳ chạy</label>
             <Select v-model="form.scheduleKind" :options="kindOptions" optionLabel="label" optionValue="value" inputId="schedule-kind" class="w-full" />
@@ -183,6 +218,8 @@ interface Schedule {
   name: string;
   prompt: string;
   runMode: RunMode;
+  customAgentId: string | null;
+  deliveryWebhookUrl: string | null;
   scheduleKind: ScheduleKind;
   intervalMinutes: number | null;
   timeOfDayMinutes: number | null;
@@ -198,6 +235,8 @@ interface ScheduleForm {
   name: string;
   prompt: string;
   runMode: RunMode;
+  customAgentId: string | null;
+  deliveryWebhookUrl: string;
   scheduleKind: ScheduleKind;
   intervalMinutes: number | null;
   /** "HH:mm" from the native time input; converted to minutes on save. */
@@ -223,6 +262,20 @@ const DAY_SHORT = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 const DAY_FULL = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
 const dayOptions = DAY_SHORT.map((label, value) => ({ label, value }));
 
+// --- Persona options (im lặng khi trống/lỗi — persona là tăng cường) --------
+const personaOptions = ref<{ label: string; value: string }[]>([]);
+const personaName = (id: string) =>
+  personaOptions.value.find((option) => option.value === id)?.label ?? 'Persona';
+const loadPersonaOptions = async () => {
+  try {
+    const response = await http.get(`${ApiFactory.AGENTS.CUSTOM}?page=1&pageSize=100`);
+    if (!response.ok) return;
+    const page = await response.json();
+    const items = (Array.isArray(page) ? page : page.items ?? []) as { id: string; name: string }[];
+    personaOptions.value = items.map((agent) => ({ label: agent.name, value: agent.id }));
+  } catch { /* im lặng */ }
+};
+
 const togglingId = ref<string | null>(null);
 const deletingId = ref<string | null>(null);
 
@@ -236,6 +289,8 @@ const emptyForm = (): ScheduleForm => ({
   name: '',
   prompt: '',
   runMode: 'completion',
+  customAgentId: null,
+  deliveryWebhookUrl: '',
   scheduleKind: 'interval',
   intervalMinutes: 60,
   timeOfDay: '08:00',
@@ -302,6 +357,8 @@ const openEditForm = (schedule: Schedule) => {
     name: schedule.name,
     prompt: schedule.prompt,
     runMode: schedule.runMode === 'agent' ? 'agent' : 'completion',
+    customAgentId: schedule.customAgentId,
+    deliveryWebhookUrl: schedule.deliveryWebhookUrl ?? '',
     scheduleKind: schedule.scheduleKind,
     intervalMinutes: schedule.intervalMinutes ?? 60,
     timeOfDay: formatUtcTime(schedule.timeOfDayMinutes ?? 480),
@@ -352,6 +409,8 @@ const saveSchedule = async () => {
     name,
     prompt,
     runMode: form.value.runMode,
+    customAgentId: form.value.customAgentId,
+    deliveryWebhookUrl: form.value.deliveryWebhookUrl.trim() || null,
     scheduleKind: kind,
     intervalMinutes,
     timeOfDayMinutes,
@@ -423,5 +482,8 @@ const performDelete = async (schedule: Schedule) => {
   }
 };
 
-onMounted(() => { void list.load(); });
+onMounted(() => {
+  void list.load();
+  void loadPersonaOptions();
+});
 </script>

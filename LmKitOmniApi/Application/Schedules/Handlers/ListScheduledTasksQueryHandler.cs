@@ -37,6 +37,8 @@ public class ListScheduledTasksQueryHandler : IRequestHandler<ListScheduledTasks
                 Name = task.Name,
                 Prompt = task.Prompt,
                 RunMode = task.RunMode,
+                CustomAgentId = task.CustomAgentId,
+                DeliveryWebhookUrl = task.DeliveryWebhookUrl,
                 ScheduleKind = task.ScheduleKind,
                 IntervalMinutes = task.IntervalMinutes,
                 TimeOfDayMinutes = task.TimeOfDayMinutes,

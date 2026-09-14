@@ -2,10 +2,13 @@ using MediatR;
 
 namespace LmKitOmniApi.Application.AgentRuns.Queries;
 
-/// <summary>Lists the caller's own agent runs, newest first.</summary>
-public sealed class GetAgentRunsQuery : IRequest<List<AgentRunSummaryDto>>
+/// <summary>Getlist chuẩn: run của người gọi, mới nhất trước, phân trang + tìm theo mục tiêu.</summary>
+public sealed class GetAgentRunsQuery : IRequest<Common.PagedResult<AgentRunSummaryDto>>
 {
     public Guid TenantId { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = Common.Paging.DefaultPageSize;
+    public string? Search { get; set; }
     public Guid UserId { get; set; }
 }
 

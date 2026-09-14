@@ -13,6 +13,12 @@ public sealed class SaveScheduledTaskRequest
     /// <summary>"completion" (mặc định) | "agent" — xem <c>ScheduledTask.RunMode</c>.</summary>
     public string? RunMode { get; set; }
 
+    /// <summary>Persona tùy chọn — id một CustomAgent của người tạo lịch (hoặc agent chia sẻ tenant).</summary>
+    public Guid? CustomAgentId { get; set; }
+
+    /// <summary>Webhook nhận kết quả (tùy chọn; cần vận hành bật ScheduleWebhooks).</summary>
+    public string? DeliveryWebhookUrl { get; set; }
+
     public string ScheduleKind { get; set; } = string.Empty;
     public int? IntervalMinutes { get; set; }
     public int? TimeOfDayMinutes { get; set; }
@@ -31,6 +37,8 @@ public abstract class SaveScheduledTaskCommandBase
     public string Name { get; set; } = string.Empty;
     public string Prompt { get; set; } = string.Empty;
     public string? RunMode { get; set; }
+    public Guid? CustomAgentId { get; set; }
+    public string? DeliveryWebhookUrl { get; set; }
     public string ScheduleKind { get; set; } = string.Empty;
     public int? IntervalMinutes { get; set; }
     public int? TimeOfDayMinutes { get; set; }
@@ -80,6 +88,8 @@ public sealed class ScheduledTaskDto
     public string Name { get; init; } = string.Empty;
     public string Prompt { get; init; } = string.Empty;
     public string RunMode { get; init; } = "completion";
+    public Guid? CustomAgentId { get; init; }
+    public string? DeliveryWebhookUrl { get; init; }
     public string ScheduleKind { get; init; } = string.Empty;
     public int? IntervalMinutes { get; init; }
     public int? TimeOfDayMinutes { get; init; }

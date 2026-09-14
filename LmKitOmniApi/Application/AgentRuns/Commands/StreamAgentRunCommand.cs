@@ -16,6 +16,14 @@ public sealed class StreamAgentRunCommand : IStreamRequest<string>
     public Guid UserId { get; set; }
     public string Goal { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Persona tùy chọn: id một CustomAgent mà NGƯỜI CHẠY dùng được (của mình hoặc
+    /// chia sẻ tenant). Handler resolve và áp persona + tool whitelist + knowledge +
+    /// LoRA của agent lên run — đúng như một phiên chat với agent đó. Agent không còn
+    /// truy cập được → chạy KHÔNG persona (soft reference, không gãy lịch).
+    /// </summary>
+    public Guid? CustomAgentId { get; set; }
+
     /// <summary>Set by the handler once the AgentRun row exists, so the controller can echo it first.</summary>
     public Guid RunId { get; set; }
 }

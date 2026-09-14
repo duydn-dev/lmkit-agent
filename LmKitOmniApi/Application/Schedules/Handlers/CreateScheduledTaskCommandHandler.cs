@@ -8,15 +8,23 @@ namespace LmKitOmniApi.Application.Schedules.Handlers;
 public class CreateScheduledTaskCommandHandler : IRequestHandler<CreateScheduledTaskCommand, SaveScheduledTaskResult>
 {
     private readonly HermesDbContext _db;
+    private readonly Infrastructure.AI.Web.ScheduleWebhookOptions _webhookOptions;
+    private readonly Infrastructure.AI.Security.ToolSandboxService _sandbox;
 
-    public CreateScheduledTaskCommandHandler(HermesDbContext db)
+    public CreateScheduledTaskCommandHandler(
+        HermesDbContext db,
+        Microsoft.Extensions.Options.IOptions<Infrastructure.AI.Web.ScheduleWebhookOptions> webhookOptions,
+        Infrastructure.AI.Security.ToolSandboxService sandbox)
     {
         _db = db;
+        _webhookOptions = webhookOptions.Value;
+        _sandbox = sandbox;
     }
 
     public async Task<SaveScheduledTaskResult> Handle(CreateScheduledTaskCommand request, CancellationToken cancellationToken)
     {
-        var error = ScheduledTaskRules.Validate(request);
+        var error = ScheduledTaskRules.Validate(request)
+            ?? await ScheduledTaskRules.ValidateReferencesAsync(_db, _webhookOptions, _sandbox, request, cancellationToken);
         if (error is not null) return SaveScheduledTaskResult.ValidationFailed(error);
 
         // New tasks are always created enabled, so the enabled cap gates creation.

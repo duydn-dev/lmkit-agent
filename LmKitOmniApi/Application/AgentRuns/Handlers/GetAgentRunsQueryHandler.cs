@@ -2,20 +2,30 @@ using LmKitOmniApi.Application.AgentRuns.Queries;
 using LmKitOmniApi.Infrastructure.Data;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using LmKitOmniApi.Application.Common;
 
 namespace LmKitOmniApi.Application.AgentRuns.Handlers;
 
-public sealed class GetAgentRunsQueryHandler : IRequestHandler<GetAgentRunsQuery, List<AgentRunSummaryDto>>
+public sealed class GetAgentRunsQueryHandler : IRequestHandler<GetAgentRunsQuery, Common.PagedResult<AgentRunSummaryDto>>
 {
     private readonly HermesDbContext _dbContext;
 
     public GetAgentRunsQueryHandler(HermesDbContext dbContext) => _dbContext = dbContext;
 
-    public async Task<List<AgentRunSummaryDto>> Handle(GetAgentRunsQuery request, CancellationToken cancellationToken)
+    public async Task<Common.PagedResult<AgentRunSummaryDto>> Handle(GetAgentRunsQuery request, CancellationToken cancellationToken)
     {
-        return await _dbContext.AgentRuns
+        var query = _dbContext.AgentRuns
             .AsNoTracking()
-            .Where(run => run.TenantId == request.TenantId && run.UserId == request.UserId)
+            .Where(run => run.TenantId == request.TenantId && run.UserId == request.UserId);
+
+        var search = request.Search?.Trim();
+        if (!string.IsNullOrEmpty(search))
+        {
+            var pattern = $"%{search}%";
+            query = query.Where(run => EF.Functions.Like(run.Goal, pattern));
+        }
+
+        return await query
             .OrderByDescending(run => run.CreatedAtUtc)
             .Select(run => new AgentRunSummaryDto
             {
@@ -26,6 +36,6 @@ public sealed class GetAgentRunsQueryHandler : IRequestHandler<GetAgentRunsQuery
                 CreatedAtUtc = run.CreatedAtUtc,
                 CompletedAtUtc = run.CompletedAtUtc
             })
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(request.Page, request.PageSize, cancellationToken);
     }
 }

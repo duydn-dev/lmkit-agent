@@ -136,7 +136,36 @@ public class ScheduledTaskWorker : BackgroundService
         var runStartedUtc = DateTime.UtcNow;
         var (status, error, notification) = task.RunMode == ScheduledTaskRules.AgentRunMode
             ? await ExecuteAgentTaskAsync(scopedServices, modelManager, task, stoppingToken)
-            : await ExecuteTaskAsync(modelManager, task, stoppingToken);
+            : await ExecuteTaskAsync(scopedServices, modelManager, task, stoppingToken);
+
+        // Giao webhook (nếu lịch khai): CHỈ khi run thành công, và thất bại giao không
+        // bao giờ đổi kết quả run — chỉ nối cảnh báo vào notification + log.
+        if (status == SucceededStatus && notification is not null
+            && !string.IsNullOrWhiteSpace(task.DeliveryWebhookUrl))
+        {
+            var deliverer = scopedServices.GetRequiredService<LmKitOmniApi.Infrastructure.AI.Web.ScheduleWebhookDeliverer>();
+            string? deliveryError;
+            try
+            {
+                deliveryError = await deliverer.DeliverAsync(
+                    task.Id, task.Name, task.RunMode, notification.Body, DateTime.UtcNow,
+                    task.DeliveryWebhookUrl!, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "📮 [ScheduleWebhook] Task {TaskId}: lỗi không lường trước khi giao.", task.Id);
+                deliveryError = "lỗi không xác định khi gửi";
+            }
+            if (deliveryError is not null)
+            {
+                notification.Body = Truncate(
+                    notification.Body + $"\n\n⚠️ Giao webhook thất bại: {deliveryError}.", MaxNotificationBodyLength);
+            }
+        }
 
         // ALWAYS finalize the run bookkeeping, whatever the outcome above.
         task.LastRunUtc = runStartedUtc;
@@ -207,7 +236,8 @@ public class ScheduledTaskWorker : BackgroundService
         {
             TenantId = task.TenantId,
             UserId = task.UserId,
-            Goal = task.Prompt
+            Goal = task.Prompt,
+            CustomAgentId = task.CustomAgentId
         };
 
         try
@@ -296,6 +326,7 @@ public class ScheduledTaskWorker : BackgroundService
     /// a short Vietnamese error notification.
     /// </summary>
     private async Task<(string Status, string? Error, Notification? Notification)> ExecuteTaskAsync(
+        IServiceProvider scopedServices,
         LmModelManager modelManager,
         ScheduledTask task,
         CancellationToken stoppingToken)
@@ -320,10 +351,31 @@ public class ScheduledTaskWorker : BackgroundService
             using var runCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             runCts.CancelAfter(MaxRunDuration);
 
+            // Persona (tùy chọn) cho chế độ completion: SystemPrompt của lượt suy luận.
+            // DbContext RIÊNG vì context của vòng lặp đang track ScheduledTask.
+            string? personaPrompt = null;
+            if (task.CustomAgentId is { } personaAgentId)
+            {
+                using var personaScope = scopedServices.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var personaDb = personaScope.ServiceProvider.GetRequiredService<HermesDbContext>();
+                personaPrompt = await personaDb.CustomAgents.AsNoTracking()
+                    .Where(agent => agent.Id == personaAgentId
+                        && agent.TenantId == task.TenantId
+                        && (agent.OwnerUserId == task.UserId || agent.IsSharedWithTenant))
+                    .Select(agent => agent.PersonaPrompt)
+                    .FirstOrDefaultAsync(runCts.Token);
+                if (personaPrompt is null)
+                {
+                    _logger.LogWarning(
+                        "Scheduled task {TaskId}: persona agent {AgentId} không còn truy cập được — chạy không persona.",
+                        task.Id, personaAgentId);
+                }
+            }
+
             string completion;
             await using (var inferenceLease = await modelManager.AcquireChatInferenceAsync(runCts.Token))
             {
-                var (resultTask, threadCompleted) = StartSingleTurnCompletion(model, task.Prompt, runCts.Token);
+                var (resultTask, threadCompleted) = StartSingleTurnCompletion(model, task.Prompt, personaPrompt, runCts.Token);
                 try
                 {
                     completion = await resultTask.WaitAsync(runCts.Token);
@@ -392,7 +444,8 @@ public class ScheduledTaskWorker : BackgroundService
     /// timeout, but MUST await <c>Completed</c> before releasing the inference lease so a timed-out
     /// run cannot leave native inference running on the shared model past lease release.
     /// </summary>
-    private static (Task<string> Result, Task Completed) StartSingleTurnCompletion(LM model, string prompt, CancellationToken ct)
+    private static (Task<string> Result, Task Completed) StartSingleTurnCompletion(
+        LM model, string prompt, string? systemPrompt, CancellationToken ct)
     {
         var completionSource = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var threadCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -404,6 +457,8 @@ public class ScheduledTaskWorker : BackgroundService
                 {
                     MaximumCompletionTokens = CompletionTokenLimit
                 };
+                if (!string.IsNullOrWhiteSpace(systemPrompt))
+                    chat.SystemPrompt = systemPrompt;
                 var result = chat.Submit(prompt, ct);
                 completionSource.TrySetResult(result.Completion ?? string.Empty);
             }

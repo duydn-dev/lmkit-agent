@@ -38,7 +38,7 @@ public sealed class AgentRunsApiTests : IClassFixture<LmKitApiFactory>
         var foreignRunId = SeedRun(OtherTenantId, OtherUserId, "Mục tiêu người khác", "Completed", steps: 1);
 
         var client = await OwnerClientAsync();
-        var runs = await client.GetFromJsonAsync<JsonElement[]>("/api/agent-runs");
+        var runs = await PagedJson.ItemsAsync(client, "/api/agent-runs");
 
         Assert.Contains(runs!, r => r.GetProperty("id").GetGuid() == ownRunId);
         Assert.DoesNotContain(runs!, r => r.GetProperty("id").GetGuid() == foreignRunId);

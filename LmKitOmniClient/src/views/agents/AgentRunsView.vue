@@ -47,6 +47,21 @@
                 />
               </div>
 
+              <div v-if="personaOptions.length > 0" class="grid gap-1 mb-3">
+                <label for="agent-run-persona" class="text-sm font-medium text-gray-700">Persona (tùy chọn)</label>
+                <Select
+                  v-model="personaAgentId"
+                  :options="personaOptions"
+                  optionLabel="label"
+                  optionValue="value"
+                  inputId="agent-run-persona"
+                  showClear
+                  :disabled="isStreaming"
+                  placeholder="Agent mặc định"
+                  class="w-full" />
+                <p class="text-xs text-gray-400">Run dùng persona + tool whitelist + tri thức + LoRA của agent được chọn.</p>
+              </div>
+
               <div class="flex items-center justify-end gap-2">
                 <Button
                   v-if="isStreaming"
@@ -370,6 +385,16 @@
             {{ runsError }}
           </div>
 
+          <span class="relative block mb-3">
+            <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs" aria-hidden="true"></i>
+            <InputText
+              v-model="runList.search.value"
+              placeholder="Tìm theo mục tiêu…"
+              class="!pl-8 w-full"
+              aria-label="Tìm kiếm lần chạy"
+              @input="runList.onSearchInput" />
+          </span>
+
           <div v-if="runsLoading && runs.length === 0" role="status" class="flex flex-col items-center justify-center py-12 text-gray-500">
             <i class="pi pi-spin pi-spinner text-xl mb-2" aria-hidden="true"></i>
             <p class="text-sm">Đang tải...</p>
@@ -402,10 +427,28 @@
                   <span>{{ run.stepCount }} bước</span>
                   <span aria-hidden="true">·</span>
                   <time :datetime="run.createdAtUtc" :title="absoluteTime(run.createdAtUtc)">{{ relativeTime(run.createdAtUtc) }}</time>
+                  <button
+                    v-if="isCancellable(run.status)"
+                    type="button"
+                    class="ml-auto inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-0.5 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50 cursor-pointer"
+                    :disabled="cancellingRunId === run.id"
+                    :aria-label="`Hủy lần chạy: ${run.goal}`"
+                    @click.stop="confirmCancelRun(run)">
+                    <i class="pi pi-times-circle text-[10px]" aria-hidden="true"></i>
+                    {{ cancellingRunId === run.id ? 'Đang hủy…' : 'Hủy' }}
+                  </button>
                 </div>
               </button>
             </li>
           </ul>
+
+          <Paginator
+            v-if="runList.totalRecords.value > runList.pageSize.value"
+            :rows="runList.pageSize.value"
+            :first="runList.first.value"
+            :totalRecords="runList.totalRecords.value"
+            class="mt-3"
+            @page="runList.onPage" />
         </aside>
       </div>
     </div>
@@ -414,10 +457,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import { ChatSseParser } from '@/utils/chatSse';
+import { useServerPage } from '@/composables/useServerPage';
 import { parseProducedFile, type ProducedFile } from '@/composables/useChatStream';
 import {
   approvalIdFromMarkerText,
@@ -502,9 +548,68 @@ const resetApprovalGate = (): void => {
 };
 
 // --- Past runs (right column) --------------------------------------------
-const runs = ref<AgentRunSummary[]>([]);
-const runsLoading = ref(false);
-const runsError = ref('');
+const confirm = useConfirm();
+const toast = useToast();
+
+// Getlist chuẩn server-side cho cột "Lần chạy gần đây" (alias giữ template cũ).
+const runList = useServerPage<AgentRunSummary>(ApiFactory.AGENT_RUNS.BASE, { pageSize: 10, errorLabel: 'danh sách lần chạy' });
+const runs = runList.rows;
+
+// --- Persona cho run mới (nguồn: Agent Studio; im lặng khi trống/lỗi) -------
+const personaAgentId = ref<string | null>(null);
+const personaOptions = ref<{ label: string; value: string }[]>([]);
+const loadPersonaOptions = async () => {
+  try {
+    const response = await http.get(`${ApiFactory.AGENTS.CUSTOM}?page=1&pageSize=100`);
+    if (!response.ok) return;
+    const page = await response.json();
+    const items = (Array.isArray(page) ? page : page.items ?? []) as { id: string; name: string }[];
+    personaOptions.value = items.map((agent) => ({ label: agent.name, value: agent.id }));
+  } catch { /* persona là tăng cường — không chặn màn hình */ }
+};
+
+// --- Hủy run đang đỗ (chờ phê duyệt / chờ resume) ----------------------------
+const cancellingRunId = ref<string | null>(null);
+const isCancellable = (status: string) => status === 'Running' || status === 'AwaitingApproval';
+
+const confirmCancelRun = (run: AgentRunSummary) => {
+  confirm.require({
+    header: 'Hủy lần chạy',
+    message: `Hủy lần chạy "${run.goal}"? Phê duyệt đang treo (nếu có) cũng bị hủy theo.`,
+    icon: 'pi pi-exclamation-triangle',
+    acceptLabel: 'Hủy run',
+    rejectLabel: 'Đóng',
+    acceptProps: { severity: 'danger' },
+    rejectProps: { severity: 'secondary', outlined: true },
+    accept: () => { void performCancelRun(run); }
+  });
+};
+
+const performCancelRun = async (run: AgentRunSummary) => {
+  cancellingRunId.value = run.id;
+  try {
+    const response = await http.post(ApiFactory.AGENT_RUNS.CANCEL(run.id));
+    if (response.status === 204) {
+      toast.add({ severity: 'success', summary: 'Đã hủy lần chạy', life: 3000 });
+      await runList.reload();
+      if (selectedRunId.value === run.id) await openRun(run.id);
+    } else {
+      toast.add({
+        severity: response.status === 409 ? 'warn' : 'error',
+        summary: 'Không thể hủy',
+        detail: await readApiError(response, 'Không thể hủy lần chạy'),
+        life: 6000
+      });
+      if (response.status === 409) await runList.reload();
+    }
+  } catch (cause) {
+    toast.add({ severity: 'error', summary: 'Không thể hủy', detail: errorMessage(cause, 'Không thể hủy lần chạy.'), life: 6000 });
+  } finally {
+    cancellingRunId.value = null;
+  }
+};
+const runsLoading = runList.loading;
+const runsError = runList.error;
 
 // --- Selected run detail (main column) -----------------------------------
 const selectedRunId = ref('');
@@ -577,19 +682,7 @@ const approvalExpiryLabel = computed((): string => {
   return `Còn ${Math.round(hours / 24)} ngày để phê duyệt.`;
 });
 
-const loadRuns = async (): Promise<void> => {
-  runsLoading.value = runs.value.length === 0;
-  runsError.value = '';
-  try {
-    const response = await http.get(ApiFactory.AGENT_RUNS.BASE);
-    if (response.ok) runs.value = await response.json();
-    else runsError.value = await readApiError(response, 'Không thể tải danh sách lần chạy');
-  } catch (cause) {
-    runsError.value = errorMessage(cause, 'Không thể tải danh sách lần chạy.');
-  } finally {
-    runsLoading.value = false;
-  }
-};
+const loadRuns = (): Promise<void> => runList.reload();
 
 const openRun = async (id: string): Promise<void> => {
   selectedRunId.value = id;
@@ -769,7 +862,7 @@ const runGoal = async (): Promise<void> => {
   controller = localController;
 
   try {
-    const response = await http.post(ApiFactory.AGENT_RUNS.BASE, { goal: trimmed });
+    const response = await http.post(ApiFactory.AGENT_RUNS.BASE, { goal: trimmed, customAgentId: personaAgentId.value ?? undefined });
     if (!response.ok) throw new Error(await readApiError(response, 'Không thể bắt đầu phiên agent'));
     if (!response.body) throw new Error('Trình duyệt không hỗ trợ streaming response.');
 
@@ -877,6 +970,7 @@ const stopRun = (): void => {
 
 onMounted(() => {
   void loadRuns();
+  void loadPersonaOptions();
 });
 
 onUnmounted(stopRun);

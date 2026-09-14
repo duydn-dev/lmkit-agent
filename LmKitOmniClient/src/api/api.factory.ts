@@ -110,7 +110,8 @@ export const ApiFactory = {
   },
   AGENT_RUNS: {
     BASE: '/api/agent-runs',
-    BY_ID: (id: string) => `/api/agent-runs/${id}`
+    BY_ID: (id: string) => `/api/agent-runs/${id}`,
+    CANCEL: (id: string) => `/api/agent-runs/${id}/cancel`
   },
   TENANTS: {
     BASE: '/api/tenants',

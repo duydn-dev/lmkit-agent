@@ -45,6 +45,33 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
 
         var goal = request.Goal.Trim();
 
+        // Persona (tùy chọn): cùng phép resolve + cùng phép hợp thành options với chat
+        // (StreamChatCommandHandler) — tenant-scoped, chủ sở hữu hoặc agent chia sẻ.
+        // Không tìm thấy → chạy không persona: soft reference đúng nghĩa.
+        Application.Abstractions.AgentRequestOptions? options = null;
+        if (request.CustomAgentId is { } customAgentId)
+        {
+            var customAgent = await _dbContext.CustomAgents
+                .AsNoTracking()
+                .FirstOrDefaultAsync(agent => agent.Id == customAgentId
+                    && agent.TenantId == request.TenantId
+                    && (agent.OwnerUserId == request.UserId || agent.IsSharedWithTenant),
+                    cancellationToken);
+            if (customAgent is not null)
+            {
+                var allowedTools = Application.CustomAgents.CustomAgentRules.ParseToolsCsv(customAgent.AllowedToolsCsv);
+                options = new Application.Abstractions.AgentRequestOptions
+                {
+                    AllowWebSearch = allowedTools is null
+                        || allowedTools.Contains("SearchWeb", StringComparer.OrdinalIgnoreCase),
+                    PersonaPrompt = customAgent.PersonaPrompt,
+                    AllowedTools = allowedTools,
+                    KnowledgeDocumentIds = Application.CustomAgents.CustomAgentRules.ParseDocumentIdsCsv(customAgent.KnowledgeDocumentIdsCsv),
+                    LoraAdapterId = customAgent.LoraAdapterId
+                };
+            }
+        }
+
         // Hidden session = HITL/approval substrate; excluded from the chat list.
         var session = new ChatSession
         {
@@ -84,7 +111,7 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
         try
         {
             await foreach (var text in _orchestrator.StreamProcessQueryAsync(
-                request.TenantId, session.Id, request.UserId, agentRole, goal, history, options: null,
+                request.TenantId, session.Id, request.UserId, agentRole, goal, history, options,
                 cancellationToken, steps))
             {
                 contentBuilder.Append(text);

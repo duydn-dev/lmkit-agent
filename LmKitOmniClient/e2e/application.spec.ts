@@ -117,7 +117,9 @@ async function mockAuthenticatedApi(page: Page) {
     // Dropdown gán tenant trên màn kết nối CSDL.
     if (path === '/api/tenants/options') return json(route, []);
     // Agent mode: past-runs list + a streamed run (run id, thinking, one step, result).
-    if (path === '/api/agent-runs' && method === 'GET') return json(route, []);
+    if (path === '/api/agent-runs' && method === 'GET') return json(route, paged([]));
+    // Persona pickers (Automation Agent + Task Scheduler) — danh sách trống là đủ.
+    if (path === '/api/agents/custom' && method === 'GET') return json(route, paged([]));
     if (path === '/api/agent-runs' && method === 'POST') {
       return route.fulfill({
         status: 200,

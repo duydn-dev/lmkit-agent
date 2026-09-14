@@ -289,6 +289,19 @@ builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.IWebReadService, L
 // resolved address AT CONNECT TIME with the same classifier as URL validation
 // (SsrfSafeConnect) — a rebinding API host is refused at the socket. Writes map to the
 // approval-required "CallApiWrite" permission, so they are always human-gated.
+// Kênh giao kết quả lịch qua webhook (TẮT mặc định — ScheduleWebhookOptions).
+// Cùng khuôn SSRF với call_api: client riêng không auto-redirect + SsrfSafeConnect.
+builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Web.ScheduleWebhookOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Web.ScheduleWebhookOptions.SectionName));
+builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.ScheduleWebhookDeliverer>();
+builder.Services.AddHttpClient(LmKitOmniApi.Infrastructure.AI.Web.ScheduleWebhookDeliverer.HttpClientName, client =>
+{
+    client.Timeout = Timeout.InfiniteTimeSpan; // ngân sách nằm trong CTS của deliverer
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+    ConnectCallback = SsrfSafeConnect.CreateVettedConnectCallback()
+});
+
 builder.Services.Configure<LmKitOmniApi.Infrastructure.AI.Web.ApiCallOptions>(builder.Configuration.GetSection(LmKitOmniApi.Infrastructure.AI.Web.ApiCallOptions.SectionName));
 builder.Services.AddScoped<LmKitOmniApi.Infrastructure.AI.Web.ApiCallService>();
 builder.Services.AddHttpClient(LmKitOmniApi.Infrastructure.AI.Web.ApiCallService.HttpClientName, client =>
