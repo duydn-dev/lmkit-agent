@@ -97,3 +97,8 @@ LmKitOmniClient/src/**/*.js
 
 # Coverage output written by dotnet test
 TestResults/
+
+# License files thuong mai (Aspose/Conholdate...) — KHONG BAO GIO commit;
+# tro toi bang OfficeAuthoring__AsposeLicensePath (env/appsettings server).
+*.lic
+[Ll]icense [Kk]ey.txt
