@@ -33,6 +33,9 @@ public class CustomAgentDto
 
     public List<Guid> KnowledgeDocumentIds { get; set; } = new();
     public bool IsSharedWithTenant { get; set; }
+
+    /// <summary>Adapter LoRA đang gán (soft reference) — null khi không dùng.</summary>
+    public Guid? LoraAdapterId { get; set; }
     public bool IsOwner { get; set; }
     public DateTime CreatedAt { get; set; }
 }

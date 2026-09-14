@@ -70,55 +70,69 @@
   https://may-chu-cua-ban/api/chat/sessions</code></pre>
       </section>
 
-      <div v-if="pageError" role="alert" class="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-        {{ pageError }}
+      <div v-if="list.error.value" role="alert" class="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {{ list.error.value }}
       </div>
 
-      <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-500" role="status">
-        <i class="pi pi-spin pi-spinner text-2xl mb-3" aria-hidden="true"></i>
-        <p class="text-sm">Đang tải danh sách API key...</p>
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <span class="relative">
+          <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs" aria-hidden="true"></i>
+          <InputText v-model="list.search.value" placeholder="Tìm theo tên khóa…" class="!pl-8 w-72 max-w-full" aria-label="Tìm kiếm API key" @input="list.onSearchInput" />
+        </span>
+        <Button icon="pi pi-refresh" severity="secondary" outlined :loading="list.loading.value" aria-label="Tải lại" @click="list.reload" />
       </div>
 
-      <div v-else-if="apiKeys.length === 0" class="flex flex-col items-center justify-center py-16 text-center">
-        <div class="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center mb-5 shadow-inner">
-          <i class="pi pi-key text-3xl text-gray-300" aria-hidden="true"></i>
-        </div>
-        <h3 class="text-lg font-semibold text-gray-600 mb-1">Chưa có API key nào</h3>
-        <p class="text-sm text-gray-400 max-w-xs mb-4">Tạo API key đầu tiên để tích hợp hệ thống bên ngoài với nền tảng.</p>
-        <Button label="Tạo API key" icon="pi pi-plus" @click="openCreateForm" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
-      </div>
-
-      <div v-else class="grid gap-2">
-        <div
-          v-for="apiKey in apiKeys"
-          :key="apiKey.id"
-          class="flex flex-wrap items-center justify-between gap-3 p-4 bg-white border border-gray-200 rounded-2xl"
-        >
-          <div class="min-w-0 flex-1 basis-64">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="text-sm font-semibold text-gray-900 truncate">{{ apiKey.name }}</span>
-              <span
-                class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border"
-                :class="keyStatus(apiKey).classes"
-              >{{ keyStatus(apiKey).label }}</span>
-            </div>
-            <p class="text-xs text-gray-500 mt-1">
-              {{ usageLabel(apiKey) }} · {{ expiryLabel(apiKey) }} · Tạo ngày {{ formatDate(apiKey.createdAtUtc) }}
-            </p>
+      <DataTable
+        :value="list.rows.value"
+        lazy
+        paginator
+        :rows="list.pageSize.value"
+        :first="list.first.value"
+        :totalRecords="list.totalRecords.value"
+        :loading="list.loading.value"
+        :rowsPerPageOptions="[10, 20, 50]"
+        dataKey="id"
+        class="bg-white rounded-lg border border-gray-200 overflow-hidden"
+        @page="list.onPage">
+        <template #empty>
+          <div class="p-10 text-center text-gray-500 text-sm">
+            <i class="pi pi-key text-3xl text-gray-300 block mb-3" aria-hidden="true"></i>
+            {{ list.search.value ? 'Không tìm thấy API key phù hợp.' : 'Chưa có API key nào — tạo khóa đầu tiên để tích hợp hệ thống ngoài.' }}
           </div>
-          <Button
-            icon="pi pi-ban"
-            label="Thu hồi"
-            severity="danger"
-            outlined
-            :disabled="!apiKey.isActive || revokingId !== null"
-            :loading="revokingId === apiKey.id"
-            @click="revokeKey(apiKey)"
-            :aria-label="`Thu hồi API key ${apiKey.name}`"
-            class="!min-h-11 !px-3 !rounded-xl !text-sm flex-shrink-0"
-          />
-        </div>
-      </div>
+        </template>
+
+        <Column field="name" header="Tên khóa" style="min-width: 12rem">
+          <template #body="{ data }">
+            <span class="text-sm font-semibold text-gray-900">{{ data.name }}</span>
+            <div class="text-xs text-gray-400 mt-0.5">Tạo ngày {{ formatDate(data.createdAtUtc) }}</div>
+          </template>
+        </Column>
+        <Column header="Trạng thái" style="min-width: 8rem">
+          <template #body="{ data }">
+            <Tag :value="keyStatus(data).label" :severity="keyStatus(data).severity" />
+          </template>
+        </Column>
+        <Column header="Sử dụng" style="min-width: 10rem">
+          <template #body="{ data }"><span class="text-sm text-gray-700 tabular-nums">{{ usageLabel(data) }}</span></template>
+        </Column>
+        <Column header="Hết hạn" style="min-width: 10rem">
+          <template #body="{ data }"><span class="text-sm text-gray-700">{{ expiryLabel(data) }}</span></template>
+        </Column>
+        <Column header="Thao tác" style="width: 8rem">
+          <template #body="{ data }">
+            <Button
+              icon="pi pi-ban"
+              label="Thu hồi"
+              severity="danger"
+              outlined
+              size="small"
+              :disabled="!data.isActive || revokingId !== null"
+              :loading="revokingId === data.id"
+              :aria-label="`Thu hồi API key ${data.name}`"
+              @click="confirmRevoke(data)" />
+          </template>
+        </Column>
+      </DataTable>
     </div>
 
     <!-- Create Dialog -->
@@ -169,10 +183,13 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
+import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import { formatDate } from '@/utils/date';
+import { useServerPage } from '@/composables/useServerPage';
 
 interface ApiKey {
   id: string;
@@ -199,9 +216,9 @@ interface ApiKeyForm {
   maxRequests: number | null;
 }
 
-const apiKeys = ref<ApiKey[]>([]);
-const loading = ref(false);
-const pageError = ref('');
+const confirm = useConfirm();
+const toast = useToast();
+const list = useServerPage<ApiKey>(ApiFactory.APIKEYS.BASE, { errorLabel: 'danh sách API key' });
 const revokingId = ref<string | null>(null);
 
 const showForm = ref(false);
@@ -218,20 +235,6 @@ let copyResetTimer: ReturnType<typeof setTimeout> | undefined;
 
 const emptyForm = (): ApiKeyForm => ({ name: '', expiresInDays: 90, maxRequests: 0 });
 const form = ref<ApiKeyForm>(emptyForm());
-
-const loadKeys = async () => {
-  loading.value = apiKeys.value.length === 0;
-  pageError.value = '';
-  try {
-    const response = await http.get(ApiFactory.APIKEYS.BASE);
-    if (response.ok) apiKeys.value = await response.json();
-    else pageError.value = await readApiError(response, 'Không thể tải danh sách API key');
-  } catch (cause) {
-    pageError.value = errorMessage(cause, 'Không thể tải danh sách API key.');
-  } finally {
-    loading.value = false;
-  }
-};
 
 const openCreateForm = () => {
   form.value = emptyForm();
@@ -260,7 +263,7 @@ const createKey = async () => {
     createdKey.value = await response.json() as CreatedApiKey;
     rawKeyCopied.value = false;
     showForm.value = false;
-    await loadKeys();
+    await list.reload();
   } catch (cause) {
     formError.value = errorMessage(cause, 'Không thể tạo API key.');
   } finally {
@@ -276,7 +279,7 @@ const copyRawKey = async () => {
     if (copyResetTimer) clearTimeout(copyResetTimer);
     copyResetTimer = setTimeout(() => { rawKeyCopied.value = false; }, 2500);
   } catch {
-    pageError.value = 'Không thể sao chép tự động. Hãy bôi đen khóa và sao chép thủ công.';
+    toast.add({ severity: 'warn', summary: 'Không thể sao chép tự động', detail: 'Hãy bôi đen khóa và sao chép thủ công.', life: 5000 });
   }
 };
 
@@ -285,16 +288,31 @@ const dismissCreatedKey = () => {
   rawKeyCopied.value = false;
 };
 
+const confirmRevoke = (apiKey: ApiKey) => {
+  confirm.require({
+    header: 'Thu hồi API key',
+    message: `Thu hồi API key "${apiKey.name}"? Ứng dụng đang dùng khóa này sẽ mất quyền truy cập ngay lập tức.`,
+    icon: 'pi pi-exclamation-triangle',
+    acceptLabel: 'Thu hồi',
+    rejectLabel: 'Hủy',
+    acceptProps: { severity: 'danger' },
+    rejectProps: { severity: 'secondary', outlined: true },
+    accept: () => { void revokeKey(apiKey); }
+  });
+};
+
 const revokeKey = async (apiKey: ApiKey) => {
-  if (!confirm(`Thu hồi API key "${apiKey.name}"? Ứng dụng đang dùng khóa này sẽ mất quyền truy cập ngay lập tức.`)) return;
   revokingId.value = apiKey.id;
-  pageError.value = '';
   try {
     const response = await http.delete(ApiFactory.APIKEYS.BY_ID(apiKey.id));
-    if (response.ok) await loadKeys();
-    else pageError.value = await readApiError(response, 'Không thể thu hồi API key');
+    if (response.ok) {
+      toast.add({ severity: 'success', summary: 'Đã thu hồi API key', detail: apiKey.name, life: 3000 });
+      await list.reload();
+    } else {
+      toast.add({ severity: 'error', summary: 'Không thể thu hồi', detail: await readApiError(response, 'Không thể thu hồi API key'), life: 6000 });
+    }
   } catch (cause) {
-    pageError.value = errorMessage(cause, 'Không thể thu hồi API key.');
+    toast.add({ severity: 'error', summary: 'Không thể thu hồi', detail: errorMessage(cause, 'Không thể thu hồi API key.'), life: 6000 });
   } finally {
     revokingId.value = null;
   }
@@ -306,10 +324,10 @@ const isExpired = (apiKey: ApiKey): boolean => {
   return !Number.isNaN(time) && time < Date.now();
 };
 
-const keyStatus = (apiKey: ApiKey): { label: string; classes: string } => {
-  if (!apiKey.isActive) return { label: 'Đã thu hồi', classes: 'bg-gray-50 text-gray-500 border-gray-200' };
-  if (isExpired(apiKey)) return { label: 'Hết hạn', classes: 'bg-amber-50 text-amber-800 border-amber-200' };
-  return { label: 'Hoạt động', classes: 'bg-emerald-50 text-emerald-900 border-emerald-200' };
+const keyStatus = (apiKey: ApiKey): { label: string; severity: string } => {
+  if (!apiKey.isActive) return { label: 'Đã thu hồi', severity: 'secondary' };
+  if (isExpired(apiKey)) return { label: 'Hết hạn', severity: 'warn' };
+  return { label: 'Hoạt động', severity: 'success' };
 };
 
 const usageLabel = (apiKey: ApiKey): string => {
@@ -323,7 +341,7 @@ const expiryLabel = (apiKey: ApiKey): string => {
 };
 
 onMounted(() => {
-  void loadKeys();
+  void list.load();
 });
 
 onUnmounted(() => {

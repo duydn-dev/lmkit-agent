@@ -235,6 +235,7 @@ public static class CustomAgentRules
             AllowedTools = ParseToolsCsv(agent.AllowedToolsCsv)?.ToList(),
             KnowledgeDocumentIds = ParseDocumentIdsCsv(agent.KnowledgeDocumentIdsCsv)?.ToList() ?? new List<Guid>(),
             IsSharedWithTenant = agent.IsSharedWithTenant,
+            LoraAdapterId = agent.LoraAdapterId,
             IsOwner = isOwner,
             CreatedAt = agent.CreatedAtUtc
         };

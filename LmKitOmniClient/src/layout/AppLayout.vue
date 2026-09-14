@@ -1,41 +1,53 @@
 <template>
   <div class="flex h-screen bg-gray-50 text-gray-900 font-sans">
+    <!-- Host toàn cục: mọi view gọi useConfirm()/useToast() đều hiển thị qua đây -->
+    <ConfirmDialog class="max-w-md" />
+    <Toast position="top-right" />
     
     <!-- Sidebar -->
     <aside class="w-[260px] bg-white border-r border-gray-200 flex flex-col hidden md:flex transition-all duration-300" aria-label="Thanh bên ứng dụng">
-      <!-- Brand -->
-      <div class="px-5 py-4 border-b border-gray-100">
+      <!-- Brand: dải nhận diện cơ quan (khối Chính phủ — đỏ quốc kỳ, sao vàng) -->
+      <div class="px-4 py-3.5 bg-gradient-to-r from-[--color-gov-red-dark] to-[--color-gov-red] border-b-2 border-[--color-gov-yellow]">
         <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center shadow-sm">
-            <i class="pi pi-sparkles text-white text-sm"></i>
+          <div class="w-10 h-10 rounded-full bg-[--color-gov-yellow] flex items-center justify-center shadow-md flex-shrink-0 ring-2 ring-white/30">
+            <i class="pi pi-star-fill text-[--color-gov-red] text-lg" aria-hidden="true"></i>
           </div>
           <div class="min-w-0">
-            <div class="text-sm font-bold text-gray-900 truncate">CILA - AI Agent</div>
-            <div class="text-[11px] text-gray-500 truncate leading-tight">Trung tâm Thông tin lưu trữ<br>Tài nguyên môi trường quốc gia</div>
+            <div class="text-sm font-bold text-white truncate tracking-wide">CILA · AI AGENT</div>
+            <div class="text-[10.5px] text-red-100 leading-tight">Trung tâm Thông tin lưu trữ<br>Tài nguyên môi trường quốc gia</div>
           </div>
         </div>
       </div>
 
-      <!-- Navigation -->
-      <nav class="flex-1 overflow-y-auto py-3 px-3" aria-label="Điều hướng">
+      <!-- Navigation: MỘT vùng cuộn duy nhất — menu và lịch sử chat không còn
+           tranh nhau chiều cao (trước đây hai vùng flex-1 khiến nhóm Quản trị
+           chìm dưới fold, tưởng như "thiếu page"). Nhóm gập/mở, trạng thái lưu lại. -->
+      <nav class="flex-1 min-h-0 overflow-y-auto py-3 px-3" aria-label="Điều hướng">
         <template v-for="group in visibleNavGroups" :key="group.title">
-          <div class="text-[10px] text-gray-400 font-semibold mb-1.5 mt-4 first:mt-0 px-2 uppercase tracking-widest">{{ group.title }}</div>
-          <router-link
-            v-for="item in group.items"
-            :key="item.to"
-            :to="item.to"
-            class="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-gray-50 text-gray-600 hover:text-gray-900 text-[13px] font-medium rounded-lg transition-colors cursor-pointer group/item"
-            active-class="!bg-sky-50 !text-sky-700 border-l-2 border-sky-500 -ml-[2px] pl-[12px]">
-            <i :class="item.icon + ' text-gray-400 group-hover/item:text-gray-600'" aria-hidden="true"></i>
-            <span>{{ item.label }}</span>
-          </router-link>
+          <button
+            type="button"
+            class="w-full flex items-center justify-between text-[10px] text-gray-400 hover:text-gray-600 font-semibold mb-1 mt-4 first:mt-0 px-2 uppercase tracking-widest cursor-pointer"
+            :aria-expanded="!collapsedGroups.has(group.title)"
+            @click="toggleGroup(group.title)">
+            <span>{{ group.title }}</span>
+            <i :class="collapsedGroups.has(group.title) ? 'pi pi-chevron-right' : 'pi pi-chevron-down'" class="text-[9px]" aria-hidden="true"></i>
+          </button>
+          <template v-if="!collapsedGroups.has(group.title)">
+            <router-link
+              v-for="item in group.items"
+              :key="item.to"
+              :to="item.to"
+              class="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-gray-50 text-gray-600 hover:text-gray-900 text-[13px] font-medium rounded-lg transition-colors cursor-pointer group/item"
+              active-class="!bg-red-50 !text-[--color-gov-red] border-l-2 border-[--color-gov-red] -ml-[2px] pl-[12px] font-semibold">
+              <i :class="item.icon + ' text-gray-400 group-hover/item:text-gray-600'" aria-hidden="true"></i>
+              <span>{{ item.label }}</span>
+            </router-link>
+          </template>
         </template>
-      </nav>
-      
-      <!-- Chat History -->
-      <div class="flex-1 overflow-y-auto border-t border-gray-100">
-        <div class="p-3">
-          <div class="text-[10px] text-gray-400 font-semibold mb-1.5 px-2 uppercase tracking-widest flex items-center justify-between">
+
+        <!-- Lịch sử chat: chỉ hữu ích trên màn Chat — nằm trong CÙNG vùng cuộn -->
+        <div v-if="isChatRoute" class="mt-4 border-t border-gray-100 pt-1">
+          <div class="text-[10px] text-gray-400 font-semibold mb-1.5 mt-2 px-2 uppercase tracking-widest flex items-center justify-between">
             <span>Lịch sử chat</span>
             <button @click="newChat" class="hover:text-gray-600 transition-colors rounded-md hover:bg-gray-100 w-8 h-8 flex items-center justify-center" aria-label="Tạo phiên chat mới">
               <i class="pi pi-plus text-xs"></i>
@@ -50,7 +62,6 @@
               placeholder="Tìm kiếm..."
               aria-label="Tìm kiếm đoạn chat" />
           </div>
-        </div>
         <div v-if="searchLoading" class="px-3 py-2 text-xs text-gray-400 italic" role="status">Đang tìm kiếm...</div>
         <template v-else>
           <div v-if="displayedSessions.length === 0" class="px-3 py-2 text-xs text-gray-400 italic text-center">
@@ -82,12 +93,13 @@
             </template>
           </div>
         </template>
-      </div>
-      
+        </div>
+      </nav>
+
       <!-- User Profile -->
       <div class="p-3 border-t border-gray-100">
         <button type="button" class="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer group" @click="openSettings" :aria-expanded="false">
-          <div class="w-8 h-8 rounded-full bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center flex-shrink-0">
+          <div class="w-8 h-8 rounded-full bg-gradient-to-br from-[--color-gov-red] to-[--color-gov-red-dark] flex items-center justify-center flex-shrink-0">
             <span class="text-[11px] font-bold text-white">{{ userInitials }}</span>
           </div>
           <div class="min-w-0 flex-1">
@@ -197,7 +209,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
+import { useConfirm } from 'primevue/useconfirm';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
@@ -210,7 +223,28 @@ interface ChatSession {
 }
 
 const router = useRouter();
+const route = useRoute();
+const confirm = useConfirm();
 const authStore = useAuthStore();
+
+/** Lịch sử chat chỉ hiện trên màn Chat — nơi duy nhất chọn phiên có ý nghĩa. */
+const isChatRoute = computed(() => route.path.startsWith('/chat'));
+
+// --- Nhóm menu gập/mở, lưu qua localStorage ---------------------------------
+const NAV_COLLAPSED_KEY = 'cila.nav.collapsed';
+const readCollapsed = (): Set<string> => {
+  try {
+    const raw = localStorage.getItem(NAV_COLLAPSED_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch { return new Set(); }
+};
+const collapsedGroups = ref<Set<string>>(readCollapsed());
+const toggleGroup = (title: string) => {
+  const next = new Set(collapsedGroups.value);
+  if (next.has(title)) next.delete(title); else next.add(title);
+  collapsedGroups.value = next;
+  try { localStorage.setItem(NAV_COLLAPSED_KEY, JSON.stringify([...next])); } catch { /* im lặng */ }
+};
 const userName = computed(() => authStore.currentUser?.fullName || authStore.currentUser?.email || 'Người dùng');
 const userRole = computed(() => authStore.currentUser?.role || 'Member');
 
@@ -224,33 +258,35 @@ const isAdmin = computed(() => userRole.value === 'Admin');
 interface NavItem { to: string; icon: string; label: string }
 interface NavGroup { title: string; items: NavItem[]; adminOnly?: boolean }
 
+// Nhãn dùng thuật ngữ kỹ thuật chuẩn ngành (Automation Agent, RAG, HITL, MCP,
+// LoRA…) theo yêu cầu vận hành; tiêu đề nhóm giữ tiếng Việt hành chính.
 const navGroups: NavGroup[] = [
   {
     title: 'Không gian làm việc',
     items: [
-      { to: '/chat', icon: 'pi pi-sparkles', label: 'AI Agent' },
-      { to: '/projects', icon: 'pi pi-folder', label: 'Dự án' },
-      { to: '/documents', icon: 'pi pi-file-pdf', label: 'Kho tài liệu (RAG)' },
-      { to: '/memory', icon: 'pi pi-history', label: 'Bộ nhớ trợ lý' },
-      { to: '/settings/custom-instructions', icon: 'pi pi-user-edit', label: 'Hướng dẫn tùy chỉnh' },
-      { to: '/agents', icon: 'pi pi-microchip-ai', label: 'Agents' },
-      { to: '/agents/content-creation', icon: 'pi pi-pen-to-square', label: 'Tạo nội dung' },
-      { to: '/agent-mode', icon: 'pi pi-bolt', label: 'Agent tự hành' },
-      { to: '/schedules', icon: 'pi pi-calendar-clock', label: 'Lịch tác vụ' },
-      { to: '/research', icon: 'pi pi-compass', label: 'Nghiên cứu' }
+      { to: '/chat', icon: 'pi pi-sparkles', label: 'AI Chat' },
+      { to: '/projects', icon: 'pi pi-folder', label: 'Projects' },
+      { to: '/documents', icon: 'pi pi-file-pdf', label: 'RAG Documents' },
+      { to: '/memory', icon: 'pi pi-history', label: 'Agent Memory' },
+      { to: '/settings/custom-instructions', icon: 'pi pi-user-edit', label: 'Custom Instructions' }
     ]
   },
   {
-    title: 'Công cụ AI',
+    title: 'AI Studio',
     items: [
-      { to: '/tools/text', icon: 'pi pi-align-left', label: 'Phân tích văn bản' },
-      { to: '/tools/vision', icon: 'pi pi-image', label: 'Thị giác ảnh' }
+      { to: '/agents', icon: 'pi pi-microchip-ai', label: 'Agent Studio' },
+      { to: '/agents/content-creation', icon: 'pi pi-pen-to-square', label: 'Content Studio' },
+      { to: '/agent-mode', icon: 'pi pi-bolt', label: 'Automation Agent' },
+      { to: '/schedules', icon: 'pi pi-calendar-clock', label: 'Task Scheduler' },
+      { to: '/research', icon: 'pi pi-compass', label: 'Deep Research' },
+      { to: '/tools/text', icon: 'pi pi-align-left', label: 'Text Analytics' },
+      { to: '/tools/vision', icon: 'pi pi-image', label: 'Vision & OCR' }
     ]
   },
   {
     title: 'Vận hành',
     items: [
-      { to: '/approvals', icon: 'pi pi-check-square', label: 'Phê duyệt tác vụ' },
+      { to: '/approvals', icon: 'pi pi-check-square', label: 'HITL Approvals' },
       { to: '/api-keys', icon: 'pi pi-key', label: 'API Keys' }
     ]
   },
@@ -258,13 +294,15 @@ const navGroups: NavGroup[] = [
     title: 'Quản trị',
     adminOnly: true,
     items: [
-      { to: '/admin', icon: 'pi pi-th-large', label: 'Bảng điều khiển' },
-      { to: '/admin/users', icon: 'pi pi-users', label: 'Quản lý User' },
-      { to: '/admin/mcp-servers', icon: 'pi pi-server', label: 'Máy chủ MCP' },
-      { to: '/admin/knowledge', icon: 'pi pi-database', label: 'Cơ sở tri thức' },
-      { to: '/admin/databases', icon: 'pi pi-server', label: 'Quản lý Database' },
-      { to: '/admin/widget', icon: 'pi pi-qrcode', label: 'Widget nhúng' },
-      { to: '/admin/audit', icon: 'pi pi-shield', label: 'Nhật ký hoạt động' }
+      { to: '/admin', icon: 'pi pi-th-large', label: 'Dashboard' },
+      { to: '/admin/users', icon: 'pi pi-users', label: 'User Management' },
+      { to: '/admin/tenants', icon: 'pi pi-building', label: 'Tenant Management' },
+      { to: '/admin/databases', icon: 'pi pi-database', label: 'Database Connections' },
+      { to: '/admin/knowledge', icon: 'pi pi-book', label: 'Knowledge Base' },
+      { to: '/admin/mcp-servers', icon: 'pi pi-server', label: 'MCP Servers' },
+      { to: '/admin/lora', icon: 'pi pi-sliders-h', label: 'LoRA Adapters' },
+      { to: '/admin/widget', icon: 'pi pi-qrcode', label: 'Embed Widget' },
+      { to: '/admin/audit', icon: 'pi pi-shield', label: 'Audit Log' }
     ]
   }
 ];
@@ -505,8 +543,20 @@ const selectSession = (id: string) => {
   router.push(`/chat?id=${id}`);
 };
 
-const deleteSession = async (id: string) => {
-  if (!confirm("Bạn có chắc chắn muốn xóa đoạn chat này không?")) return;
+const deleteSession = (id: string) => {
+  confirm.require({
+    header: 'Xóa đoạn chat',
+    message: 'Bạn có chắc chắn muốn xóa đoạn chat này không?',
+    icon: 'pi pi-exclamation-triangle',
+    acceptLabel: 'Xóa',
+    rejectLabel: 'Hủy',
+    acceptProps: { severity: 'danger' },
+    rejectProps: { severity: 'secondary', outlined: true },
+    accept: () => { void performDeleteSession(id); }
+  });
+};
+
+const performDeleteSession = async (id: string) => {
   appError.value = '';
   try {
     const response = await http.delete(ApiFactory.CHAT.DELETE_SESSION(id));

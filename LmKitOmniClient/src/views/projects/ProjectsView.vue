@@ -25,8 +25,16 @@
 
     <!-- Main Content -->
     <div class="flex-1 max-w-7xl mx-auto w-full px-6 py-6">
-      <div v-if="pageError" role="alert" class="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-        {{ pageError }}
+      <div v-if="pageError || list.error.value" role="alert" class="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {{ pageError || list.error.value }}
+      </div>
+
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <span class="relative">
+          <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs" aria-hidden="true"></i>
+          <InputText v-model="list.search.value" placeholder="Tìm theo tên, mô tả dự án…" class="!pl-8 w-72 max-w-full" aria-label="Tìm kiếm dự án" @input="list.onSearchInput" />
+        </span>
+        <Button icon="pi pi-refresh" severity="secondary" outlined :loading="list.loading.value" aria-label="Tải lại" @click="list.reload" />
       </div>
 
       <div v-if="loading" class="flex flex-col items-center justify-center py-20 text-gray-500" role="status">
@@ -38,7 +46,7 @@
         <div class="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center mb-5 shadow-inner">
           <i class="pi pi-folder-open text-3xl text-gray-300" aria-hidden="true"></i>
         </div>
-        <h3 class="text-lg font-semibold text-gray-600 mb-1">Chưa có dự án nào</h3>
+        <h3 class="text-lg font-semibold text-gray-600 mb-1">{{ list.search.value ? 'Không tìm thấy dự án phù hợp' : 'Chưa có dự án nào' }}</h3>
         <p class="text-sm text-gray-400 max-w-xs mb-4">Tạo dự án đầu tiên để nhóm các đoạn chat và áp dụng hướng dẫn chung cho trợ lý.</p>
         <Button label="Tạo dự án" icon="pi pi-plus" @click="openCreateForm" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
       </div>
@@ -137,6 +145,15 @@
           </div>
         </div>
       </div>
+
+      <Paginator
+        v-if="list.totalRecords.value > list.pageSize.value"
+        :rows="list.pageSize.value"
+        :first="list.first.value"
+        :totalRecords="list.totalRecords.value"
+        :rowsPerPageOptions="[10, 20, 50]"
+        class="mt-4"
+        @page="list.onPage" />
     </div>
 
     <!-- Create / Edit Dialog -->
@@ -198,10 +215,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import { formatDate } from '@/utils/date';
+import { useServerPage } from '@/composables/useServerPage';
 
 interface Project {
   id: string;
@@ -229,9 +249,13 @@ interface ProjectForm {
 }
 
 const router = useRouter();
+const confirm = useConfirm();
+const toast = useToast();
 
-const projects = ref<Project[]>([]);
-const loading = ref(false);
+// Getlist chuẩn server-side; expose alias để template cũ (projects/loading) giữ nguyên.
+const list = useServerPage<Project>(ApiFactory.PROJECTS.BASE, { pageSize: 10, errorLabel: 'danh sách dự án' });
+const projects = list.rows;
+const loading = list.loading;
 const pageError = ref('');
 const deletingId = ref<string | null>(null);
 const chatStartingId = ref<string | null>(null);
@@ -249,20 +273,6 @@ const formError = ref('');
 
 const emptyForm = (): ProjectForm => ({ name: '', icon: '', description: '', instructions: '' });
 const form = ref<ProjectForm>(emptyForm());
-
-const loadProjects = async () => {
-  loading.value = projects.value.length === 0;
-  pageError.value = '';
-  try {
-    const response = await http.get(ApiFactory.PROJECTS.BASE);
-    if (response.ok) projects.value = await response.json();
-    else pageError.value = await readApiError(response, 'Không thể tải danh sách dự án');
-  } catch (cause) {
-    pageError.value = errorMessage(cause, 'Không thể tải danh sách dự án.');
-  } finally {
-    loading.value = false;
-  }
-};
 
 const loadSessions = async (projectId: string) => {
   projectSessions.value = [];
@@ -366,7 +376,7 @@ const saveProject = async () => {
       return;
     }
     showForm.value = false;
-    await loadProjects();
+    await list.reload();
   } catch (cause) {
     formError.value = errorMessage(cause, 'Không thể lưu dự án.');
   } finally {
@@ -374,15 +384,28 @@ const saveProject = async () => {
   }
 };
 
-const deleteProject = async (project: Project) => {
-  if (!confirm(`Xóa dự án "${project.name}"? Các đoạn chat trong dự án sẽ được giữ lại, chỉ không còn thuộc dự án nữa.`)) return;
+const deleteProject = (project: Project) => {
+  confirm.require({
+    header: 'Xóa dự án',
+    message: `Xóa dự án "${project.name}"? Các đoạn chat trong dự án sẽ được giữ lại, chỉ không còn thuộc dự án nữa.`,
+    icon: 'pi pi-exclamation-triangle',
+    acceptLabel: 'Xóa',
+    rejectLabel: 'Hủy',
+    acceptProps: { severity: 'danger' },
+    rejectProps: { severity: 'secondary', outlined: true },
+    accept: () => { void performDeleteProject(project); }
+  });
+};
+
+const performDeleteProject = async (project: Project) => {
   deletingId.value = project.id;
   pageError.value = '';
   try {
     const response = await http.delete(ApiFactory.PROJECTS.BY_ID(project.id));
     if (response.ok) {
       if (expandedId.value === project.id) expandedId.value = null;
-      projects.value = projects.value.filter((item) => item.id !== project.id);
+      toast.add({ severity: 'success', summary: 'Đã xóa dự án', detail: project.name, life: 3000 });
+      await list.reload();
     } else pageError.value = await readApiError(response, 'Không thể xóa dự án');
   } catch (cause) {
     pageError.value = errorMessage(cause, 'Không thể xóa dự án.');
@@ -392,6 +415,6 @@ const deleteProject = async (project: Project) => {
 };
 
 onMounted(() => {
-  void loadProjects();
+  void list.load();
 });
 </script>

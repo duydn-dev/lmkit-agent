@@ -8,7 +8,7 @@
             <i class="pi pi-bolt text-white text-sm" aria-hidden="true"></i>
           </div>
           <div>
-            <h1 class="text-xl font-bold text-gray-900 tracking-tight">Agent tự hành</h1>
+            <h1 class="text-xl font-bold text-gray-900 tracking-tight">Automation Agent</h1>
             <p class="text-xs text-gray-500">Giao một mục tiêu; agent tự lập kế hoạch và thực thi công cụ theo nhiều bước.</p>
           </div>
         </div>

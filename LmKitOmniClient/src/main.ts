@@ -3,11 +3,18 @@ import { createPinia } from 'pinia'
 import './style.css'
 import App from './App.vue'
 import PrimeVue from 'primevue/config'
-import Aura from '@primeuix/themes/aura'
+import { GovPreset } from './theme/gov-preset'
 import 'primeicons/primeicons.css'
+// Font quốc ngữ chính thức của giao diện: Be Vietnam Pro (self-host qua
+// @fontsource — không phụ thuộc CDN ngoài, đúng yêu cầu hạ tầng nội bộ).
+import '@fontsource/be-vietnam-pro/400.css'
+import '@fontsource/be-vietnam-pro/500.css'
+import '@fontsource/be-vietnam-pro/600.css'
+import '@fontsource/be-vietnam-pro/700.css'
 import router from './router'
 import ToastService from 'primevue/toastservice'
 import ConfirmationService from 'primevue/confirmationservice'
+import Tooltip from 'primevue/tooltip'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -16,7 +23,7 @@ app.use(pinia)
 app.use(router)
 app.use(PrimeVue, {
     theme: {
-        preset: Aura,
+        preset: GovPreset,
         options: {
             darkModeSelector: false,
             cssLayer: false
@@ -25,6 +32,7 @@ app.use(PrimeVue, {
 })
 app.use(ToastService)
 app.use(ConfirmationService)
+app.directive('tooltip', Tooltip)
 app.mount('#app')
 
 // --- PWA service worker -----------------------------------------------------

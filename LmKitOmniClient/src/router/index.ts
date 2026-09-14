@@ -21,7 +21,9 @@ const PAGE_TITLES: Record<string, string> = {
   AdminUsers: 'Quản lý người dùng',
   AdminMcpServers: 'MCP Servers',
   AdminKnowledge: 'Cơ sở kiến thức',
-  AdminDatabases: 'Cơ sở dữ liệu',
+  AdminDatabases: 'Database Connections',
+  AdminTenants: 'Tenant Management',
+  AdminLora: 'LoRA Adapters',
   AdminAudit: 'Nhật ký kiểm toán',
   AdminWidget: 'Widget Settings',
   ContentCreation: 'Tạo nội dung',
@@ -143,6 +145,18 @@ const router = createRouter({
           path: '/admin/databases',
           name: 'AdminDatabases',
           component: () => import('../views/admin/DatabaseConnectionsView.vue'),
+          meta: { requiresAuth: true, requiresAdmin: true }
+        },
+        {
+          path: '/admin/tenants',
+          name: 'AdminTenants',
+          component: () => import('../views/admin/TenantsView.vue'),
+          meta: { requiresAuth: true, requiresAdmin: true }
+        },
+        {
+          path: '/admin/lora',
+          name: 'AdminLora',
+          component: () => import('../views/admin/LoraAdaptersView.vue'),
           meta: { requiresAuth: true, requiresAdmin: true }
         },
         {

@@ -34,6 +34,11 @@ async function expectNoWcagViolations(page: Page) {
   }))).toEqual([]);
 }
 
+/** Bọc mảng items thành shape PagedResult chuẩn của các getlist quản lý. */
+function paged<T>(items: T[]) {
+  return { items, page: 1, pageSize: 20, totalCount: items.length, totalPages: 1 };
+}
+
 async function mockAuthenticatedApi(page: Page) {
   const browserErrors: string[] = [];
   page.on('pageerror', (error) => browserErrors.push(`pageerror: ${error.message}`));
@@ -80,11 +85,12 @@ async function mockAuthenticatedApi(page: Page) {
       }]);
     }
     if (path === '/api/users') {
-      return json(route, [{ ...user, isActive: true }]);
+      // Getlist chuẩn hóa: PagedResult { items, page, pageSize, totalCount, totalPages }.
+      return json(route, paged([{ ...user, isActive: true, createdAt: '2026-08-20T00:00:00Z', failedLoginAttempts: 0, lockoutEnd: null }]));
     }
     // The settings dialog fetches connection suggestions when an admin opens it.
     if (path === '/api/mcp-servers/catalog') return json(route, []);
-    if (path === '/api/mcp-servers') return json(route, []);
+    if (path === '/api/mcp-servers') return json(route, paged([]));
     // The notification bell polls this from the app shell on every view.
     if (path === '/api/notifications' && method === 'GET') return json(route, []);
     // ChatView refreshes the Canvas count badge whenever a session activates.
@@ -107,7 +113,9 @@ async function mockAuthenticatedApi(page: Page) {
     // Admin Hub stat card + Approvals inbox both read pending approvals.
     if (path === '/api/taskapproval/pending' && method === 'GET') return json(route, []);
     // Admin database-connections list (empty is enough to render the screen).
-    if (path === '/api/database-connections' && method === 'GET') return json(route, []);
+    if (path === '/api/database-connections' && method === 'GET') return json(route, paged([]));
+    // Dropdown gán tenant trên màn kết nối CSDL.
+    if (path === '/api/tenants/options') return json(route, []);
     // Agent mode: past-runs list + a streamed run (run id, thinking, one step, result).
     if (path === '/api/agent-runs' && method === 'GET') return json(route, []);
     if (path === '/api/agent-runs' && method === 'POST') {
@@ -188,13 +196,13 @@ test('admin can navigate documents, memory, users and the admin hub', async ({ p
   await expect(page.getByText('quy-trinh.pdf')).toBeVisible();
   await expectNoWcagViolations(page);
 
-  await page.getByRole('link', { name: 'Bộ nhớ trợ lý' }).click();
+  await page.getByRole('link', { name: 'Agent Memory' }).click();
   await expect(page.getByRole('heading', { name: 'Bộ nhớ của trợ lý' })).toBeVisible();
   await expect(page.getByText('Trả lời bằng tiếng Việt')).toBeVisible();
   await expectNoWcagViolations(page);
 
-  await page.getByRole('link', { name: 'Quản lý User' }).click();
-  await expect(page.getByRole('heading', { name: 'Quản lý Người dùng' })).toBeVisible();
+  await page.getByRole('link', { name: 'User Management' }).click();
+  await expect(page.getByRole('heading', { name: 'User Management' })).toBeVisible();
   await expect(page.getByRole('table').getByText('admin@example.test')).toBeVisible();
   await expectNoWcagViolations(page);
 
@@ -215,7 +223,7 @@ test('mobile navigation exposes the primary routes and closes after navigation',
   const menuButton = page.getByRole('button', { name: 'Mở menu điều hướng' });
   await menuButton.click();
   await expect(page.getByRole('navigation', { name: 'Điều hướng di động' })).toBeVisible();
-  await page.getByRole('link', { name: 'Kho tài liệu' }).click();
+  await page.getByRole('link', { name: 'RAG Documents' }).click();
 
   await expect(page).toHaveURL(/\/documents$/);
   await expect(page.getByRole('navigation', { name: 'Điều hướng di động' })).toBeHidden();
@@ -254,7 +262,7 @@ test('files a tool produced render inline in the assistant reply', async ({ page
 test('agent mode streams a run and renders the step timeline and result', async ({ page }) => {
   const browserErrors = await mockAuthenticatedApi(page);
   await page.goto('/agent-mode');
-  await expect(page.getByRole('heading', { name: 'Agent tự hành' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Automation Agent' })).toBeVisible();
 
   await page.getByLabel('Mục tiêu', { exact: true }).fill('Tính 2+2');
   await page.getByRole('button', { name: 'Chạy', exact: true }).click();
@@ -272,13 +280,13 @@ test('admin sidebar exposes grouped management navigation and opens the hub', as
   await page.goto('/chat');
 
   const sidebar = page.getByRole('complementary', { name: 'Thanh bên ứng dụng' });
-  await expect(sidebar.getByText('Công cụ AI')).toBeVisible();
+  await expect(sidebar.getByText('AI Studio')).toBeVisible();
   await expect(sidebar.getByText('Quản trị')).toBeVisible();
-  await expect(sidebar.getByRole('link', { name: 'Nhật ký hoạt động' })).toBeVisible();
-  await expect(sidebar.getByRole('link', { name: 'Máy chủ MCP' })).toBeVisible();
-  await expect(sidebar.getByRole('link', { name: 'Cơ sở tri thức' })).toBeVisible();
+  await expect(sidebar.getByRole('link', { name: 'Audit Log' })).toBeVisible();
+  await expect(sidebar.getByRole('link', { name: 'MCP Servers' })).toBeVisible();
+  await expect(sidebar.getByRole('link', { name: 'Knowledge Base' })).toBeVisible();
 
-  await sidebar.getByRole('link', { name: 'Bảng điều khiển' }).click();
+  await sidebar.getByRole('link', { name: 'Dashboard', exact: true }).click();
   await expect(page).toHaveURL(/\/admin$/);
   await expect(page.getByRole('heading', { name: 'Bảng điều khiển quản trị' })).toBeVisible();
   await expectNoWcagViolations(page);
@@ -288,7 +296,7 @@ test('admin sidebar exposes grouped management navigation and opens the hub', as
 test('admin can open the database-connections management screen', async ({ page }) => {
   const browserErrors = await mockAuthenticatedApi(page);
   await page.goto('/admin/databases');
-  await expect(page.getByRole('heading', { name: 'Kết nối cơ sở dữ liệu' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Database Connections' })).toBeVisible();
   await expect(page.getByText('Chưa có kết nối cơ sở dữ liệu nào.')).toBeVisible();
   await expectNoWcagViolations(page);
   expect(browserErrors).toEqual([]);

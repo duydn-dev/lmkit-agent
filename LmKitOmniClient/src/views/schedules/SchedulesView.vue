@@ -1,191 +1,188 @@
 <template>
-  <div class="flex-1 flex flex-col h-full bg-chatgpt-dark overflow-y-auto">
-    <!-- Page Header -->
-    <div class="sticky top-0 z-10 bg-chatgpt-dark/80 backdrop-blur-xl border-b border-gray-200/60">
-      <div class="max-w-5xl mx-auto px-6 py-4">
-        <div class="flex items-center justify-between gap-4">
-          <div class="flex items-center gap-4">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-md shadow-amber-500/20">
-              <i class="pi pi-calendar-clock text-white text-sm"></i>
-            </div>
-            <div>
-              <h1 class="text-xl font-bold text-gray-900 tracking-tight">Lịch tác vụ</h1>
-              <p class="text-xs text-gray-500">Chạy prompt tự động theo chu kỳ, hàng ngày hoặc hàng tuần</p>
-            </div>
+  <div class="flex-1 overflow-y-auto bg-gray-50 p-4 md:p-6">
+    <div class="max-w-6xl mx-auto">
+      <header class="mb-4 flex items-center gap-4">
+        <div class="w-10 h-10 rounded-lg bg-[--color-gov-red] flex items-center justify-center shadow-md flex-shrink-0">
+          <i class="pi pi-calendar-clock text-white text-sm" aria-hidden="true"></i>
+        </div>
+        <div class="flex-1">
+          <h1 class="text-xl font-bold text-gray-900 tracking-tight">Task Scheduler</h1>
+          <p class="text-sm text-gray-500">
+            Chạy prompt tự động theo chu kỳ/ngày/tuần. Chế độ <strong>Automation Agent</strong> cho phép lịch dùng tool
+            (query CSDL đã index, tri thức, web…) và trả kết quả đã định dạng qua thông báo.
+          </p>
+        </div>
+      </header>
+
+      <div v-if="list.error.value" role="alert" class="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {{ list.error.value }}
+      </div>
+
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <span class="relative">
+          <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs" aria-hidden="true"></i>
+          <InputText v-model="list.search.value" placeholder="Tìm theo tên, prompt…" class="!pl-8 w-72 max-w-full" aria-label="Tìm kiếm lịch" @input="list.onSearchInput" />
+        </span>
+        <div class="flex items-center gap-2">
+          <Button icon="pi pi-refresh" severity="secondary" outlined :loading="list.loading.value" aria-label="Tải lại" @click="list.reload" />
+          <Button label="Tạo lịch" icon="pi pi-plus" @click="openCreateForm" />
+        </div>
+      </div>
+
+      <DataTable
+        :value="list.rows.value"
+        lazy
+        paginator
+        :rows="list.pageSize.value"
+        :first="list.first.value"
+        :totalRecords="list.totalRecords.value"
+        :loading="list.loading.value"
+        :rowsPerPageOptions="[10, 20, 50]"
+        dataKey="id"
+        class="bg-white rounded-lg border border-gray-200 overflow-hidden"
+        @page="list.onPage">
+        <template #empty>
+          <div class="p-10 text-center text-gray-500 text-sm">
+            <i class="pi pi-calendar-clock text-3xl text-gray-300 block mb-3" aria-hidden="true"></i>
+            {{ list.search.value ? 'Không tìm thấy lịch phù hợp.' : 'Chưa có lịch tác vụ nào — tạo lịch để trợ lý chạy prompt định kỳ.' }}
           </div>
-          <Button
-            @click="openCreateForm"
-            label="Tạo lịch"
-            icon="pi pi-plus"
-            class="!min-h-11 !px-4 !py-2.5 !rounded-xl !text-sm !font-medium !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800"
-          />
-        </div>
-      </div>
-    </div>
+        </template>
 
-    <!-- Main Content -->
-    <div class="flex-1 max-w-5xl mx-auto w-full px-6 py-6">
-      <div v-if="pageError" role="alert" class="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-        {{ pageError }}
-      </div>
-
-      <div v-if="loading" class="flex flex-col items-center justify-center py-20 text-gray-500" role="status">
-        <i class="pi pi-spin pi-spinner text-2xl mb-3" aria-hidden="true"></i>
-        <p class="text-sm">Đang tải lịch tác vụ...</p>
-      </div>
-
-      <div v-else-if="schedules.length === 0" class="flex flex-col items-center justify-center py-20 text-center">
-        <div class="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center mb-5 shadow-inner">
-          <i class="pi pi-calendar-clock text-3xl text-gray-300" aria-hidden="true"></i>
-        </div>
-        <h3 class="text-lg font-semibold text-gray-600 mb-1">Chưa có lịch tác vụ nào</h3>
-        <p class="text-sm text-gray-400 max-w-xs mb-4">Tạo lịch để trợ lý tự động chạy prompt định kỳ và gửi thông báo kết quả.</p>
-        <Button label="Tạo lịch" icon="pi pi-plus" @click="openCreateForm" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
-      </div>
-
-      <div v-else class="grid gap-3">
-        <div v-for="schedule in schedules" :key="schedule.id" class="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-gray-200 transition-all duration-300 p-5">
-          <div class="flex items-start justify-between gap-4">
-            <div class="min-w-0 flex-1">
-              <div class="flex flex-wrap items-center gap-2 mb-1">
-                <h2 class="text-sm font-semibold text-gray-900 truncate">{{ schedule.name }}</h2>
-                <span v-if="schedule.lastStatus" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border" :class="statusChipClass(schedule.lastStatus)" :title="schedule.lastStatus === 'Failed' ? (schedule.lastError ?? '') : undefined">
-                  <span class="w-1.5 h-1.5 rounded-full" :class="statusDotClass(schedule.lastStatus)" aria-hidden="true"></span>
-                  {{ statusLabel(schedule.lastStatus) }}
-                </span>
-              </div>
-              <p class="text-xs font-medium text-gray-600">{{ scheduleSummary(schedule) }}</p>
-              <p class="text-xs text-gray-400 mt-1 line-clamp-2">{{ schedule.prompt }}</p>
-              <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-gray-400">
-                <span>Chạy kế tiếp: {{ formatUtcDate(schedule.nextRunUtc) }}</span>
-                <span>Lần chạy cuối: {{ formatUtcDate(schedule.lastRunUtc) }}</span>
-              </div>
-              <p v-if="schedule.lastStatus === 'Failed' && schedule.lastError" class="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                {{ schedule.lastError }}
-              </p>
+        <Column field="name" header="Tên lịch" style="min-width: 14rem">
+          <template #body="{ data }">
+            <div class="font-semibold text-gray-900 text-sm">{{ data.name }}</div>
+            <div class="text-xs text-gray-400 mt-0.5 max-w-72 truncate" :title="data.prompt">{{ data.prompt }}</div>
+          </template>
+        </Column>
+        <Column field="runMode" header="Chế độ" style="min-width: 9rem">
+          <template #body="{ data }">
+            <Tag :value="data.runMode === 'agent' ? 'Automation Agent' : 'Completion'" :severity="data.runMode === 'agent' ? 'danger' : 'secondary'" />
+          </template>
+        </Column>
+        <Column header="Chu kỳ" style="min-width: 11rem">
+          <template #body="{ data }"><span class="text-sm text-gray-700">{{ scheduleSummary(data) }}</span></template>
+        </Column>
+        <Column header="Trạng thái" style="min-width: 10rem">
+          <template #body="{ data }">
+            <Tag v-if="data.lastStatus" :value="statusLabel(data.lastStatus)" :severity="statusSeverity(data.lastStatus)" :title="data.lastError ?? undefined" />
+            <span v-else class="text-xs text-gray-400">Chưa chạy</span>
+            <p v-if="data.lastStatus === 'Failed' && data.lastError" class="text-[11px] text-red-600 mt-1 max-w-56 truncate" :title="data.lastError">{{ data.lastError }}</p>
+          </template>
+        </Column>
+        <Column header="Chạy kế tiếp / cuối" style="min-width: 12rem">
+          <template #body="{ data }">
+            <div class="text-xs text-gray-600 tabular-nums">Kế tiếp: {{ formatUtcDate(data.nextRunUtc) }}</div>
+            <div class="text-xs text-gray-400 tabular-nums">Cuối: {{ formatUtcDate(data.lastRunUtc) }}</div>
+          </template>
+        </Column>
+        <Column header="Bật" style="width: 5rem">
+          <template #body="{ data }">
+            <ToggleSwitch
+              :modelValue="data.enabled"
+              :inputId="`schedule-enabled-${data.id}`"
+              :aria-label="`Bật tắt lịch ${data.name}`"
+              :disabled="togglingId === data.id"
+              @update:model-value="toggleSchedule(data)" />
+          </template>
+        </Column>
+        <Column header="Thao tác" style="width: 7rem">
+          <template #body="{ data }">
+            <div class="flex items-center gap-1">
+              <Button icon="pi pi-pencil" text rounded severity="secondary" :aria-label="`Chỉnh sửa lịch ${data.name}`" @click="openEditForm(data)" />
+              <Button icon="pi pi-trash" text rounded severity="danger" :loading="deletingId === data.id" :aria-label="`Xóa lịch ${data.name}`" @click="confirmDelete(data)" />
             </div>
+          </template>
+        </Column>
+      </DataTable>
 
-            <div class="flex items-center gap-2 flex-shrink-0">
-              <ToggleSwitch
-                :modelValue="schedule.enabled"
-                :inputId="`schedule-enabled-${schedule.id}`"
-                :aria-label="`Bật tắt lịch ${schedule.name}`"
-                :disabled="togglingId === schedule.id"
-                @update:modelValue="toggleSchedule(schedule)"
-              />
-              <Button
-                icon="pi pi-pencil"
-                severity="secondary"
-                text
-                @click="openEditForm(schedule)"
-                :aria-label="`Chỉnh sửa lịch ${schedule.name}`"
-                class="!w-11 !h-11 !rounded-xl"
-              />
-              <Button
-                icon="pi pi-trash"
-                severity="danger"
-                text
-                :disabled="deletingId === schedule.id"
-                @click="deleteSchedule(schedule)"
-                :aria-label="`Xóa lịch ${schedule.name}`"
-                class="!w-11 !h-11 !rounded-xl"
-              />
-            </div>
+      <!-- Create / Edit Dialog -->
+      <Dialog v-model:visible="showForm" modal :header="editingId ? 'Chỉnh sửa lịch tác vụ' : 'Tạo lịch tác vụ'" class="w-[36rem] max-w-[95vw]">
+        <form @submit.prevent="saveSchedule" class="grid gap-4 pt-1">
+          <div v-if="formError" role="alert" class="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+            {{ formError }}
           </div>
-        </div>
-      </div>
+
+          <p class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <i class="pi pi-info-circle mr-1" aria-hidden="true"></i>Tối đa 10 lịch đang bật cho mỗi người dùng.
+          </p>
+
+          <div class="grid gap-1">
+            <label for="schedule-name" class="text-sm font-medium text-gray-700">Tên lịch <span class="text-red-500">*</span></label>
+            <InputText id="schedule-name" v-model="form.name" required maxlength="100" placeholder="Ví dụ: Báo cáo dữ liệu quan trắc buổi sáng" />
+          </div>
+
+          <div class="grid gap-1">
+            <label for="schedule-prompt" class="text-sm font-medium text-gray-700">Prompt <span class="text-red-500">*</span></label>
+            <Textarea id="schedule-prompt" v-model="form.prompt" rows="4" required maxlength="2000" placeholder="Nội dung yêu cầu trợ lý thực hiện mỗi lần chạy…" class="w-full" />
+          </div>
+
+          <div class="grid gap-1">
+            <label for="schedule-runmode" class="text-sm font-medium text-gray-700">Chế độ chạy</label>
+            <Select v-model="form.runMode" :options="runModeOptions" optionLabel="label" optionValue="value" inputId="schedule-runmode" class="w-full" />
+            <p class="text-xs text-gray-500">
+              <template v-if="form.runMode === 'agent'">
+                Automation Agent: lịch chạy qua pipeline agent đầy đủ — truy vấn CSDL đã index, tri thức, web…; từng bước được lưu
+                trong Automation Agent. Bước cần phê duyệt sẽ tạm dừng chờ bạn duyệt (HITL).
+              </template>
+              <template v-else>
+                Completion: một lượt suy luận thuần, không dùng tool — nhanh và nhẹ, phù hợp nhắc việc/tóm tắt.
+              </template>
+            </p>
+          </div>
+
+          <div class="grid gap-1">
+            <label for="schedule-kind" class="text-sm font-medium text-gray-700">Chu kỳ chạy</label>
+            <Select v-model="form.scheduleKind" :options="kindOptions" optionLabel="label" optionValue="value" inputId="schedule-kind" class="w-full" />
+          </div>
+
+          <div v-if="form.scheduleKind === 'interval'" class="grid gap-1">
+            <label for="schedule-interval" class="text-sm font-medium text-gray-700">Chạy mỗi (phút)</label>
+            <InputNumber v-model="form.intervalMinutes" inputId="schedule-interval" :min="15" :useGrouping="false" showButtons suffix=" phút" class="w-full" />
+            <p class="text-xs text-gray-400">Tối thiểu 15 phút.</p>
+          </div>
+
+          <div v-if="form.scheduleKind === 'weekly'" class="grid gap-1">
+            <label for="schedule-day" class="text-sm font-medium text-gray-700">Ngày trong tuần</label>
+            <Select v-model="form.dayOfWeek" :options="dayOptions" optionLabel="label" optionValue="value" inputId="schedule-day" class="w-full" />
+          </div>
+
+          <div v-if="form.scheduleKind !== 'interval'" class="grid gap-1">
+            <label for="schedule-time" class="text-sm font-medium text-gray-700">Giờ chạy (UTC)</label>
+            <input
+              id="schedule-time"
+              v-model="form.timeOfDay"
+              type="time"
+              required
+              class="min-h-11 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-[--color-gov-red]" />
+            <p class="text-xs text-gray-400">Giờ tính theo UTC (giờ Việt Nam = UTC + 7).</p>
+          </div>
+        </form>
+        <template #footer>
+          <Button label="Hủy" severity="secondary" outlined :disabled="saving" @click="showForm = false" />
+          <Button :label="editingId ? 'Lưu thay đổi' : 'Tạo lịch'" icon="pi pi-check" :loading="saving" @click="saveSchedule" />
+        </template>
+      </Dialog>
     </div>
-
-    <!-- Create / Edit Dialog -->
-    <Dialog
-      v-model:visible="showForm"
-      modal
-      :header="editingId ? 'Chỉnh sửa lịch tác vụ' : 'Tạo lịch tác vụ'"
-      :style="{ width: '520px' }"
-      :breakpoints="{ '575px': '90vw' }"
-    >
-      <form @submit.prevent="saveSchedule" class="grid gap-4 pt-1">
-        <div v-if="formError" role="alert" class="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-          {{ formError }}
-        </div>
-
-        <p class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          <i class="pi pi-info-circle mr-1" aria-hidden="true"></i>Tối đa 10 lịch đang bật.
-        </p>
-
-        <div class="grid gap-1">
-          <label for="schedule-name" class="text-sm font-medium text-gray-700">Tên lịch</label>
-          <InputText id="schedule-name" v-model="form.name" required maxlength="100" placeholder="Ví dụ: Tổng hợp tin tức buổi sáng" />
-        </div>
-
-        <div class="grid gap-1">
-          <label for="schedule-prompt" class="text-sm font-medium text-gray-700">Prompt <span class="text-red-600" aria-hidden="true">*</span></label>
-          <Textarea id="schedule-prompt" v-model="form.prompt" rows="4" required placeholder="Nội dung yêu cầu trợ lý thực hiện mỗi lần chạy..." class="w-full" />
-        </div>
-
-        <div class="grid gap-1">
-          <label for="schedule-kind" class="text-sm font-medium text-gray-700">Chu kỳ chạy</label>
-          <Select
-            v-model="form.scheduleKind"
-            :options="kindOptions"
-            optionLabel="label"
-            optionValue="value"
-            inputId="schedule-kind"
-            class="w-full"
-          />
-        </div>
-
-        <div v-if="form.scheduleKind === 'interval'" class="grid gap-1">
-          <label for="schedule-interval" class="text-sm font-medium text-gray-700">Chạy mỗi (phút)</label>
-          <InputNumber v-model="form.intervalMinutes" inputId="schedule-interval" :min="15" :useGrouping="false" showButtons suffix=" phút" class="w-full" />
-          <p class="text-xs text-gray-400">Tối thiểu 15 phút.</p>
-        </div>
-
-        <div v-if="form.scheduleKind === 'weekly'" class="grid gap-1">
-          <label for="schedule-day" class="text-sm font-medium text-gray-700">Ngày trong tuần</label>
-          <Select
-            v-model="form.dayOfWeek"
-            :options="dayOptions"
-            optionLabel="label"
-            optionValue="value"
-            inputId="schedule-day"
-            class="w-full"
-          />
-        </div>
-
-        <div v-if="form.scheduleKind !== 'interval'" class="grid gap-1">
-          <label for="schedule-time" class="text-sm font-medium text-gray-700">Giờ chạy (UTC)</label>
-          <input
-            id="schedule-time"
-            v-model="form.timeOfDay"
-            type="time"
-            required
-            class="min-h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-sky-500"
-          />
-          <p class="text-xs text-gray-400">Giờ tính theo UTC (giờ Việt Nam = UTC + 7).</p>
-        </div>
-
-        <div class="flex items-center justify-end gap-2 pt-1">
-          <Button type="button" label="Hủy" text severity="secondary" :disabled="saving" @click="showForm = false" class="!min-h-11 !px-4 !rounded-xl !text-sm" />
-          <Button type="submit" :label="editingId ? 'Lưu thay đổi' : 'Tạo lịch'" icon="pi pi-check" :loading="saving" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
-        </div>
-      </form>
-    </Dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
+import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
+import { useServerPage } from '@/composables/useServerPage';
 
 type ScheduleKind = 'interval' | 'daily' | 'weekly';
+type RunMode = 'completion' | 'agent';
 
 interface Schedule {
   id: string;
   name: string;
   prompt: string;
+  runMode: RunMode;
   scheduleKind: ScheduleKind;
   intervalMinutes: number | null;
   timeOfDayMinutes: number | null;
@@ -200,6 +197,7 @@ interface Schedule {
 interface ScheduleForm {
   name: string;
   prompt: string;
+  runMode: RunMode;
   scheduleKind: ScheduleKind;
   intervalMinutes: number | null;
   /** "HH:mm" from the native time input; converted to minutes on save. */
@@ -207,19 +205,24 @@ interface ScheduleForm {
   dayOfWeek: number;
 }
 
+const confirm = useConfirm();
+const toast = useToast();
+const list = useServerPage<Schedule>(ApiFactory.SCHEDULES.BASE, { errorLabel: 'lịch tác vụ' });
+
 const kindOptions = [
   { label: 'Theo chu kỳ (phút)', value: 'interval' },
   { label: 'Hàng ngày', value: 'daily' },
   { label: 'Hàng tuần', value: 'weekly' }
+];
+const runModeOptions = [
+  { label: 'Completion — một lượt, không tool', value: 'completion' },
+  { label: 'Automation Agent — đủ tool (CSDL, tri thức, web…)', value: 'agent' }
 ];
 
 const DAY_SHORT = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 const DAY_FULL = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
 const dayOptions = DAY_SHORT.map((label, value) => ({ label, value }));
 
-const schedules = ref<Schedule[]>([]);
-const loading = ref(false);
-const pageError = ref('');
 const togglingId = ref<string | null>(null);
 const deletingId = ref<string | null>(null);
 
@@ -232,12 +235,12 @@ const formError = ref('');
 const emptyForm = (): ScheduleForm => ({
   name: '',
   prompt: '',
+  runMode: 'completion',
   scheduleKind: 'interval',
   intervalMinutes: 60,
   timeOfDay: '08:00',
   dayOfWeek: 1
 });
-
 const form = ref<ScheduleForm>(emptyForm());
 
 // --- Formatting helpers -----------------------------------------------------
@@ -251,52 +254,38 @@ const formatUtcTime = (minutes: number | null): string => {
 
 const scheduleSummary = (schedule: Schedule): string => {
   if (schedule.scheduleKind === 'interval') return `Mỗi ${schedule.intervalMinutes ?? 0} phút`;
-  if (schedule.scheduleKind === 'daily') return `Hàng ngày lúc ${formatUtcTime(schedule.timeOfDayMinutes)} UTC`;
+  if (schedule.scheduleKind === 'daily') return `Hàng ngày ${formatUtcTime(schedule.timeOfDayMinutes)} UTC`;
   const day = DAY_FULL[schedule.dayOfWeek ?? 0] ?? 'Chủ nhật';
-  return `${day} hàng tuần lúc ${formatUtcTime(schedule.timeOfDayMinutes)} UTC`;
+  return `${day} ${formatUtcTime(schedule.timeOfDayMinutes)} UTC`;
 };
 
 const formatUtcDate = (iso: string | null): string => {
   if (!iso) return '—';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '—';
-  return date.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' });
+  return date.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
 };
 
+// Trạng thái backend ghi: Succeeded | Failed | Skipped | AwaitingApproval.
 const statusLabel = (status: string): string => {
-  if (status === 'Success') return 'Thành công';
-  if (status === 'Failed') return 'Thất bại';
-  if (status === 'Running') return 'Đang chạy';
-  return status;
+  switch (status) {
+    case 'Succeeded': return 'Thành công';
+    case 'Failed': return 'Thất bại';
+    case 'Skipped': return 'Bỏ lượt (bận/thiếu model)';
+    case 'AwaitingApproval': return 'Chờ phê duyệt';
+    default: return status;
+  }
 };
-
-const statusChipClass = (status: string): string => {
-  if (status === 'Failed') return 'bg-red-50 text-red-800 border-red-200';
-  if (status === 'Success') return 'bg-emerald-50 text-emerald-900 border-emerald-200';
-  return 'bg-gray-50 text-gray-600 border-gray-200';
-};
-
-const statusDotClass = (status: string): string => {
-  if (status === 'Failed') return 'bg-red-500';
-  if (status === 'Success') return 'bg-emerald-500';
-  return 'bg-gray-400';
+const statusSeverity = (status: string): string => {
+  switch (status) {
+    case 'Succeeded': return 'success';
+    case 'Failed': return 'danger';
+    case 'AwaitingApproval': return 'warn';
+    default: return 'secondary';
+  }
 };
 
 // --- CRUD -------------------------------------------------------------------
-
-const loadSchedules = async () => {
-  loading.value = schedules.value.length === 0;
-  pageError.value = '';
-  try {
-    const response = await http.get(ApiFactory.SCHEDULES.BASE);
-    if (response.ok) schedules.value = await response.json();
-    else pageError.value = await readApiError(response, 'Không thể tải lịch tác vụ');
-  } catch (cause) {
-    pageError.value = errorMessage(cause, 'Không thể tải lịch tác vụ.');
-  } finally {
-    loading.value = false;
-  }
-};
 
 const openCreateForm = () => {
   editingId.value = null;
@@ -312,6 +301,7 @@ const openEditForm = (schedule: Schedule) => {
   form.value = {
     name: schedule.name,
     prompt: schedule.prompt,
+    runMode: schedule.runMode === 'agent' ? 'agent' : 'completion',
     scheduleKind: schedule.scheduleKind,
     intervalMinutes: schedule.intervalMinutes ?? 60,
     timeOfDay: formatUtcTime(schedule.timeOfDayMinutes ?? 480),
@@ -333,14 +323,8 @@ const parseTimeOfDay = (value: string): number | null => {
 const saveSchedule = async () => {
   const name = form.value.name.trim();
   const prompt = form.value.prompt.trim();
-  if (!name) {
-    formError.value = 'Vui lòng nhập tên lịch.';
-    return;
-  }
-  if (!prompt) {
-    formError.value = 'Vui lòng nhập prompt.';
-    return;
-  }
+  if (!name) { formError.value = 'Vui lòng nhập tên lịch.'; return; }
+  if (!prompt) { formError.value = 'Vui lòng nhập prompt.'; return; }
 
   const kind = form.value.scheduleKind;
   let intervalMinutes: number | null = null;
@@ -367,6 +351,7 @@ const saveSchedule = async () => {
   const payload = {
     name,
     prompt,
+    runMode: form.value.runMode,
     scheduleKind: kind,
     intervalMinutes,
     timeOfDayMinutes,
@@ -385,7 +370,8 @@ const saveSchedule = async () => {
       return;
     }
     showForm.value = false;
-    await loadSchedules();
+    toast.add({ severity: 'success', summary: editingId.value ? 'Đã cập nhật lịch' : 'Đã tạo lịch', detail: name, life: 3000 });
+    await list.reload();
   } catch (cause) {
     formError.value = errorMessage(cause, 'Không thể lưu lịch tác vụ.');
   } finally {
@@ -396,34 +382,46 @@ const saveSchedule = async () => {
 const toggleSchedule = async (schedule: Schedule) => {
   if (togglingId.value) return;
   togglingId.value = schedule.id;
-  pageError.value = '';
   try {
     const response = await http.post(ApiFactory.SCHEDULES.TOGGLE(schedule.id));
-    if (response.ok) await loadSchedules();
-    else pageError.value = await readApiError(response, 'Không thể bật/tắt lịch');
+    if (response.ok) await list.reload();
+    else toast.add({ severity: 'error', summary: 'Không thể bật/tắt lịch', detail: await readApiError(response, 'Không thể bật/tắt lịch'), life: 6000 });
   } catch (cause) {
-    pageError.value = errorMessage(cause, 'Không thể bật/tắt lịch.');
+    toast.add({ severity: 'error', summary: 'Không thể bật/tắt lịch', detail: errorMessage(cause, 'Không thể bật/tắt lịch.'), life: 6000 });
   } finally {
     togglingId.value = null;
   }
 };
 
-const deleteSchedule = async (schedule: Schedule) => {
-  if (!confirm(`Xóa lịch "${schedule.name}"? Hành động này không thể hoàn tác.`)) return;
+const confirmDelete = (schedule: Schedule) => {
+  confirm.require({
+    header: 'Xóa lịch tác vụ',
+    message: `Xóa lịch "${schedule.name}"? Hành động này không thể hoàn tác.`,
+    icon: 'pi pi-exclamation-triangle',
+    acceptLabel: 'Xóa',
+    rejectLabel: 'Hủy',
+    acceptProps: { severity: 'danger' },
+    rejectProps: { severity: 'secondary', outlined: true },
+    accept: () => { void performDelete(schedule); }
+  });
+};
+
+const performDelete = async (schedule: Schedule) => {
   deletingId.value = schedule.id;
-  pageError.value = '';
   try {
     const response = await http.delete(ApiFactory.SCHEDULES.BY_ID(schedule.id));
-    if (response.ok) schedules.value = schedules.value.filter((item) => item.id !== schedule.id);
-    else pageError.value = await readApiError(response, 'Không thể xóa lịch');
+    if (response.ok) {
+      toast.add({ severity: 'success', summary: 'Đã xóa lịch', detail: schedule.name, life: 3000 });
+      await list.reload();
+    } else {
+      toast.add({ severity: 'error', summary: 'Không thể xóa lịch', detail: await readApiError(response, 'Không thể xóa lịch'), life: 6000 });
+    }
   } catch (cause) {
-    pageError.value = errorMessage(cause, 'Không thể xóa lịch.');
+    toast.add({ severity: 'error', summary: 'Không thể xóa lịch', detail: errorMessage(cause, 'Không thể xóa lịch.'), life: 6000 });
   } finally {
     deletingId.value = null;
   }
 };
 
-onMounted(() => {
-  void loadSchedules();
-});
+onMounted(() => { void list.load(); });
 </script>

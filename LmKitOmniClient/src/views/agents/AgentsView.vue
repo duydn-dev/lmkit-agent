@@ -9,8 +9,8 @@
               <i class="pi pi-microchip-ai text-white text-sm"></i>
             </div>
             <div>
-              <h1 class="text-xl font-bold text-gray-900 tracking-tight">Agents</h1>
-              <p class="text-xs text-gray-500">Tạo trợ lý chuyên biệt với persona, công cụ và tri thức riêng</p>
+              <h1 class="text-xl font-bold text-gray-900 tracking-tight">Agent Studio</h1>
+              <p class="text-xs text-gray-500">Tạo trợ lý chuyên biệt với persona, công cụ, tri thức và LoRA adapter riêng</p>
             </div>
           </div>
           <Button
@@ -25,8 +25,16 @@
 
     <!-- Main Content -->
     <div class="flex-1 max-w-7xl mx-auto w-full px-6 py-6">
-      <div v-if="pageError" role="alert" class="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-        {{ pageError }}
+      <div v-if="pageError || list.error.value" role="alert" class="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {{ pageError || list.error.value }}
+      </div>
+
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <span class="relative">
+          <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs" aria-hidden="true"></i>
+          <InputText v-model="list.search.value" placeholder="Tìm theo tên, mô tả agent…" class="!pl-8 w-72 max-w-full" aria-label="Tìm kiếm agent" @input="list.onSearchInput" />
+        </span>
+        <Button icon="pi pi-refresh" severity="secondary" outlined :loading="list.loading.value" aria-label="Tải lại" @click="list.reload" />
       </div>
 
       <div v-if="loading" class="flex flex-col items-center justify-center py-20 text-gray-500" role="status">
@@ -106,6 +114,15 @@
           </div>
         </div>
       </div>
+
+      <Paginator
+        v-if="list.totalRecords.value > list.pageSize.value"
+        :rows="list.pageSize.value"
+        :first="list.first.value"
+        :totalRecords="list.totalRecords.value"
+        :rowsPerPageOptions="[12, 24, 48]"
+        class="mt-4"
+        @page="list.onPage" />
     </div>
 
     <!-- Create / Edit Dialog -->
@@ -181,6 +198,20 @@
           Chia sẻ agent này với toàn tenant
         </label>
 
+        <div v-if="loraAdapters.length > 0" class="grid gap-1">
+          <label for="agent-lora" class="text-sm font-medium text-gray-700">LoRA Adapter (tùy chọn)</label>
+          <Select
+            v-model="form.loraAdapterId"
+            :options="loraOptions"
+            optionLabel="label"
+            optionValue="value"
+            inputId="agent-lora"
+            showClear
+            placeholder="Không dùng adapter"
+            class="w-full" />
+          <p class="text-xs text-gray-400">Adapter tinh chỉnh áp lên model chat riêng cho agent này (hot-swap khi suy luận).</p>
+        </div>
+
         <div class="flex items-center justify-end gap-2 pt-1">
           <Button type="button" label="Hủy" text severity="secondary" :disabled="saving" @click="showForm = false" class="!min-h-11 !px-4 !rounded-xl !text-sm" />
           <Button type="submit" :label="editingId ? 'Lưu thay đổi' : 'Tạo agent'" icon="pi pi-check" :loading="saving" class="!min-h-11 !px-4 !rounded-xl !text-sm !bg-sky-700 !border-sky-700 hover:!bg-sky-800 hover:!border-sky-800" />
@@ -191,12 +222,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import { formatDate } from '@/utils/date';
+import { useServerPage } from '@/composables/useServerPage';
 
 interface CustomAgent {
   id: string;
@@ -208,6 +242,7 @@ interface CustomAgent {
   allowedTools: string[] | null;
   knowledgeDocumentIds: string[];
   isSharedWithTenant: boolean;
+  loraAdapterId: string | null;
   isOwner: boolean;
   createdAt: string;
 }
@@ -232,12 +267,17 @@ interface AgentForm {
   allowedTools: string[];
   knowledgeDocumentIds: string[];
   isSharedWithTenant: boolean;
+  loraAdapterId: string | null;
 }
 
 const router = useRouter();
+const confirm = useConfirm();
+const toast = useToast();
 
-const agents = ref<CustomAgent[]>([]);
-const loading = ref(false);
+// Getlist chuẩn server-side; alias giữ template cũ.
+const list = useServerPage<CustomAgent>(ApiFactory.AGENTS.CUSTOM, { pageSize: 12, errorLabel: 'danh sách agent' });
+const agents = list.rows;
+const loading = list.loading;
 const pageError = ref('');
 const chatStartingId = ref<string | null>(null);
 const deletingId = ref<string | null>(null);
@@ -259,24 +299,28 @@ const emptyForm = (): AgentForm => ({
   personaPrompt: '',
   allowedTools: [],
   knowledgeDocumentIds: [],
-  isSharedWithTenant: false
+  isSharedWithTenant: false,
+  loraAdapterId: null
 });
 
-const form = ref<AgentForm>(emptyForm());
+// --- LoRA adapters cho dropdown (im lặng khi feature tắt/không có quyền) ----
+interface LoraAdapterOption { id: string; name: string; isActive: boolean }
+const loraAdapters = ref<LoraAdapterOption[]>([]);
+const loraOptions = computed(() => loraAdapters.value.map((a) => ({
+  label: a.isActive ? a.name : `${a.name} (tạm tắt)`,
+  value: a.id
+})));
+/** Gán adapter hiện tại của agent đang sửa — để biết có cần gọi assign/unassign không. */
+let originalLoraAdapterId: string | null = null;
 
-const loadAgents = async () => {
-  loading.value = agents.value.length === 0;
-  pageError.value = '';
+const loadLoraAdapters = async () => {
   try {
-    const response = await http.get(ApiFactory.AGENTS.CUSTOM);
-    if (response.ok) agents.value = await response.json();
-    else pageError.value = await readApiError(response, 'Không thể tải danh sách agent');
-  } catch (cause) {
-    pageError.value = errorMessage(cause, 'Không thể tải danh sách agent.');
-  } finally {
-    loading.value = false;
-  }
+    const response = await http.get(ApiFactory.LORA.BASE);
+    if (response.ok) loraAdapters.value = await response.json();
+  } catch { /* im lặng: dropdown LoRA là tăng cường */ }
 };
+
+const form = ref<AgentForm>(emptyForm());
 
 /** Lazily loads the tool catalog + the caller's documents for the pickers. */
 const ensureFormOptions = async () => {
@@ -305,9 +349,11 @@ const ensureFormOptions = async () => {
 const openCreateForm = () => {
   editingId.value = null;
   form.value = emptyForm();
+  originalLoraAdapterId = null;
   formError.value = '';
   showForm.value = true;
   void ensureFormOptions();
+  void loadLoraAdapters();
 };
 
 const openEditForm = (agent: CustomAgent) => {
@@ -319,11 +365,14 @@ const openEditForm = (agent: CustomAgent) => {
     personaPrompt: agent.personaPrompt ?? '',
     allowedTools: agent.allowedTools ? [...agent.allowedTools] : [],
     knowledgeDocumentIds: [...agent.knowledgeDocumentIds],
-    isSharedWithTenant: agent.isSharedWithTenant
+    isSharedWithTenant: agent.isSharedWithTenant,
+    loraAdapterId: agent.loraAdapterId
   };
+  originalLoraAdapterId = agent.loraAdapterId;
   formError.value = '';
   showForm.value = true;
   void ensureFormOptions();
+  void loadLoraAdapters();
 };
 
 const saveAgent = async () => {
@@ -359,8 +408,25 @@ const saveAgent = async () => {
       formError.value = await readApiError(response, 'Không thể lưu agent');
       return;
     }
+
+    // Gán/bỏ gán LoRA qua endpoint riêng (binding không nằm trong payload agent).
+    let agentId = editingId.value;
+    if (!agentId) {
+      const created = await response.json().catch(() => null);
+      agentId = created && typeof created.id === 'string' ? created.id : null;
+    }
+    if (agentId && form.value.loraAdapterId !== originalLoraAdapterId) {
+      const bindResponse = form.value.loraAdapterId
+        ? await http.post(`${ApiFactory.LORA.BY_ID(form.value.loraAdapterId)}/assign?agentId=${agentId}`)
+        : await http.delete(`${ApiFactory.LORA.BASE}/assign?agentId=${agentId}`);
+      if (!bindResponse.ok && bindResponse.status !== 501) {
+        toast.add({ severity: 'warn', summary: 'Agent đã lưu nhưng gán LoRA thất bại', detail: await readApiError(bindResponse, 'Không thể gán adapter'), life: 6000 });
+      }
+    }
+
     showForm.value = false;
-    await loadAgents();
+    toast.add({ severity: 'success', summary: editingId.value ? 'Đã cập nhật agent' : 'Đã tạo agent', detail: name, life: 3000 });
+    await list.reload();
   } catch (cause) {
     formError.value = errorMessage(cause, 'Không thể lưu agent.');
   } finally {
@@ -368,14 +434,28 @@ const saveAgent = async () => {
   }
 };
 
-const deleteAgent = async (agent: CustomAgent) => {
-  if (!confirm(`Xóa agent "${agent.name}"? Hành động này không thể hoàn tác.`)) return;
+const deleteAgent = (agent: CustomAgent) => {
+  confirm.require({
+    header: 'Xóa agent',
+    message: `Xóa agent "${agent.name}"? Hành động này không thể hoàn tác.`,
+    icon: 'pi pi-exclamation-triangle',
+    acceptLabel: 'Xóa',
+    rejectLabel: 'Hủy',
+    acceptProps: { severity: 'danger' },
+    rejectProps: { severity: 'secondary', outlined: true },
+    accept: () => { void performDeleteAgent(agent); }
+  });
+};
+
+const performDeleteAgent = async (agent: CustomAgent) => {
   deletingId.value = agent.id;
   pageError.value = '';
   try {
     const response = await http.delete(ApiFactory.AGENTS.CUSTOM_BY_ID(agent.id));
-    if (response.ok) agents.value = agents.value.filter((item) => item.id !== agent.id);
-    else pageError.value = await readApiError(response, 'Không thể xóa agent');
+    if (response.ok) {
+      toast.add({ severity: 'success', summary: 'Đã xóa agent', detail: agent.name, life: 3000 });
+      await list.reload();
+    } else pageError.value = await readApiError(response, 'Không thể xóa agent');
   } catch (cause) {
     pageError.value = errorMessage(cause, 'Không thể xóa agent.');
   } finally {
@@ -415,6 +495,6 @@ const startChatWithAgent = async (agent: CustomAgent) => {
 };
 
 onMounted(() => {
-  void loadAgents();
+  void list.load();
 });
 </script>

@@ -313,6 +313,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { useConfirm } from 'primevue/useconfirm';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
@@ -345,6 +346,7 @@ interface McpCatalogEntry {
   description: string;
 }
 
+const confirm = useConfirm();
 const servers = ref<McpServer[]>([]);
 const catalog = ref<McpCatalogEntry[]>([]);
 const loading = ref(false);
@@ -376,9 +378,12 @@ const loadServers = async () => {
   loading.value = servers.value.length === 0;
   pageError.value = '';
   try {
-    const response = await http.get(ApiFactory.MCP.BASE);
+    // pageSize=100: getlist chuan tra PagedResult; so MCP server moi tenant nho
+    // nen mot trang lon + loc client-side la du, khoi phai lazy-table hoa ca man.
+    const response = await http.get(`${ApiFactory.MCP.BASE}?page=1&pageSize=100`);
     if (response.ok) {
-      servers.value = await response.json();
+      const page = await response.json();
+      servers.value = Array.isArray(page) ? page : (page.items ?? []);
       void refreshOAuthStatuses();
     } else pageError.value = await readApiError(response, 'Không thể tải cấu hình MCP');
   } catch (cause) {
@@ -625,8 +630,20 @@ const toggleActive = async (server: McpServer) => {
   }
 };
 
-const deleteServer = async (server: McpServer) => {
-  if (!confirm(`Xóa máy chủ MCP "${server.name}"?`)) return;
+const deleteServer = (server: McpServer) => {
+  confirm.require({
+    header: 'Xóa máy chủ MCP',
+    message: `Xóa máy chủ MCP "${server.name}"? Agent sẽ không còn thấy các tool của máy chủ này.`,
+    icon: 'pi pi-exclamation-triangle',
+    acceptLabel: 'Xóa',
+    rejectLabel: 'Hủy',
+    acceptProps: { severity: 'danger' },
+    rejectProps: { severity: 'secondary', outlined: true },
+    accept: () => { void performDeleteServer(server); }
+  });
+};
+
+const performDeleteServer = async (server: McpServer) => {
   deletingId.value = server.id;
   pageError.value = '';
   try {

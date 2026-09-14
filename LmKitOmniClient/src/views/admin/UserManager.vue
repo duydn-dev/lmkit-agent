@@ -1,99 +1,114 @@
 <template>
-  <div class="flex-1 overflow-y-auto bg-gray-50 p-6">
+  <div class="flex-1 overflow-y-auto bg-gray-50 p-4 md:p-6">
     <div class="max-w-6xl mx-auto">
-      <div class="flex justify-between items-center mb-6">
-        <div>
-          <h1 class="text-2xl font-bold text-gray-900">Quản lý Người dùng</h1>
-          <p class="text-gray-500 mt-1">Cấp tài khoản và phân quyền trong hệ thống</p>
+      <header class="mb-4 flex items-center gap-4">
+        <div class="w-10 h-10 rounded-lg bg-[--color-gov-red] flex items-center justify-center shadow-md flex-shrink-0">
+          <i class="pi pi-users text-white text-sm" aria-hidden="true"></i>
         </div>
-        <button @click="openNewDialog" class="min-h-11 bg-chatgpt-brand hover:bg-chatgpt-brand/90 text-white px-4 py-2 rounded-md font-medium transition-colors shadow-sm flex items-center gap-2">
-          <i class="pi pi-user-plus"></i>
-          Thêm người dùng
-        </button>
+        <div class="flex-1">
+          <h1 class="text-xl font-bold text-gray-900 tracking-tight">User Management</h1>
+          <p class="text-sm text-gray-500">Cấp tài khoản, phân quyền và khóa/mở khóa người dùng trong tenant.</p>
+        </div>
+      </header>
+
+      <div v-if="list.error.value" role="alert" class="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {{ list.error.value }}
       </div>
 
-      <div v-if="userError && !userDialog" role="alert" class="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-        {{ userError }}
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <span class="relative">
+          <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs" aria-hidden="true"></i>
+          <InputText v-model="list.search.value" placeholder="Tìm theo email, họ tên…" class="!pl-8 w-72 max-w-full" aria-label="Tìm kiếm người dùng" @input="list.onSearchInput" />
+        </span>
+        <div class="flex items-center gap-2">
+          <Button icon="pi pi-refresh" severity="secondary" outlined :loading="list.loading.value" aria-label="Tải lại" @click="list.reload" />
+          <Button label="Thêm người dùng" icon="pi pi-user-plus" @click="openNewDialog" />
+        </div>
       </div>
 
-      <!-- Data Table -->
-      <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <DataTable :value="users" :loading="loading" :paginator="true" :rows="10" 
-                  dataKey="id" class="p-datatable-sm"
-                  :rowHover="true" filterDisplay="menu" responsiveLayout="scroll"
-                  emptyMessage="Không tìm thấy người dùng nào.">
-          
-          <Column field="email" header="Email" :sortable="true" style="min-width: 14rem">
-            <template #body="{ data }">
-              <span class="font-medium text-gray-900">{{ data.email }}</span>
-            </template>
-          </Column>
-          
-          <Column field="fullName" header="Họ và Tên" :sortable="true" style="min-width: 12rem"></Column>
-          
-          <Column field="role" header="Quyền" :sortable="true" style="min-width: 10rem">
-            <template #body="{ data }">
-              <span :class="['px-2 py-1 rounded-full text-xs font-medium', 
-                data.role === 'Admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700']">
-                {{ data.role }}
-              </span>
-            </template>
-          </Column>
-
-          <Column field="isActive" header="Trạng thái" :sortable="true" style="min-width: 8rem">
-            <template #body="{ data }">
-              <span v-if="data.isActive" class="text-green-800 flex items-center gap-1.5"><i class="pi pi-check-circle text-xs"></i> Hoạt động</span>
-              <span v-else class="text-red-700 flex items-center gap-1.5"><i class="pi pi-lock text-xs"></i> Đã khóa</span>
-            </template>
-          </Column>
-
-          <Column header="Thao tác" :exportable="false" style="min-width: 8rem" alignFrozen="right" :frozen="true">
-            <template #body="{ data }">
-              <div class="flex gap-2">
-                <button @click="editUser(data)" class="w-11 h-11 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" :aria-label="`Sửa quyền của ${data.email}`">
-                  <i class="pi pi-pencil"></i>
-                </button>
-                <button @click="toggleUserStatus(data)" :class="['w-11 h-11 rounded transition-colors', data.isActive ? 'text-gray-500 hover:text-red-600 hover:bg-red-50' : 'text-gray-500 hover:text-green-600 hover:bg-green-50']" :aria-label="`${data.isActive ? 'Khóa' : 'Mở khóa'} tài khoản ${data.email}`">
-                  <i :class="data.isActive ? 'pi pi-lock' : 'pi pi-lock-open'"></i>
-                </button>
-              </div>
-            </template>
-          </Column>
-        </DataTable>
-      </div>
-
-      <!-- User Dialog -->
-      <Dialog v-model:visible="userDialog" :style="{width: '450px'}" :header="isEditing ? 'Chỉnh sửa Quyền' : 'Tạo Tài khoản mới'" :modal="true" class="p-fluid">
-        <div v-if="userError" role="alert" class="mt-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {{ userError }}
-        </div>
-        <div class="flex flex-col gap-4 mt-4">
-          <div class="flex flex-col gap-2">
-            <label for="email" class="font-medium text-sm text-gray-700">Email</label>
-            <InputText id="email" v-model.trim="userForm.email" required="true" autofocus :disabled="isEditing" />
+      <DataTable
+        :value="list.rows.value"
+        lazy
+        paginator
+        :rows="list.pageSize.value"
+        :first="list.first.value"
+        :totalRecords="list.totalRecords.value"
+        :loading="list.loading.value"
+        :rowsPerPageOptions="[10, 20, 50]"
+        dataKey="id"
+        :rowHover="true"
+        class="bg-white rounded-lg border border-gray-200 overflow-hidden"
+        @page="list.onPage">
+        <template #empty>
+          <div class="p-8 text-center text-gray-500 text-sm">
+            <i class="pi pi-users text-3xl text-gray-300 block mb-3" aria-hidden="true"></i>
+            {{ list.search.value ? 'Không tìm thấy người dùng phù hợp.' : 'Chưa có người dùng nào.' }}
           </div>
-          
-          <div class="flex flex-col gap-2" v-if="!isEditing">
-            <label for="password" class="font-medium text-sm text-gray-700">Mật khẩu</label>
-            <InputText id="password" type="password" v-model="userForm.password" required="true" />
-          </div>
+        </template>
 
-          <div class="flex flex-col gap-2">
-            <label for="fullName" class="font-medium text-sm text-gray-700">Họ và Tên</label>
-            <InputText id="fullName" v-model.trim="userForm.fullName" required="true" :disabled="isEditing" />
-          </div>
+        <Column field="email" header="Email" style="min-width: 14rem">
+          <template #body="{ data }">
+            <span class="font-medium text-gray-900">{{ data.email }}</span>
+            <div class="text-xs text-gray-400 mt-0.5">Tạo {{ absoluteDate(data.createdAt) }}</div>
+          </template>
+        </Column>
+        <Column field="fullName" header="Họ và Tên" style="min-width: 11rem" />
+        <Column field="role" header="Quyền" style="min-width: 7rem">
+          <template #body="{ data }">
+            <Tag :value="data.role" :severity="data.role === 'Admin' ? 'danger' : 'info'" />
+          </template>
+        </Column>
+        <Column field="isActive" header="Trạng thái" style="min-width: 9rem">
+          <template #body="{ data }">
+            <div class="flex flex-wrap gap-1">
+              <Tag :value="data.isActive ? 'Hoạt động' : 'Đã khóa'" :severity="data.isActive ? 'success' : 'danger'" />
+              <Tag v-if="isLockedOut(data)" value="Khóa tạm (đăng nhập sai)" severity="warn" v-tooltip.top="lockoutHint(data)" />
+            </div>
+          </template>
+        </Column>
+        <Column header="Thao tác" style="min-width: 8rem">
+          <template #body="{ data }">
+            <div class="flex items-center gap-1">
+              <Button icon="pi pi-pencil" text rounded severity="secondary" :aria-label="`Sửa quyền của ${data.email}`" v-tooltip.top="'Sửa quyền'" @click="editUser(data)" />
+              <Button
+                :icon="data.isActive ? 'pi pi-lock' : 'pi pi-lock-open'"
+                text rounded
+                :severity="data.isActive ? 'danger' : 'success'"
+                :aria-label="`${data.isActive ? 'Khóa' : 'Mở khóa'} tài khoản ${data.email}`"
+                v-tooltip.top="data.isActive ? 'Khóa tài khoản' : 'Mở khóa tài khoản'"
+                @click="confirmToggle(data)" />
+            </div>
+          </template>
+        </Column>
+      </DataTable>
 
-          <div class="flex flex-col gap-2">
-            <label for="role" class="font-medium text-sm text-gray-700">Quyền hạn</label>
-            <Dropdown id="role" v-model="userForm.role" :options="roleOptions" optionLabel="label" optionValue="value" placeholder="Chọn chức vụ" />
+      <Dialog v-model:visible="userDialog" modal :header="isEditing ? 'Chỉnh sửa quyền' : 'Tạo tài khoản mới'" class="w-[30rem] max-w-[95vw]">
+        <form class="grid gap-3" @submit.prevent="saveUser">
+          <div v-if="formError" role="alert" class="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+            {{ formError }}
           </div>
-        </div>
-
+          <div class="grid gap-1">
+            <label for="user-email" class="text-sm font-medium text-gray-700">Email <span v-if="!isEditing" class="text-red-500">*</span></label>
+            <InputText id="user-email" v-model.trim="userForm.email" type="email" :required="!isEditing" :disabled="isEditing" autofocus class="w-full" />
+          </div>
+          <div v-if="!isEditing" class="grid gap-1">
+            <label for="user-password" class="text-sm font-medium text-gray-700">Mật khẩu <span class="text-red-500">*</span></label>
+            <InputText id="user-password" v-model="userForm.password" type="password" required autocomplete="new-password" class="w-full" />
+            <p class="text-xs text-gray-500">Tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và số.</p>
+          </div>
+          <div class="grid gap-1">
+            <label for="user-fullname" class="text-sm font-medium text-gray-700">Họ và Tên <span v-if="!isEditing" class="text-red-500">*</span></label>
+            <InputText id="user-fullname" v-model.trim="userForm.fullName" :required="!isEditing" :disabled="isEditing" class="w-full" />
+          </div>
+          <div class="grid gap-1">
+            <label for="user-role" class="text-sm font-medium text-gray-700">Quyền hạn</label>
+            <Select v-model="userForm.role" :options="roleOptions" optionLabel="label" optionValue="value" inputId="user-role" class="w-full" />
+            <p v-if="isEditing" class="text-xs text-gray-500">Email/họ tên là định danh tài khoản — chỉ quyền hạn chỉnh được tại đây.</p>
+          </div>
+        </form>
         <template #footer>
-          <div class="flex justify-end gap-2 mt-4">
-            <button @click="hideDialog" class="min-h-11 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md transition-colors font-medium">Hủy</button>
-            <button @click="saveUser" class="min-h-11 px-4 py-2 bg-chatgpt-brand hover:bg-chatgpt-brand/90 text-white rounded-md transition-colors font-medium">Lưu lại</button>
-          </div>
+          <Button label="Hủy" severity="secondary" outlined @click="userDialog = false" />
+          <Button :label="isEditing ? 'Lưu quyền' : 'Tạo tài khoản'" icon="pi pi-check" :loading="saving" @click="saveUser" />
         </template>
       </Dialog>
     </div>
@@ -101,14 +116,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
+import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
 import { errorMessage, readApiError } from '@/api/errors';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Dialog from 'primevue/dialog';
-import InputText from 'primevue/inputtext';
-import Dropdown from 'primevue/dropdown';
+import { useServerPage } from '@/composables/useServerPage';
 
 interface User {
   id: string;
@@ -116,107 +129,111 @@ interface User {
   fullName: string;
   role: string;
   isActive: boolean;
+  createdAt: string;
+  failedLoginAttempts: number;
+  lockoutEnd?: string | null;
 }
 
-const users = ref<User[]>([]);
-const loading = ref(true);
-const userError = ref('');
-
-const userDialog = ref(false);
-const isEditing = ref(false);
-const userForm = ref({
-  id: '',
-  email: '',
-  password: '',
-  fullName: '',
-  role: 'Member'
-});
+const confirm = useConfirm();
+const toast = useToast();
+const list = useServerPage<User>('/api/users', { errorLabel: 'danh sách người dùng' });
 
 const roleOptions = [
   { label: 'Member', value: 'Member' },
   { label: 'Admin', value: 'Admin' }
 ];
 
-const loadUsers = async () => {
-  loading.value = true;
-  userError.value = '';
-  try {
-    const res = await http.get('/api/users');
-    if (res.ok) {
-      users.value = await res.json();
-    } else userError.value = await readApiError(res, 'Không thể tải danh sách người dùng');
-  } catch (error) {
-    userError.value = errorMessage(error, 'Không thể tải danh sách người dùng.');
-  } finally {
-    loading.value = false;
-  }
+const absoluteDate = (value: string): string => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('vi-VN');
 };
+
+const isLockedOut = (user: User): boolean =>
+  !!user.lockoutEnd && new Date(user.lockoutEnd).getTime() > Date.now();
+const lockoutHint = (user: User): string =>
+  `Sai mật khẩu ${user.failedLoginAttempts} lần — tự mở khóa lúc ${new Date(user.lockoutEnd as string).toLocaleTimeString('vi-VN')}`;
+
+const userDialog = ref(false);
+const isEditing = ref(false);
+const saving = ref(false);
+const formError = ref('');
+const userForm = ref({ id: '', email: '', password: '', fullName: '', role: 'Member' });
 
 const openNewDialog = () => {
   isEditing.value = false;
-  userForm.value = {
-    id: '',
-    email: '',
-    password: '',
-    fullName: '',
-    role: 'Member'
-  };
+  userForm.value = { id: '', email: '', password: '', fullName: '', role: 'Member' };
+  formError.value = '';
   userDialog.value = true;
 };
 
 const editUser = (user: User) => {
   isEditing.value = true;
-  userForm.value = {
-    id: user.id,
-    email: user.email,
-    password: '',
-    fullName: user.fullName,
-    role: user.role
-  };
+  userForm.value = { id: user.id, email: user.email, password: '', fullName: user.fullName, role: user.role };
+  formError.value = '';
   userDialog.value = true;
 };
 
-const hideDialog = () => {
-  userDialog.value = false;
-};
-
 const saveUser = async () => {
-  userError.value = '';
+  formError.value = '';
+  saving.value = true;
   try {
     if (isEditing.value) {
-      // Chỉ cập nhật Role
       const res = await http.put(`/api/users/${userForm.value.id}/role`, { role: userForm.value.role });
-      if (res.ok) {
-        userDialog.value = false;
-        loadUsers();
-      } else userError.value = await readApiError(res, 'Không thể cập nhật quyền người dùng');
+      if (!res.ok) {
+        formError.value = await readApiError(res, 'Không thể cập nhật quyền người dùng');
+        return;
+      }
+      toast.add({ severity: 'success', summary: 'Đã cập nhật quyền', detail: userForm.value.email, life: 3000 });
     } else {
-      // Tạo mới
+      if (!userForm.value.email.trim() || !userForm.value.password || !userForm.value.fullName.trim()) {
+        formError.value = 'Vui lòng nhập đủ email, mật khẩu và họ tên.';
+        return;
+      }
       const res = await http.post('/api/users', userForm.value);
-      if (res.ok) {
-        userDialog.value = false;
-        loadUsers();
-      } else userError.value = await readApiError(res, 'Không thể tạo người dùng');
+      if (!res.ok) {
+        formError.value = await readApiError(res, 'Không thể tạo người dùng');
+        return;
+      }
+      toast.add({ severity: 'success', summary: 'Đã tạo tài khoản', detail: userForm.value.email, life: 3000 });
     }
+    userDialog.value = false;
+    await list.reload();
   } catch (error) {
-    userError.value = errorMessage(error, 'Có lỗi xảy ra khi lưu người dùng.');
+    formError.value = errorMessage(error, 'Có lỗi xảy ra khi lưu người dùng.');
+  } finally {
+    saving.value = false;
   }
 };
 
-const toggleUserStatus = async (user: User) => {
-  if (!confirm(`Bạn có chắc muốn ${user.isActive ? 'khóa' : 'mở khóa'} người dùng này không?`)) return;
-  userError.value = '';
+const confirmToggle = (user: User) => {
+  const locking = user.isActive;
+  confirm.require({
+    header: locking ? 'Khóa tài khoản' : 'Mở khóa tài khoản',
+    message: locking
+      ? `Khóa "${user.email}"? Người dùng sẽ không đăng nhập được và phiên hiện tại bị thu hồi.`
+      : `Mở khóa "${user.email}"?`,
+    icon: 'pi pi-exclamation-triangle',
+    acceptLabel: locking ? 'Khóa' : 'Mở khóa',
+    rejectLabel: 'Hủy',
+    acceptProps: { severity: locking ? 'danger' : 'success' },
+    rejectProps: { severity: 'secondary', outlined: true },
+    accept: () => { void performToggle(user); }
+  });
+};
+
+const performToggle = async (user: User) => {
   try {
     const res = await http.put(`/api/users/${user.id}/toggle-status`);
     if (res.ok) {
-      loadUsers();
-    } else userError.value = await readApiError(res, 'Không thể cập nhật trạng thái người dùng');
+      toast.add({ severity: 'success', summary: user.isActive ? 'Đã khóa tài khoản' : 'Đã mở khóa tài khoản', detail: user.email, life: 3000 });
+      await list.reload();
+    } else {
+      toast.add({ severity: 'error', summary: 'Không thể cập nhật trạng thái', detail: await readApiError(res, 'Không thể cập nhật trạng thái người dùng'), life: 6000 });
+    }
   } catch (error) {
-    userError.value = errorMessage(error, 'Không thể cập nhật trạng thái người dùng.');
+    toast.add({ severity: 'error', summary: 'Không thể cập nhật trạng thái', detail: errorMessage(error, 'Không thể cập nhật trạng thái người dùng.'), life: 6000 });
   }
 };
 
-onMounted(() => {
-  loadUsers();
-});
+onMounted(() => { void list.load(); });
 </script>

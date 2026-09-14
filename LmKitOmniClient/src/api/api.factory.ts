@@ -112,6 +112,15 @@ export const ApiFactory = {
     BASE: '/api/agent-runs',
     BY_ID: (id: string) => `/api/agent-runs/${id}`
   },
+  TENANTS: {
+    BASE: '/api/tenants',
+    OPTIONS: '/api/tenants/options',
+    BY_ID: (id: string) => `/api/tenants/${id}`
+  },
+  LORA: {
+    BASE: '/api/lora-adapters',
+    BY_ID: (id: string) => `/api/lora-adapters/${id}`
+  },
   DATABASE_CONNECTIONS: {
     BASE: '/api/database-connections',
     BY_ID: (id: string) => `/api/database-connections/${id}`,

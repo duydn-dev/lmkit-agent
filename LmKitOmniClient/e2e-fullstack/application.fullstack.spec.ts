@@ -55,7 +55,7 @@ test('real stack supports auth, sessions, documents, user admin and logout', asy
   await page.getByRole('button', { name: 'Xóa đoạn chat Đoạn chat mới', exact: true }).click();
   await expect.poll(async () => (await api.get(`/api/chat/sessions/${session.id}/messages`)).status()).toBe(404);
 
-  await page.getByRole('link', { name: 'Kho tài liệu (RAG)' }).click();
+  await page.getByRole('link', { name: 'RAG Documents' }).click();
   await page.getByRole('button', { name: 'Tải tài liệu lên' }).click();
   await page.getByLabel('Chọn tài liệu để tải lên').setInputFiles({
     name: documentName,
@@ -68,7 +68,7 @@ test('real stack supports auth, sessions, documents, user admin and logout', asy
   await page.getByRole('dialog').getByRole('button', { name: 'Xóa', exact: true }).click();
   await expect(page.getByRole('heading', { name: documentName, exact: true })).toBeHidden();
 
-  await page.getByRole('link', { name: 'Quản lý User' }).click();
+  await page.getByRole('link', { name: 'User Management' }).click();
   await page.getByRole('button', { name: 'Thêm người dùng' }).click();
   const userDialog = page.getByRole('dialog', { name: 'Tạo Tài khoản mới' });
   await userDialog.getByLabel('Email').fill(createdUserEmail);
@@ -86,7 +86,7 @@ test('real stack supports auth, sessions, documents, user admin and logout', asy
   await page.getByRole('button', { name: /Admin User/ }).click();
   await expect(page).toHaveURL(/\/admin$/);
   await page.getByRole('complementary', { name: 'Thanh bên ứng dụng' })
-    .getByRole('link', { name: 'Máy chủ MCP' }).click();
+    .getByRole('link', { name: 'MCP Servers' }).click();
   await expect(page).toHaveURL(/\/admin\/mcp-servers$/);
   await expect(page.getByText('Kết nối MCP Streamable HTTP theo tenant.')).toBeVisible();
   await expect(page.getByRole('checkbox', { name: /Tin cậy khai báo/ })).not.toBeChecked();

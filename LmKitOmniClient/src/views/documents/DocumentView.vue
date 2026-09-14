@@ -402,7 +402,7 @@
       <p class="text-sm text-gray-600 leading-relaxed">
         Bạn có chắc chắn muốn xóa tài liệu
         <span class="font-semibold text-gray-800">{{ docToDelete?.fileName }}</span>?
-        <br/>Dữ liệu vector sẽ bị xóa khỏi knowledge base.
+        <br />Dữ liệu vector sẽ bị xóa khỏi knowledge base.
       </p>
 
       <template #footer>
