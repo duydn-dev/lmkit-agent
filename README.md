@@ -23,7 +23,7 @@ Vue/Nginx ──cookie JWT──> ASP.NET Core API
 
 ## Chức năng chính
 
-Mọi thứ trong mục này **bật sẵn** trừ khi ghi rõ. Các chức năng tắt mặc định nằm ở [mục riêng bên dưới](#chức-năng-tắt-mặc-định).
+Mọi thứ trong mục này **bật sẵn** trừ khi ghi rõ. Danh sách chức năng opt-in (tắt mặc định) xem tại [ai-agent-capabilities.md](LmKitOmniApi/docs/ai-agent-capabilities.md#chức-năng-opt-in).
 
 **Chat & Agents**
 - Chat streaming (SSE) với lịch sử, chia sẻ link, quản lý phiên
@@ -50,28 +50,6 @@ Mọi thứ trong mục này **bật sẵn** trừ khi ghi rõ. Các chức năn
 **Bảo mật**
 - Phân tenant xuyên suốt, JWT cookie auth, rate limit AI per-user (local + distributed Redis), output guardrail, DataProtection key ring mã hóa được
 - Audit log lưu **hash SHA-256 của tool arguments** thay vì nội dung thô (không phải hash-chain chống sửa)
-
-### Chức năng tắt mặc định
-
-Đã có code và test, nhưng `Enabled: false` trong `appsettings.json` — endpoint trả `501` cho tới khi bật:
-
-| Chức năng | Khóa cấu hình | Cần thêm |
-|---|---|---|
-| Python code interpreter (container riêng, giới hạn CPU/RAM/timeout) | `CodeInterpreter:Python:Enabled` | `CodeInterpreter:Python:Image` |
-| Browser fetch tool | `BrowserTool:Enabled` | `BrowserTool:Image` |
-| Computer-use (điều khiển máy tính qua screenshot + grounding) | `ComputerUse:Enabled` | `ComputerUse:Image` |
-| Database agent (SQL Server, PostgreSQL, MySQL, Oracle, SQLite, MongoDB — read-only) | `DatabaseAgent:Enabled` | `DatabaseAgent:AllowedHosts` |
-| Web read (fetch & đọc URL, có guard SSRF) | `WebRead:Enabled` | — |
-| Document tools (PDF form/redaction) | `DocumentTools:Enabled` | — |
-| LoRA adapter hot-swap | `Lora:Enabled` | — |
-| Grounding eval / fine-tuning cho computer-use | `GroundingEval:Enabled`, `GroundingTraining:Enabled` | — |
-| Chat reasoning | `ChatReasoning:Enabled` | — |
-| Text-to-speech (Piper) | `Voice:TtsEnabled` | `Voice:PiperExecutablePath` + voice model |
-| Voice room agent qua LiveKit | `Voice:LiveAgentEnabled` | LiveKit URL/key/secret **và** `Voice:AgentTenantId` + `Voice:AgentUserId` |
-| Tool gọi REST tổng quát `call_api` / `call_api_write` (SSRF 3 lớp; method ghi luôn cần phê duyệt HITL) | `ApiTool:Enabled` | tùy chọn `ApiTool:AllowedHosts` |
-| Webhook nhận kết quả lịch chạy (Task Scheduler) | `ScheduleWebhooks:Enabled` | tùy chọn `ScheduleWebhooks:AllowedHosts` |
-
-Chi tiết từng mục: [ai-agent-capabilities.md](LmKitOmniApi/docs/ai-agent-capabilities.md#chức-năng-opt-in).
 
 ## Danh mục màn hình (theo sidebar)
 
