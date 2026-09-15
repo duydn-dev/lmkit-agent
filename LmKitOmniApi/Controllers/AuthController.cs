@@ -181,7 +181,7 @@ public class AuthController : ControllerBase
         var refreshCookieOptions = BuildCookieOptions(session.ExpiresAtUtc);
         Response.Cookies.Append("hermes_refresh_token", refreshToken, refreshCookieOptions);
 
-        return Ok(new
+        var userPayload = new
         {
             user.Id,
             user.Email,
@@ -189,7 +189,23 @@ public class AuthController : ControllerBase
             user.Role,
             user.TenantId,
             Tenant = await BuildTenantBrandingAsync(user.TenantId)
-        });
+        };
+
+        // Browsers keep the HttpOnly cookies above. Native clients cannot rely on a
+        // browser cookie jar, so they explicitly opt into a bearer-token response.
+        if (IsMobileClient())
+        {
+            return Ok(new
+            {
+                AccessToken = token,
+                RefreshToken = refreshToken,
+                AccessTokenExpiresAtUtc = DateTime.UtcNow.AddMinutes(jwtExpiration),
+                RefreshTokenExpiresAtUtc = session.ExpiresAtUtc,
+                User = userPayload
+            });
+        }
+
+        return Ok(userPayload);
     }
 
     [HttpPost("logout")]
@@ -261,10 +277,13 @@ public class AuthController : ControllerBase
     /// token is the one being presented.</para>
     /// </summary>
     [HttpPost("refresh")]
-    public async Task<IActionResult> Refresh()
+    public async Task<IActionResult> Refresh([FromBody] RefreshRequest? request = null)
     {
-        if (!Request.Cookies.TryGetValue("hermes_refresh_token", out var refreshToken)
-            || string.IsNullOrWhiteSpace(refreshToken))
+        var refreshToken = request?.RefreshToken;
+        if (string.IsNullOrWhiteSpace(refreshToken))
+            Request.Cookies.TryGetValue("hermes_refresh_token", out refreshToken);
+
+        if (string.IsNullOrWhiteSpace(refreshToken))
         {
             return Unauthorized(new { message = "Không tìm thấy Refresh Token." });
         }
@@ -357,6 +376,17 @@ public class AuthController : ControllerBase
         var refreshCookieOptions = BuildCookieOptions(session.ExpiresAtUtc);
         Response.Cookies.Append("hermes_refresh_token", newRefreshToken, refreshCookieOptions);
 
+        if (IsMobileClient())
+        {
+            return Ok(new
+            {
+                AccessToken = newJwtToken,
+                RefreshToken = newRefreshToken,
+                AccessTokenExpiresAtUtc = DateTime.UtcNow.AddMinutes(jwtExpiration),
+                RefreshTokenExpiresAtUtc = session.ExpiresAtUtc
+            });
+        }
+
         return Ok(new { message = "Làm mới Token thành công." });
     }
 
@@ -434,6 +464,10 @@ public class AuthController : ControllerBase
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
+    private bool IsMobileClient() =>
+        Request.Headers.TryGetValue("X-Client-Platform", out var platform)
+        && string.Equals(platform.ToString(), "mobile", StringComparison.OrdinalIgnoreCase);
+
     private CookieOptions BuildCookieOptions(DateTimeOffset expires) => new()
     {
         HttpOnly = true,
@@ -464,4 +498,9 @@ public class LoginRequest
 {
     public string Email { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
+}
+
+public sealed class RefreshRequest
+{
+    public string? RefreshToken { get; set; }
 }
