@@ -47,6 +47,8 @@
 			</array>
 		</dict>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Ứng dụng cần micro để ghi âm tin nhắn thoại và chuyển thành văn bản.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

@@ -42,6 +42,9 @@ dependencies:
   image_picker: ^1.2.3
   url_launcher: ^6.3.2
   path_provider: ^2.1.6
+  record: ^7.1.1
+  livekit_client: ^2.13.0
+  flutter_svg: ^2.3.0
 
 dev_dependencies:
   flutter_test:
@@ -64,6 +67,25 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/images/
+
+  # Be Vietnam Pro — cùng font với web client (LmKitOmniClient dùng
+  # @fontsource/be-vietnam-pro). Bản đầy đủ có dấu tiếng Việt, lấy từ
+  # google/fonts (ofl/bevietnampro), không dùng bản subset của Google Fonts CSS
+  # vì subset latin thiếu toàn bộ ký tự có dấu.
+  fonts:
+    - family: Be Vietnam Pro
+      fonts:
+        - asset: assets/fonts/BeVietnamPro-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/BeVietnamPro-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/BeVietnamPro-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/BeVietnamPro-Bold.ttf
+          weight: 700
 
   # To add assets to your application, add an assets section, like this:
   # assets:

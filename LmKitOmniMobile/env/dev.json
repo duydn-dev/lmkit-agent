@@ -1,0 +1,10 @@
+{
+  "API_BASE_URL": "http://10.0.2.2:5032",
+  "APP_WEB_BASE_URL": "http://localhost:5173",
+  "APP_FLAVOR": "dev",
+  "API_CONNECT_TIMEOUT_SECONDS": 20,
+  "API_RECEIVE_TIMEOUT_SECONDS": 300,
+  "API_SEND_TIMEOUT_SECONDS": 120,
+  "API_LOG_HTTP": true,
+  "LIVEKIT_URL": "ws://10.0.2.2:7880"
+}

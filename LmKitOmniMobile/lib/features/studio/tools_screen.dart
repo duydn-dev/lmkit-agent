@@ -4,9 +4,13 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../core/network/api_exception.dart';
 import 'studio_provider.dart';
+import '../../app/ui/app_controls.dart';
 
 class ToolsScreen extends ConsumerStatefulWidget {
-  const ToolsScreen({super.key});
+  const ToolsScreen({super.key, this.initialTab = 0});
+
+  /// Tab mở đầu tiên: 0 = Text Analytics, 1 = Vision & OCR.
+  final int initialTab;
 
   @override
   ConsumerState<ToolsScreen> createState() => _ToolsScreenState();
@@ -14,7 +18,11 @@ class ToolsScreen extends ConsumerStatefulWidget {
 
 class _ToolsScreenState extends ConsumerState<ToolsScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 2, vsync: this);
+  late final TabController _tabs = TabController(
+    length: 2,
+    vsync: this,
+    initialIndex: widget.initialTab.clamp(0, 1),
+  );
   final _text = TextEditingController();
   final _categories = TextEditingController(
     text: 'Kinh tế, Thể thao, Giải trí',
@@ -145,14 +153,12 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen>
     body: Column(
       children: [
         if (_error != null)
-          MaterialBanner(
-            content: Text(_error!),
-            actions: [
-              TextButton(
-                onPressed: () => setState(() => _error = null),
-                child: const Text('Đóng'),
-              ),
-            ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: AppErrorBanner(
+              message: _error!,
+              onDismiss: () => setState(() => _error = null),
+            ),
           ),
         Expanded(
           child: TabBarView(
@@ -167,10 +173,7 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen>
   Widget _textTab() => ListView(
     padding: const EdgeInsets.all(16),
     children: [
-      const Text(
-        'Phân tích văn bản',
-        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-      ),
+      Text('Phân tích văn bản', style: Theme.of(context).textTheme.titleLarge),
       const SizedBox(height: 6),
       const Text('Cảm xúc, thực thể, phân loại, ngôn ngữ và từ khóa.'),
       const SizedBox(height: 16),
@@ -210,25 +213,23 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen>
     ],
   );
 
-  Widget _action(String label, String operation) => FilledButton(
+  Widget _action(String label, String operation) => AppPrimaryButton(
+    label: label,
     onPressed: _busy ? null : () => _runText(operation),
-    child: Text(label),
+    expand: false,
   );
 
   Widget _visionTab() => ListView(
     padding: const EdgeInsets.all(16),
     children: [
-      const Text(
-        'Vision & OCR',
-        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-      ),
+      Text('Vision & OCR', style: Theme.of(context).textTheme.titleLarge),
       const SizedBox(height: 6),
       const Text('Tải ảnh lên, phân tích nội dung hoặc trích xuất văn bản.'),
       const SizedBox(height: 16),
-      OutlinedButton.icon(
+      AppSecondaryButton(
+        label: _imagePath == null ? 'Chọn ảnh' : 'Đã tải ảnh lên',
+        icon: Icons.upload_file,
         onPressed: _busy ? null : _pickImage,
-        icon: const Icon(Icons.upload_file),
-        label: Text(_imagePath == null ? 'Chọn ảnh' : 'Đã tải ảnh lên'),
       ),
       const SizedBox(height: 12),
       TextField(
@@ -249,42 +250,44 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen>
       Row(
         children: [
           Expanded(
-            child: FilledButton.icon(
+            child: AppPrimaryButton(
+              label: 'Phân tích ảnh',
+              icon: Icons.image_search,
               onPressed: _imagePath == null || _busy
                   ? null
                   : () => _runVision('analyze'),
-              icon: const Icon(Icons.image_search),
-              label: const Text('Phân tích ảnh'),
+              expand: false,
             ),
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: FilledButton.icon(
+            child: AppPrimaryButton(
+              label: 'OCR',
+              icon: Icons.text_snippet,
               onPressed: _imagePath == null || _busy
                   ? null
                   : () => _runVision('ocr'),
-              icon: const Icon(Icons.text_snippet),
-              label: const Text('OCR'),
+              expand: false,
             ),
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: OutlinedButton.icon(
+            child: AppSecondaryButton(
+              label: 'Phân loại',
+              icon: Icons.category,
               onPressed: _imagePath == null || _busy
                   ? null
                   : () => _runVision('classify'),
-              icon: const Icon(Icons.category),
-              label: const Text('Phân loại'),
             ),
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: OutlinedButton.icon(
+            child: AppSecondaryButton(
+              label: 'Tách nền',
+              icon: Icons.auto_fix_high,
               onPressed: _imagePath == null || _busy
                   ? null
                   : () => _runVision('remove'),
-              icon: const Icon(Icons.auto_fix_high),
-              label: const Text('Tách nền'),
             ),
           ),
         ],

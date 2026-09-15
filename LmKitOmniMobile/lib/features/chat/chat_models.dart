@@ -37,6 +37,100 @@ class ChatSessionModel {
       value is String ? DateTime.tryParse(value) : null;
 }
 
+/// File người dùng đính kèm vào một tin nhắn.
+///
+/// Giới hạn ở đây phải khớp `ChatController` phía API: 8 file, 20 MB mỗi file,
+/// 50 MB tổng và chỉ nhận các phần mở rộng trong [allowedExtensions].
+class ChatAttachmentModel {
+  const ChatAttachmentModel({
+    required this.path,
+    required this.name,
+    required this.size,
+  });
+
+  final String path;
+  final String name;
+  final int size;
+
+  static const maxFiles = 8;
+  static const maxFileBytes = 20 * 1024 * 1024;
+  static const maxTotalBytes = 50 * 1024 * 1024;
+
+  static const allowedExtensions = <String>{
+    'jpg',
+    'jpeg',
+    'png',
+    'bmp',
+    'webp',
+    'gif',
+    'tiff',
+    'pdf',
+    'doc',
+    'docx',
+    'xls',
+    'xlsx',
+    'ppt',
+    'pptx',
+    'txt',
+    'md',
+    'csv',
+    'json',
+    'xml',
+  };
+
+  String get extension {
+    final index = name.lastIndexOf('.');
+    if (index < 0 || index == name.length - 1) return '';
+    return name.substring(index + 1).toLowerCase();
+  }
+
+  bool get isSupported => allowedExtensions.contains(extension);
+
+  String get displaySize => size >= 1024 * 1024
+      ? '${(size / (1024 * 1024)).toStringAsFixed(1)} MB'
+      : '${(size / 1024).round()} KB';
+
+  /// Trả về lỗi đầu tiên khi thêm [candidate] vào [current], `null` nếu hợp lệ.
+  static String? validateAdd(
+    List<ChatAttachmentModel> current,
+    ChatAttachmentModel candidate,
+  ) {
+    if (!candidate.isSupported) {
+      return '"${candidate.name}" không phải định dạng được hỗ trợ.';
+    }
+    if (candidate.size > maxFileBytes) {
+      return '"${candidate.name}" vượt quá 20 MB.';
+    }
+    if (current.length >= maxFiles) {
+      return 'Chỉ đính kèm tối đa $maxFiles file.';
+    }
+    final total =
+        current.fold<int>(0, (sum, item) => sum + item.size) + candidate.size;
+    if (total > maxTotalBytes) {
+      return 'Tổng dung lượng file đính kèm vượt quá 50 MB.';
+    }
+    return null;
+  }
+}
+
+/// Link công khai của một phiên chat.
+class ShareLinkModel {
+  const ShareLinkModel({required this.token, this.expiresAtUtc});
+
+  final String token;
+  final DateTime? expiresAtUtc;
+
+  bool get isExpired =>
+      expiresAtUtc != null && expiresAtUtc!.isBefore(DateTime.now().toUtc());
+
+  factory ShareLinkModel.fromJson(Map<String, dynamic> json) => ShareLinkModel(
+    token: json['token'] as String? ?? '',
+    expiresAtUtc: json['expiresAtUtc'] is String
+        ? DateTime.tryParse(json['expiresAtUtc'] as String)
+        : null,
+  );
+}
+
 class ProducedFileModel {
   const ProducedFileModel({
     required this.id,
@@ -66,13 +160,16 @@ class ChatMessageModel {
     required this.content,
     this.id,
     this.createdAt,
-    this.thinkingSteps = const [],
+    List<String>? thinkingSteps,
     this.reasoning = '',
-    this.webUrls = const [],
-    this.producedFiles = const [],
+    List<String>? webUrls,
+    List<ProducedFileModel>? producedFiles,
     this.approvalId,
     this.isTyping = false,
-  });
+    // Danh sách phải mutable: stream cập nhật dần vào cùng một instance.
+  }) : thinkingSteps = thinkingSteps ?? [],
+       webUrls = webUrls ?? [],
+       producedFiles = producedFiles ?? [];
 
   final String? id;
   final String role;

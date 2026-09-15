@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Mobile · Android emulator (env/dev.json)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "cwd": "${workspaceFolder}",
+      "args": ["--dart-define-from-file=env/dev.json"]
+    },
+    {
+      "name": "Mobile · iOS simulator / desktop (env/dev-ios.json)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "cwd": "${workspaceFolder}",
+      "args": ["--dart-define-from-file=env/dev-ios.json"]
+    },
+    {
+      "name": "Mobile · Prod (env/prod.json)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "cwd": "${workspaceFolder}",
+      "args": ["--dart-define-from-file=env/prod.json"]
+    }
+  ]
+}

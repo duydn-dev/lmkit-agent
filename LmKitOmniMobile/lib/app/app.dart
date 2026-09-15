@@ -13,19 +13,18 @@ class LmKitOmniApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authControllerProvider);
-    final light = FTheme.neutral.light.touch;
-    final dark = FTheme.neutral.dark.touch;
+    // Chỉ sáng, đúng như web: `style.css` ép `color-scheme: light` và ghi rõ
+    // "The application is intentionally light-themed". Theo `ThemeMode.system`
+    // sẽ cho ra giao diện khác web trên máy đang bật chế độ tối.
+    final forui = AppTheme.forui();
 
     return MaterialApp(
-      title: 'CILA AI',
+      title: 'Trợ lý ảo - CILA AI',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.materialLight(light),
-      darkTheme: dark.toApproximateMaterialTheme(),
-      themeMode: ThemeMode.system,
-      builder: (context, child) => FTheme(
-        data: Theme.of(context).brightness == Brightness.dark ? dark : light,
-        child: child ?? const SizedBox.shrink(),
-      ),
+      theme: AppTheme.material(forui),
+      themeMode: ThemeMode.light,
+      builder: (context, child) =>
+          FTheme(data: forui, child: child ?? const SizedBox.shrink()),
       home: auth.when(
         loading: () => const _BootScreen(),
         error: (error, _) => LoginScreen(initialError: error.toString()),
@@ -40,6 +39,16 @@ class _BootScreen extends StatelessWidget {
   const _BootScreen();
 
   @override
-  Widget build(BuildContext context) =>
-      const Scaffold(body: Center(child: CircularProgressIndicator()));
+  Widget build(BuildContext context) => Scaffold(
+    body: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text('Đang tải cấu hình…'),
+        ],
+      ),
+    ),
+  );
 }

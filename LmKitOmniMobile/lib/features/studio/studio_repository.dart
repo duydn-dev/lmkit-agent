@@ -25,31 +25,101 @@ class StudioRepository {
     return _paged(response.data).map(CustomAgentModel.fromJson).toList();
   }
 
+  Future<List<AgentToolModel>> toolCatalog() async {
+    final response = await _client.get('/api/agents/custom/tools');
+    return _list(response.data).map(AgentToolModel.fromJson).toList();
+  }
+
+  /// Tài liệu do chính người dùng tải lên — chỉ những tài liệu này mới ghim
+  /// được vào custom agent (backend kiểm tra owner-only).
+  Future<List<KnowledgeDocModel>> ownedDocuments() async {
+    final response = await _client.get(
+      '/api/document',
+      queryParameters: {'ownedOnly': true},
+    );
+    return _list(response.data).map(KnowledgeDocModel.fromJson).toList();
+  }
+
   Future<CustomAgentModel> createCustomAgent({
     required String name,
     required String personaPrompt,
     String? description,
     String? icon,
     bool shared = false,
+    List<String>? allowedTools,
+    List<String>? knowledgeDocumentIds,
   }) async {
     final response = await _client.post(
       '/api/agents/custom',
-      data: {
-        'name': name.trim(),
-        'personaPrompt': personaPrompt.trim(),
-        if (description?.trim().isNotEmpty == true)
-          'description': description!.trim(),
-        if (icon?.trim().isNotEmpty == true) 'icon': icon!.trim(),
-        'isSharedWithTenant': shared,
-      },
+      data: _agentBody(
+        name: name,
+        personaPrompt: personaPrompt,
+        description: description,
+        icon: icon,
+        shared: shared,
+        allowedTools: allowedTools,
+        knowledgeDocumentIds: knowledgeDocumentIds,
+      ),
     );
     return CustomAgentModel.fromJson(
       Map<String, dynamic>.from(response.data as Map),
     );
   }
 
+  Future<CustomAgentModel> updateCustomAgent({
+    required String id,
+    required String name,
+    required String personaPrompt,
+    String? description,
+    String? icon,
+    bool shared = false,
+    List<String>? allowedTools,
+    List<String>? knowledgeDocumentIds,
+  }) async {
+    final response = await _client.put(
+      '/api/agents/custom/$id',
+      data: _agentBody(
+        name: name,
+        personaPrompt: personaPrompt,
+        description: description,
+        icon: icon,
+        shared: shared,
+        allowedTools: allowedTools,
+        knowledgeDocumentIds: knowledgeDocumentIds,
+      ),
+    );
+    return CustomAgentModel.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+    );
+  }
+
+  Map<String, dynamic> _agentBody({
+    required String name,
+    required String personaPrompt,
+    String? description,
+    String? icon,
+    required bool shared,
+    List<String>? allowedTools,
+    List<String>? knowledgeDocumentIds,
+  }) => {
+    'name': name.trim(),
+    'personaPrompt': personaPrompt.trim(),
+    if (description?.trim().isNotEmpty == true)
+      'description': description!.trim(),
+    if (icon?.trim().isNotEmpty == true) 'icon': icon!.trim(),
+    'isSharedWithTenant': shared,
+    // null = giữ bộ công cụ mặc định theo vai trò; list = whitelist tường minh.
+    'allowedTools': allowedTools,
+    'knowledgeDocumentIds': knowledgeDocumentIds,
+  };
+
   Future<void> deleteCustomAgent(String id) =>
       _client.delete('/api/agents/custom/$id').then((_) {});
+
+  Future<AgentRunDetailModel> agentRun(String id) async {
+    final response = await _client.get('/api/agent-runs/$id');
+    return AgentRunDetailModel.fromJson(_map(response.data));
+  }
 
   Future<List<ScheduledTaskModel>> schedules({String? search}) async {
     final response = await _client.get(
@@ -108,6 +178,35 @@ class StudioRepository {
 
   Future<void> cancelAgentRun(String id) =>
       _client.post('/api/agent-runs/$id/cancel').then((_) {});
+
+  /// Bắt đầu một agent run và đọc tiến trình qua SSE.
+  ///
+  /// `POST /api/agent-runs` trả về `text/event-stream` (không phải JSON): server
+  /// chạy agent tự hành và đẩy `step`/`thinking`/`content`/`approval`/`done`.
+  /// Huỷ [cancelToken] sẽ ngắt stream — đúng cách dừng theo backend (nút Dừng).
+  Future<void> startAgentRun({
+    required String goal,
+    String? customAgentId,
+    required void Function(ChatStreamEvent event) onEvent,
+    CancelToken? cancelToken,
+  }) async {
+    final response = await _client.stream(
+      '/api/agent-runs',
+      data: {'goal': goal.trim(), 'customAgentId': ?customAgentId},
+      cancelToken: cancelToken,
+    );
+    final parser = ChatSseParser();
+    final body = response.data as ResponseBody;
+    await for (final chunk in utf8.decoder.bind(body.stream)) {
+      for (final event in parser.push(chunk)) {
+        onEvent(event);
+        if (event.type == 'done') return;
+      }
+    }
+    for (final event in parser.finish()) {
+      onEvent(event);
+    }
+  }
 
   Future<void> runResearch({
     required String query,
@@ -228,36 +327,21 @@ class StudioRepository {
   Future<Map<String, dynamic>> createApiKey({
     required String name,
     int? expiresInDays,
+    int? maxRequests,
   }) async {
     final response = await _client.post(
       '/api/api-keys',
-      data: {'name': name.trim(), 'expiresInDays': ?expiresInDays},
+      data: {
+        'name': name.trim(),
+        'expiresInDays': ?expiresInDays,
+        'maxRequests': ?maxRequests,
+      },
     );
     return _map(response.data);
   }
 
   Future<void> revokeApiKey(String id) =>
       _client.delete('/api/api-keys/$id').then((_) {});
-
-  Future<List<Map<String, dynamic>>> adminUsers({String? search}) async {
-    final response = await _client.get(
-      '/api/users',
-      queryParameters: {
-        'page': 1,
-        'pageSize': 50,
-        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
-      },
-    );
-    return _paged(response.data);
-  }
-
-  Future<Map<String, dynamic>> adminAudit({int page = 1}) async {
-    final response = await _client.get(
-      '/api/audit',
-      queryParameters: {'page': page, 'pageSize': 50},
-    );
-    return _map(response.data);
-  }
 
   Future<List<Map<String, dynamic>>> notifications({
     bool unreadOnly = false,

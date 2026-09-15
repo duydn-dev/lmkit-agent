@@ -2,6 +2,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/theme.dart';
+
+import '../../app/ui/app_controls.dart';
 import '../../core/network/api_exception.dart';
 import 'workspace_models.dart';
 import 'workspace_provider.dart';
@@ -14,9 +17,12 @@ class DocumentsScreen extends ConsumerStatefulWidget {
 }
 
 class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
+  final _search = TextEditingController();
   List<DocumentModel> _documents = const [];
   bool _loading = true;
   bool _uploading = false;
+  bool _grid = false;
+  String _query = '';
   String? _error;
 
   @override
@@ -25,21 +31,35 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// Lọc phía client: `GET /api/document` không nhận tham số tìm kiếm.
+  List<DocumentModel> get _visible {
+    if (_query.isEmpty) return _documents;
+    final needle = _query.toLowerCase();
+    return _documents
+        .where((document) => document.fileName.toLowerCase().contains(needle))
+        .toList();
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
       final documents = await ref.read(workspaceRepositoryProvider).documents();
       if (mounted) {
-        setState(() => _documents = documents);
+        setState(() {
+          _documents = documents;
+          _error = null;
+        });
       }
     } catch (error) {
-      if (mounted) {
-        setState(() => _error = _message(error));
-      }
+      if (mounted) setState(() => _error = _message(error));
     } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -63,7 +83,9 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
     }
     final size = file.lengthSync() ?? await file.length() ?? 0;
     if (size > 50 * 1024 * 1024) {
-      setState(() => _error = 'File vượt quá dung lượng tối đa 50MB.');
+      if (mounted) {
+        showAppSnack(context, 'File vượt quá dung lượng tối đa 50MB.');
+      }
       return;
     }
     setState(() {
@@ -74,44 +96,24 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
       await ref.read(workspaceRepositoryProvider).uploadDocument(file);
       await _load();
     } catch (error) {
-      if (mounted) {
-        setState(() => _error = _message(error));
-      }
+      if (mounted) setState(() => _error = _message(error));
     } finally {
-      if (mounted) {
-        setState(() => _uploading = false);
-      }
+      if (mounted) setState(() => _uploading = false);
     }
   }
 
   Future<void> _delete(DocumentModel document) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Xóa tài liệu'),
-        content: Text('Xóa “${document.fileName}” khỏi kho RAG?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Hủy'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Xóa'),
-          ),
-        ],
-      ),
+    final confirmed = await confirmAppAction(
+      context,
+      title: 'Xóa tài liệu',
+      message: 'Xóa “${document.fileName}” khỏi kho RAG?',
     );
-    if (confirmed != true) {
-      return;
-    }
+    if (!confirmed) return;
     try {
       await ref.read(workspaceRepositoryProvider).deleteDocument(document.id);
       await _load();
     } catch (error) {
-      if (mounted) {
-        setState(() => _error = _message(error));
-      }
+      if (mounted) setState(() => _error = _message(error));
     }
   }
 
@@ -119,76 +121,106 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
       error is ApiException ? error.message : error.toString();
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('RAG Documents'),
-      actions: [
-        IconButton(
-          onPressed: _pickAndUpload,
-          tooltip: 'Tải tài liệu lên',
-          icon: const Icon(Icons.cloud_upload_outlined),
-        ),
-      ],
-    ),
-    body: RefreshIndicator(
-      onRefresh: _load,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (_error != null)
-            Card(
-              color: Theme.of(context).colorScheme.errorContainer,
-              child: ListTile(
-                title: Text(_error!),
-                trailing: IconButton(
-                  onPressed: () => setState(() => _error = null),
-                  icon: const Icon(Icons.close),
-                ),
-              ),
-            ),
-          if (_uploading) const LinearProgressIndicator(),
-          if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(40),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_documents.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(40),
-              child: Center(child: Text('Chưa có tài liệu nào.')),
-            )
-          else ...[
-            Text(
-              '${_documents.length} tài liệu',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            for (final document in _documents)
-              Card(
-                child: ListTile(
-                  leading: Icon(_icon(document.fileName)),
-                  title: Text(
-                    document.fileName,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(_status(document)),
-                  trailing: IconButton(
-                    onPressed: () => _delete(document),
-                    tooltip: 'Xóa tài liệu',
-                    icon: const Icon(Icons.delete_outline),
-                  ),
-                ),
-              ),
-          ],
+  Widget build(BuildContext context) {
+    final visible = _visible;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('RAG Documents'),
+        actions: [
+          IconButton(
+            tooltip: _grid ? 'Xem dạng danh sách' : 'Xem dạng lưới',
+            onPressed: () => setState(() => _grid = !_grid),
+            icon: Icon(_grid ? Icons.view_list_outlined : Icons.grid_view),
+          ),
+          IconButton(
+            onPressed: _pickAndUpload,
+            tooltip: 'Tải tài liệu lên',
+            icon: const Icon(Icons.cloud_upload_outlined),
+          ),
         ],
       ),
-    ),
-    floatingActionButton: FloatingActionButton(
-      onPressed: _uploading ? null : _pickAndUpload,
-      child: const Icon(Icons.upload_file),
-    ),
-  );
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            AppTextField(
+              controller: _search,
+              label: 'Tìm theo tên tài liệu',
+              onChanged: (value) => setState(() => _query = value.trim()),
+            ),
+            if (_error != null)
+              AppAlert(message: _error!, isError: true, onRetry: _load),
+            if (_uploading) const LinearProgressIndicator(),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(40),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (visible.isEmpty)
+              AppEmptyState(
+                icon: _documents.isEmpty
+                    ? Icons.description_outlined
+                    : Icons.search_off,
+                message: _documents.isEmpty
+                    ? 'Chưa có tài liệu nào.'
+                    : 'Không có tài liệu khớp từ khoá.',
+                hint: _documents.isEmpty
+                    ? 'Nạp tài liệu bằng nút bên dưới để trợ lý tra cứu được nội dung.'
+                    : 'Thử từ khoá ngắn hơn hoặc xoá bộ lọc.',
+              )
+            else ...[
+              Text(
+                '${visible.length}${visible.length == _documents.length ? '' : '/${_documents.length}'} tài liệu',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              if (_grid)
+                GridView.count(
+                  crossAxisCount: 2,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: 1.05,
+                  children: [
+                    for (final document in visible)
+                      _DocumentGridTile(
+                        document: document,
+                        onDelete: () => _delete(document),
+                      ),
+                  ],
+                )
+              else
+                for (final document in visible)
+                  AppCard(
+                    padding: EdgeInsets.zero,
+                    child: ListTile(
+                      leading: Icon(_icon(document.fileName)),
+                      title: Text(
+                        document.fileName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(_status(document)),
+                      trailing: IconButton(
+                        onPressed: () => _delete(document),
+                        tooltip: 'Xóa tài liệu',
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ),
+                  ),
+            ],
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _uploading ? null : _pickAndUpload,
+        child: const Icon(Icons.upload_file),
+      ),
+    );
+  }
 
   IconData _icon(String name) => name.toLowerCase().endsWith('.pdf')
       ? Icons.picture_as_pdf
@@ -199,4 +231,66 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
       : document.vectorizationStatus == 'Failed' || document.hasError
       ? 'Xử lý lỗi'
       : 'Đang xử lý';
+}
+
+class _DocumentGridTile extends StatelessWidget {
+  const _DocumentGridTile({required this.document, required this.onDelete});
+
+  final DocumentModel document;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final failed =
+        document.vectorizationStatus == 'Failed' || document.hasError;
+    return GestureDetector(
+      onLongPress: onDelete,
+      child: AppCard(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  document.fileName.toLowerCase().endsWith('.pdf')
+                      ? Icons.picture_as_pdf
+                      : Icons.description_outlined,
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Xóa tài liệu',
+                  iconSize: 18,
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ],
+            ),
+            Expanded(
+              child: Text(
+                document.fileName,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            Text(
+              document.isVectorized
+                  ? 'Đã vector hóa'
+                  : failed
+                  ? 'Xử lý lỗi'
+                  : 'Đang xử lý',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: document.isVectorized
+                    ? AppTheme.success
+                    : failed
+                    ? AppTheme.dangerText
+                    : AppTheme.textMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

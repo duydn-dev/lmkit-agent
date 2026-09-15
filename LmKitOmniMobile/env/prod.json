@@ -1,0 +1,10 @@
+{
+  "API_BASE_URL": "https://api.example.com",
+  "APP_WEB_BASE_URL": "https://app.example.com",
+  "APP_FLAVOR": "prod",
+  "API_CONNECT_TIMEOUT_SECONDS": 20,
+  "API_RECEIVE_TIMEOUT_SECONDS": 300,
+  "API_SEND_TIMEOUT_SECONDS": 120,
+  "API_LOG_HTTP": false,
+  "LIVEKIT_URL": "wss://livekit.example.com"
+}

@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../../core/network/api_client.dart';
+import '../chat/chat_models.dart';
 import 'workspace_models.dart';
 
 class WorkspaceRepository {
@@ -72,6 +73,17 @@ class WorkspaceRepository {
 
   Future<void> deleteProject(String id) =>
       _client.delete('/api/projects/$id').then((_) {});
+
+  /// Các phiên chat của một dự án, mới nhất trước — cùng hình dạng với
+  /// `GET /api/chat/sessions` nên dùng lại [ChatSessionModel].
+  Future<List<ChatSessionModel>> projectSessions(String projectId) async {
+    final response = await _client.get('/api/projects/$projectId/sessions');
+    final rows = response.data as List<dynamic>? ?? const [];
+    return rows
+        .whereType<Map>()
+        .map((row) => ChatSessionModel.fromJson(Map<String, dynamic>.from(row)))
+        .toList();
+  }
 
   Future<List<DocumentModel>> documents() async {
     final response = await _client.get('/api/document');

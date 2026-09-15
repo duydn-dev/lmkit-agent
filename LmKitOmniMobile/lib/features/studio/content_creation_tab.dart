@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'studio_repository.dart';
+import '../../app/theme.dart';
+import '../../app/ui/app_controls.dart';
 
 class ContentCreationTab extends StatefulWidget {
   const ContentCreationTab({
@@ -59,13 +61,13 @@ class _ContentCreationTabState extends State<ContentCreationTab> {
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.all(16),
     children: [
-      const Text(
-        'Tạo nội dung',
-        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-      ),
-      const SizedBox(height: 4),
-      const Text(
+      Text('Tạo nội dung', style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 6),
+      Text(
         'Pipeline nhiều bước: nghiên cứu, dàn ý, bản nháp và kiểm chứng.',
+        style: Theme.of(
+          context,
+        ).textTheme.bodyMedium?.copyWith(color: AppTheme.textMuted),
       ),
       const SizedBox(height: 16),
       TextField(
@@ -76,10 +78,11 @@ class _ContentCreationTabState extends State<ContentCreationTab> {
         decoration: const InputDecoration(labelText: 'Chủ đề nội dung'),
       ),
       const SizedBox(height: 12),
-      FilledButton.icon(
+      AppPrimaryButton(
+        label: _busy ? 'Đang tạo...' : 'Bắt đầu pipeline',
+        icon: Icons.auto_awesome,
         onPressed: _busy ? null : _run,
-        icon: const Icon(Icons.auto_awesome),
-        label: Text(_busy ? 'Đang tạo...' : 'Bắt đầu pipeline'),
+        expand: false,
       ),
       for (final stage in _stages)
         Card(

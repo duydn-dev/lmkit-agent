@@ -2,14 +2,31 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/theme.dart';
+
+import '../../app/ui/app_controls.dart';
 import '../../core/network/api_exception.dart';
-import 'studio_models.dart';
-import 'studio_repository.dart';
-import 'studio_provider.dart';
+import '../admin/admin_models.dart';
+import '../admin/admin_provider.dart';
+import '../chat/chat_provider.dart';
+import '../chat/message_format.dart';
+import 'agent_form_sheet.dart';
 import 'content_creation_tab.dart';
+import 'run_detail_screen.dart';
+import 'studio_models.dart';
+import 'studio_provider.dart';
+import 'studio_repository.dart';
 
 class StudioScreen extends ConsumerStatefulWidget {
-  const StudioScreen({super.key});
+  const StudioScreen({super.key, this.onOpenSession, this.initialTab = 0});
+
+  /// Mở một phiên chat vừa tạo (chat với custom agent) trong tab AI Chat.
+  final void Function(String sessionId)? onOpenSession;
+
+  /// Tab mở đầu tiên: 0 Agents, 1 Lịch, 2 Automation Agent (Runs), 3 Deep
+  /// Research, 4 HITL Approvals, 5 Content Studio — dùng để deep-link từ màn
+  /// "Thêm" giống các route riêng của web.
+  final int initialTab;
 
   @override
   ConsumerState<StudioScreen> createState() => _StudioScreenState();
@@ -17,7 +34,11 @@ class StudioScreen extends ConsumerStatefulWidget {
 
 class _StudioScreenState extends ConsumerState<StudioScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 6, vsync: this);
+  late final TabController _tabs = TabController(
+    length: 6,
+    vsync: this,
+    initialIndex: widget.initialTab.clamp(0, 5),
+  );
   final _search = TextEditingController();
   List<CustomAgentModel> _agents = const [];
   List<ScheduledTaskModel> _schedules = const [];
@@ -27,6 +48,13 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
   final _researchQuery = TextEditingController();
   bool _loading = false, _researching = false;
   CancelToken? _researchCancel;
+
+  /// Trạng thái tab Runs: mục tiêu, agent tuỳ chọn, log tiến trình đang chạy.
+  final _runGoal = TextEditingController();
+  String? _runAgentId;
+  String _runOutput = '';
+  bool _startingRun = false;
+  CancelToken? _runCancel;
   String? _error;
 
   @override
@@ -41,6 +69,8 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
     _search.dispose();
     _researchQuery.dispose();
     _researchCancel?.cancel();
+    _runGoal.dispose();
+    _runCancel?.cancel();
     super.dispose();
   }
 
@@ -77,19 +107,184 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
   String _message(Object error) =>
       error is ApiException ? error.message : error.toString();
 
-  Future<void> _createAgent() async {
-    final form = await _agentForm();
-    if (form == null) return;
+  /// Nạp catalog công cụ, tài liệu và adapter LoRA rồi mở form tạo/sửa agent.
+  Future<void> _openAgentForm({CustomAgentModel? existing}) async {
+    List<AgentToolModel> tools = const [];
+    List<KnowledgeDocModel> documents = const [];
+    List<LoraAdapterModel> adapters = const [];
     try {
-      await _repo.createCustomAgent(
-        name: form.$1,
-        personaPrompt: form.$2,
-        description: form.$3,
-      );
+      tools = await _repo.toolCatalog();
+      documents = await _repo.ownedDocuments();
+    } catch (error) {
+      if (mounted) setState(() => _error = _message(error));
+      return;
+    }
+    try {
+      // Adapter là tuỳ chọn tăng cường: tính năng tắt (501) không chặn form.
+      adapters = await ref.read(adminRepositoryProvider).loraAdapters();
+    } catch (_) {
+      adapters = const [];
+    }
+    if (!mounted) return;
+
+    final form = await showAgentForm(
+      context,
+      tools: tools,
+      documents: documents,
+      loraAdapters: adapters,
+      existing: existing,
+    );
+    if (form == null) return;
+
+    try {
+      String? agentId;
+      if (existing == null) {
+        final created = await _repo.createCustomAgent(
+          name: form.name,
+          personaPrompt: form.personaPrompt,
+          description: form.description,
+          icon: form.icon,
+          shared: form.shared,
+          allowedTools: form.allowedTools,
+          knowledgeDocumentIds: form.knowledgeDocumentIds,
+        );
+        agentId = created.id;
+      } else {
+        await _repo.updateCustomAgent(
+          id: existing.id,
+          name: form.name,
+          personaPrompt: form.personaPrompt,
+          description: form.description,
+          icon: form.icon,
+          shared: form.shared,
+          allowedTools: form.allowedTools,
+          knowledgeDocumentIds: form.knowledgeDocumentIds,
+        );
+        agentId = existing.id;
+      }
+
+      // Binding LoRA đi qua endpoint riêng, không nằm trong payload agent.
+      if (agentId.isNotEmpty && form.loraAdapterId != existing?.loraAdapterId) {
+        final admin = ref.read(adminRepositoryProvider);
+        try {
+          if (form.loraAdapterId != null) {
+            await admin.assignLoraAdapter(
+              agentId: agentId,
+              adapterId: form.loraAdapterId!,
+            );
+          } else {
+            await admin.unassignLoraAdapter(agentId);
+          }
+        } catch (error) {
+          // Agent đã lưu thành công — chỉ cảnh báo phần adapter.
+          if (mounted) {
+            showAppSnack(
+              context,
+              'Agent đã lưu nhưng gán LoRA thất bại: ${_message(error)}',
+            );
+          }
+        }
+      }
+
       await _loadAll();
+      if (mounted) {
+        showAppSnack(
+          context,
+          existing == null ? 'Đã tạo custom agent.' : 'Đã lưu custom agent.',
+        );
+      }
     } catch (error) {
       if (mounted) setState(() => _error = _message(error));
     }
+  }
+
+  /// Mở một đoạn chat mới đã gắn custom agent (nút "Chat với agent" của desktop).
+  Future<void> _chatWithAgent(CustomAgentModel agent) async {
+    try {
+      final session = await ref
+          .read(chatSessionsProvider.notifier)
+          .create(customAgentId: agent.id);
+      if (!mounted) return;
+      final open = widget.onOpenSession;
+      if (open == null) {
+        showAppSnack(
+          context,
+          'Đã tạo đoạn chat với ${agent.name}. Mở tab AI Chat để tiếp tục.',
+        );
+        return;
+      }
+      open(session.id);
+    } catch (error) {
+      if (mounted) setState(() => _error = _message(error));
+    }
+  }
+
+  /// Bắt đầu một agent run và đọc tiến trình SSE ngay trên tab Runs.
+  Future<void> _startRun() async {
+    final goal = _runGoal.text.trim();
+    if (goal.isEmpty || _startingRun) return;
+    _runCancel?.cancel();
+    final token = CancelToken();
+    _runCancel = token;
+    setState(() {
+      _startingRun = true;
+      _runOutput = '';
+      _error = null;
+    });
+    try {
+      await _repo.startAgentRun(
+        goal: goal,
+        customAgentId: _runAgentId,
+        cancelToken: token,
+        onEvent: (event) {
+          if (!mounted) return;
+          setState(() {
+            if (event.type == 'step') _runOutput += '▶ ${event.value}\n';
+            if (event.type == 'thinking') _runOutput += '• ${event.value}\n';
+            if (event.type == 'content') _runOutput += event.value;
+            if (event.type == 'approval') {
+              _runOutput += '\n⏸ Cần phê duyệt: ${event.value}\n';
+            }
+            if (event.type == 'done' || event.type == 'error') {
+              _runOutput += '\n${event.value}\n';
+            }
+          });
+        },
+      );
+    } catch (error) {
+      if (!token.isCancelled && mounted) {
+        setState(() => _error = _message(error));
+      }
+    } finally {
+      if (mounted) setState(() => _startingRun = false);
+      await _loadAll();
+    }
+  }
+
+  Future<void> _deleteAgent(CustomAgentModel agent) async {
+    final confirmed = await confirmAppAction(
+      context,
+      title: 'Xoá custom agent',
+      message:
+          'Xoá "${agent.name}"? Các phiên chat đã dùng agent này vẫn giữ nguyên.',
+    );
+    if (!confirmed) return;
+    try {
+      await _repo.deleteCustomAgent(agent.id);
+      await _loadAll();
+      if (mounted) showAppSnack(context, 'Đã xoá custom agent.');
+    } catch (error) {
+      if (mounted) setState(() => _error = _message(error));
+    }
+  }
+
+  Future<void> _openRun(AgentRunModel run) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RunDetailScreen(runId: run.id, goal: run.goal),
+      ),
+    );
+    await _loadAll();
   }
 
   Future<void> _createSchedule() async {
@@ -169,7 +364,11 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
     appBar: AppBar(
       title: const Text('AI Studio'),
       actions: [
-        IconButton(onPressed: _loadAll, icon: const Icon(Icons.refresh)),
+        IconButton(
+          tooltip: 'Làm mới',
+          onPressed: _loadAll,
+          icon: const Icon(Icons.refresh),
+        ),
       ],
       bottom: TabBar(
         controller: _tabs,
@@ -225,19 +424,22 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Text(title, style: Theme.of(context).textTheme.titleLarge),
               Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                ),
+                subtitle,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: AppTheme.textMuted),
               ),
-              Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
             ],
           ),
         ),
         if (add != null)
-          IconButton(onPressed: add, icon: const Icon(Icons.add)),
+          IconButton(
+            tooltip: 'Thêm mới',
+            onPressed: add,
+            icon: const Icon(Icons.add),
+          ),
       ],
     ),
   );
@@ -247,8 +449,8 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
     children: [
       _header(
         'Custom Agents',
-        'Persona và bộ công cụ tùy chỉnh.',
-        _createAgent,
+        'Persona, bộ công cụ được phép gọi và tài liệu ghim.',
+        () => _openAgentForm(),
       ),
       if (_loading)
         const Center(
@@ -258,27 +460,50 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
           ),
         ),
       if (!_loading && _agents.isEmpty)
-        const _Empty(text: 'Chưa có custom agent.'),
+        const _Empty(
+          icon: Icons.smart_toy_outlined,
+          text: 'Chưa có custom agent.',
+          hint:
+              'Tạo agent riêng để ghim persona, công cụ và tài liệu cho từng nghiệp vụ.',
+        ),
       for (final agent in _agents)
-        Card(
+        AppCard(
+          padding: EdgeInsets.zero,
           child: ListTile(
             leading: CircleAvatar(
               child: Text(agent.icon?.isNotEmpty == true ? agent.icon! : '🤖'),
             ),
             title: Text(agent.name),
             subtitle: Text(
-              agent.description ?? agent.personaPrompt ?? 'Không có mô tả.',
+              '${agent.description ?? agent.personaPrompt ?? 'Không có mô tả.'}\n'
+              '${agent.allowedTools == null ? 'Công cụ mặc định' : '${agent.allowedTools!.length} công cụ'}'
+              '${agent.knowledgeDocumentIds.isEmpty ? '' : ' · ${agent.knowledgeDocumentIds.length} tài liệu ghim'}'
+              '${agent.isSharedWithTenant ? ' · chia sẻ tenant' : ''}',
             ),
             isThreeLine: true,
+            onTap: agent.isOwner ? () => _openAgentForm(existing: agent) : null,
             trailing: agent.isOwner
-                ? IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () async {
-                      await _repo.deleteCustomAgent(agent.id);
-                      _loadAll();
+                ? PopupMenuButton<String>(
+                    tooltip: 'Tuỳ chọn',
+                    onSelected: (value) => switch (value) {
+                      'chat' => _chatWithAgent(agent),
+                      'edit' => _openAgentForm(existing: agent),
+                      _ => _deleteAgent(agent),
                     },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'chat',
+                        child: Text('Chat với agent'),
+                      ),
+                      PopupMenuItem(value: 'edit', child: Text('Sửa')),
+                      PopupMenuItem(value: 'delete', child: Text('Xoá')),
+                    ],
                   )
-                : const Icon(Icons.people_outline),
+                : IconButton(
+                    tooltip: 'Chat với agent',
+                    onPressed: () => _chatWithAgent(agent),
+                    icon: const Icon(Icons.chat_bubble_outline),
+                  ),
           ),
         ),
     ],
@@ -292,7 +517,13 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
         'Tự động chạy prompt theo lịch.',
         _createSchedule,
       ),
-      if (_schedules.isEmpty) const _Empty(text: 'Chưa có lịch tự động.'),
+      if (_schedules.isEmpty)
+        const _Empty(
+          icon: Icons.schedule_outlined,
+          text: 'Chưa có lịch tự động.',
+          hint:
+              'Lịch tự động chạy một prompt theo giờ hoặc theo ngày bạn chọn.',
+        ),
       for (final task in _schedules)
         Card(
           child: ListTile(
@@ -305,7 +536,7 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
             isThreeLine: true,
             leading: Icon(
               task.enabled ? Icons.schedule : Icons.pause_circle_outline,
-              color: task.enabled ? Colors.green : Colors.grey,
+              color: task.enabled ? AppTheme.success : AppTheme.textMuted,
             ),
             trailing: PopupMenuButton<String>(
               onSelected: (value) async {
@@ -327,16 +558,93 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
     padding: const EdgeInsets.only(bottom: 24),
     children: [
       _header('Agent Runs', 'Theo dõi các mục tiêu agent tự hành.', null),
-      if (_runs.isEmpty) const _Empty(text: 'Chưa có agent run.'),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _runGoal,
+              minLines: 2,
+              maxLines: 4,
+              enabled: !_startingRun,
+              decoration: const InputDecoration(
+                labelText: 'Mục tiêu cho agent',
+                hintText: 'Ví dụ: Tổng hợp hợp đồng tháng 9 và liệt kê rủi ro.',
+              ),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String?>(
+              initialValue: _runAgentId,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Custom agent (không bắt buộc)',
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('Agent mặc định'),
+                ),
+                for (final agent in _agents)
+                  DropdownMenuItem<String?>(
+                    value: agent.id,
+                    child: Text(agent.name),
+                  ),
+              ],
+              onChanged: _startingRun
+                  ? null
+                  : (value) => setState(() => _runAgentId = value),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: AppPrimaryButton(
+                    label: _startingRun ? 'Agent đang chạy…' : 'Chạy',
+                    icon: Icons.play_arrow,
+                    busy: _startingRun,
+                    onPressed: _startRun,
+                  ),
+                ),
+                if (_startingRun) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'Dừng theo dõi',
+                    onPressed: () => _runCancel?.cancel(),
+                    icon: const Icon(Icons.stop),
+                  ),
+                ],
+              ],
+            ),
+            if (_runOutput.isNotEmpty)
+              Card(
+                margin: const EdgeInsets.only(top: 12),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: FormattedMessage(text: _runOutput),
+                ),
+              ),
+          ],
+        ),
+      ),
+      if (_runs.isEmpty)
+        const _Empty(
+          icon: Icons.play_circle_outline,
+          text: 'Chưa có agent run.',
+          hint: 'Tác vụ tự hành chạy theo mục tiêu và ghi lại từng bước ở đây.',
+        ),
       for (final run in _runs)
-        Card(
+        AppCard(
+          padding: EdgeInsets.zero,
           child: ListTile(
             title: Text(run.goal, maxLines: 2, overflow: TextOverflow.ellipsis),
             subtitle: Text('${run.status} • ${run.stepCount} bước'),
+            onTap: () => _openRun(run),
             trailing:
                 run.status.toLowerCase() == 'running' ||
                     run.status.toLowerCase() == 'pending'
                 ? IconButton(
+                    tooltip: 'Dừng tác vụ đang chạy',
                     icon: const Icon(Icons.stop_circle_outlined),
                     onPressed: () async {
                       await _repo.cancelAgentRun(run.id);
@@ -352,11 +660,8 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
   Widget _researchTab() => ListView(
     padding: const EdgeInsets.all(16),
     children: [
-      const Text(
-        'Deep Research',
-        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-      ),
-      const SizedBox(height: 4),
+      Text('Deep Research', style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 6),
       const Text('Tìm kiếm nhiều nguồn và tổng hợp báo cáo.'),
       const SizedBox(height: 16),
       TextField(
@@ -373,14 +678,18 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
       Row(
         children: [
           Expanded(
-            child: FilledButton.icon(
+            // `expand: true`: nút phải nhận bề ngang có hạn để nhãn dài tự cắt,
+            // nếu để nút co theo nội dung và bọc trong `Expanded` thì ở cỡ chữ hệ
+            // thống lớn nhãn sẽ tràn ra ngoài (đã bắt được ở test 1.3×).
+            child: AppPrimaryButton(
+              label: _researching ? 'Đang nghiên cứu...' : 'Bắt đầu',
+              icon: Icons.explore,
               onPressed: _researching ? null : _runResearch,
-              icon: const Icon(Icons.explore),
-              label: Text(_researching ? 'Đang nghiên cứu...' : 'Bắt đầu'),
             ),
           ),
           if (_researching)
             IconButton(
+              tooltip: 'Dừng nghiên cứu',
               onPressed: () => _researchCancel?.cancel(),
               icon: const Icon(Icons.stop),
             ),
@@ -391,7 +700,7 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
           margin: const EdgeInsets.only(top: 16),
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: SelectableText(_research),
+            child: FormattedMessage(text: _research),
           ),
         ),
     ],
@@ -411,7 +720,12 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
         null,
       ),
       if (_approvals.isEmpty)
-        const _Empty(text: 'Không có tác vụ chờ phê duyệt.'),
+        const _Empty(
+          icon: Icons.verified_user_outlined,
+          text: 'Không có tác vụ chờ phê duyệt.',
+          hint:
+              'Khi agent cần bạn cho phép chạy hành động tiếp theo, mục sẽ hiện ở đây.',
+        ),
       for (final item in _approvals)
         Card(
           child: Padding(
@@ -421,7 +735,7 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
               children: [
                 Text(
                   item['actionName']?.toString() ?? 'Tác vụ',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
                 if (item['details']?.toString().isNotEmpty == true)
                   Padding(
@@ -435,9 +749,10 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
                       onPressed: () => _decide(item['id'].toString(), false),
                       child: const Text('Từ chối'),
                     ),
-                    FilledButton(
+                    AppPrimaryButton(
+                      label: 'Phê duyệt',
                       onPressed: () => _decide(item['id'].toString(), true),
-                      child: const Text('Phê duyệt'),
+                      expand: false,
                     ),
                   ],
                 ),
@@ -465,55 +780,6 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
     ],
   );
 
-  Future<(String, String, String)?> _agentForm() async {
-    final name = TextEditingController(),
-        prompt = TextEditingController(),
-        description = TextEditingController();
-    final result = await showDialog<(String, String, String)>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Tạo Custom Agent'),
-        content: SingleChildScrollView(
-          child: Column(
-            children: [
-              TextField(
-                controller: name,
-                decoration: const InputDecoration(labelText: 'Tên'),
-              ),
-              TextField(
-                controller: description,
-                decoration: const InputDecoration(labelText: 'Mô tả'),
-              ),
-              TextField(
-                controller: prompt,
-                maxLines: 5,
-                decoration: const InputDecoration(labelText: 'Persona prompt'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Hủy'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, (
-              name.text,
-              prompt.text,
-              description.text,
-            )),
-            child: const Text('Tạo'),
-          ),
-        ],
-      ),
-    );
-    name.dispose();
-    prompt.dispose();
-    description.dispose();
-    return result;
-  }
-
   Future<(String, String, String, int?)?> _scheduleForm() async {
     final name = TextEditingController(),
         prompt = TextEditingController(),
@@ -536,6 +802,7 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
               ),
               DropdownButtonFormField<String>(
                 initialValue: 'interval',
+                isExpanded: true,
                 items: const [
                   DropdownMenuItem(
                     value: 'interval',
@@ -557,16 +824,17 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Hủy'),
+            child: const Text('Huỷ'),
           ),
-          FilledButton(
+          AppPrimaryButton(
+            label: 'Tạo',
             onPressed: () => Navigator.pop(context, (
               name.text,
               prompt.text,
               'interval',
               int.tryParse(interval.text),
             )),
-            child: const Text('Tạo'),
+            expand: false,
           ),
         ],
       ),
@@ -579,11 +847,17 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
 }
 
 class _Empty extends StatelessWidget {
-  const _Empty({required this.text});
+  const _Empty({
+    required this.text,
+    this.icon = Icons.inbox_outlined,
+    this.hint,
+  });
+
   final String text;
+  final IconData icon;
+  final String? hint;
+
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(40),
-    child: Center(child: Text(text)),
-  );
+  Widget build(BuildContext context) =>
+      AppEmptyState(message: text, icon: icon, hint: hint);
 }

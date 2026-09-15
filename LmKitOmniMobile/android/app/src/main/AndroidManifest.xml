@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Voice input: ghi âm trong Chat rồi gửi lên /api/speech/transcribe-upload. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
         android:label="lmkit_omni_mobile"
         android:name="${applicationName}"

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/api_exception.dart';
 import 'workspace_provider.dart';
+import '../../app/ui/app_controls.dart';
 
 class CustomInstructionsScreen extends ConsumerStatefulWidget {
   const CustomInstructionsScreen({super.key});
@@ -127,16 +128,10 @@ class _CustomInstructionsScreenState
               const SizedBox(height: 20),
               SizedBox(
                 height: 48,
-                child: FilledButton.icon(
+                child: AppPrimaryButton(
+                  label: 'Lưu hướng dẫn',
                   onPressed: _saving ? null : _save,
-                  icon: _saving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.check),
-                  label: const Text('Lưu hướng dẫn'),
+                  expand: false,
                 ),
               ),
             ],

@@ -1,34 +1,41 @@
 import 'package:dio/dio.dart';
 
 import '../auth/secure_session_store.dart';
+import '../config/app_config.dart';
 import 'api_exception.dart';
 import 'auth_interceptor.dart';
+import 'dio_factory.dart';
 
+/// HTTP client cho mọi API cần đăng nhập.
+///
+/// Base URL đến từ [AppConfig]; đổi API URL trong app sẽ dựng lại client này.
 class ApiClient {
-  ApiClient({required this.store, required this.refresh}) {
-    dio = Dio(
-      BaseOptions(
-        baseUrl: const String.fromEnvironment(
-          'API_BASE_URL',
-          defaultValue: 'http://10.0.2.2:5032',
+  ApiClient({
+    required this.config,
+    required this.store,
+    required this.refresh,
+    this.onSessionExpired,
+  }) {
+    dio = buildDio(
+      config,
+      interceptors: [
+        AuthInterceptor(
+          store: store,
+          refresh: refresh,
+          fetch: (options) => dio.fetch(options),
+          onSessionExpired: onSessionExpired,
         ),
-        connectTimeout: const Duration(seconds: 20),
-        receiveTimeout: const Duration(minutes: 5),
-        sendTimeout: const Duration(minutes: 2),
-        headers: const {'Accept': 'application/json'},
-      ),
+      ],
     );
-    dio.interceptors.add(_interceptor);
   }
 
+  final AppConfig config;
   final SecureSessionStore store;
   final Future<bool> Function() refresh;
+  final void Function()? onSessionExpired;
   late final Dio dio;
-  late final AuthInterceptor _interceptor = AuthInterceptor(
-    store: store,
-    refresh: refresh,
-    fetch: (options) => dio.fetch(options),
-  );
+
+  String get baseUrl => dio.options.baseUrl;
 
   Future<Response<dynamic>> get(
     String path, {
@@ -38,17 +45,35 @@ class ApiClient {
   Future<Response<dynamic>> post(
     String path, {
     Object? data,
+    Map<String, dynamic>? queryParameters,
     CancelToken? cancelToken,
-  }) => _request(() => dio.post(path, data: data, cancelToken: cancelToken));
+  }) => _request(
+    () => dio.post(
+      path,
+      data: data,
+      queryParameters: queryParameters,
+      cancelToken: cancelToken,
+    ),
+  );
 
-  Future<Response<dynamic>> put(String path, {Object? data}) =>
-      _request(() => dio.put(path, data: data));
+  Future<Response<dynamic>> put(
+    String path, {
+    Object? data,
+    Map<String, dynamic>? queryParameters,
+  }) => _request(
+    () => dio.put(path, data: data, queryParameters: queryParameters),
+  );
 
   Future<Response<dynamic>> patch(String path, {Object? data}) =>
       _request(() => dio.patch(path, data: data));
 
-  Future<Response<dynamic>> delete(String path, {Object? data}) =>
-      _request(() => dio.delete(path, data: data));
+  Future<Response<dynamic>> delete(
+    String path, {
+    Object? data,
+    Map<String, dynamic>? queryParameters,
+  }) => _request(
+    () => dio.delete(path, data: data, queryParameters: queryParameters),
+  );
 
   Future<Response<dynamic>> upload(
     String path, {
@@ -79,8 +104,7 @@ class ApiClient {
     Future<Response<dynamic>> Function() call,
   ) async {
     try {
-      final response = await call();
-      return response;
+      return await call();
     } on DioException catch (error) {
       throw ApiException.fromDio(error);
     }

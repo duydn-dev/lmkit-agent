@@ -22,11 +22,16 @@ class ChatSessionsController extends AsyncNotifier<List<ChatSessionModel>> {
 
   Future<ChatSessionModel> create({
     String? projectId,
+    String? customAgentId,
     bool ephemeral = false,
   }) async {
     final created = await ref
         .read(chatRepositoryProvider)
-        .createSession(projectId: projectId, ephemeral: ephemeral);
+        .createSession(
+          projectId: projectId,
+          customAgentId: customAgentId,
+          ephemeral: ephemeral,
+        );
     final current = state.asData?.value ?? const <ChatSessionModel>[];
     state = AsyncData([created, ...current]);
     return created;
@@ -69,3 +74,13 @@ final chatMessagesProvider = FutureProvider.autoDispose
       (ref, sessionId) =>
           ref.read(chatRepositoryProvider).getMessages(sessionId),
     );
+
+/// Kết quả tìm kiếm phiên chat. Từ khoá rỗng trả về danh sách bình thường.
+final chatSessionSearchProvider = FutureProvider.autoDispose
+    .family<List<ChatSessionModel>, String>((ref, query) {
+      final repository = ref.read(chatRepositoryProvider);
+      final trimmed = query.trim();
+      return trimmed.isEmpty
+          ? repository.listSessions()
+          : repository.searchSessions(trimmed);
+    });

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/theme.dart';
+
 import '../../core/network/api_exception.dart';
 import 'workspace_models.dart';
 import 'workspace_provider.dart';
+import '../../app/ui/app_controls.dart';
 
 class MemoryScreen extends ConsumerStatefulWidget {
   const MemoryScreen({super.key});
@@ -52,11 +55,12 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Hủy'),
+            child: const Text('Huỷ'),
           ),
-          FilledButton(
+          AppPrimaryButton(
+            label: 'Quên',
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Quên'),
+            expand: false,
           ),
         ],
       ),
@@ -91,15 +95,9 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           if (_error != null)
-            Card(
-              color: Theme.of(context).colorScheme.errorContainer,
-              child: ListTile(
-                title: Text(_error!),
-                trailing: IconButton(
-                  onPressed: () => setState(() => _error = null),
-                  icon: const Icon(Icons.close),
-                ),
-              ),
+            AppErrorBanner(
+              message: _error!,
+              onDismiss: () => setState(() => _error = null),
             ),
           if (_loading)
             const Padding(
@@ -107,9 +105,12 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
               child: Center(child: CircularProgressIndicator()),
             )
           else if (_memories.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(40),
-              child: Center(child: Text('Trợ lý chưa lưu thông tin nào.')),
+            const AppEmptyState(
+              icon: Icons.psychology_alt_outlined,
+              message: 'Trợ lý chưa lưu thông tin nào.',
+              hint:
+                  'Memory được ghi khi trợ lý rút ra điều cần nhớ lâu dài từ cuộc trò '
+                  'chuyện; bạn xác nhận hoặc xoá ở đây.',
             )
           else ...[
             for (final memory in _memories)
@@ -136,7 +137,7 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
                       const SizedBox(height: 8),
                       Text(
                         memory.memoryKey,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 6),
                       Text(memory.memoryValue),
@@ -150,7 +151,7 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
                               tooltip: 'Xác nhận',
                               icon: const Icon(
                                 Icons.check,
-                                color: Colors.green,
+                                color: AppTheme.success,
                               ),
                             ),
                           IconButton(
