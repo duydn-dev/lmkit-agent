@@ -107,14 +107,34 @@ public sealed class VoiceSpeechApiTests : IClassFixture<LmKitApiFactory>
     }
 
     [Fact]
-    public async Task SpeechToken_WhenLiveKitUnconfigured_Returns500ForAuthenticatedCaller()
+    public async Task SpeechToken_WhenLiveKitConfigured_MintsATokenForAuthenticatedCaller()
     {
+        // Shipped config now carries the dev LiveKit credentials (LiveKit:ApiKey/ApiSecret),
+        // so the token endpoint mints a real join token — the "connect to livekit" path is open.
         using var client = await CreateAuthenticatedClientAsync();
 
         var response = await client.GetAsync("/api/speech/token");
 
-        // LiveKit ApiKey/Secret are empty in the test config, so the endpoint reports 500 —
-        // proving the caller was authenticated and reached the action.
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(string.IsNullOrWhiteSpace(body.GetProperty("token").GetString()));
+    }
+
+    [Fact]
+    public async Task SpeechToken_WhenLiveKitCredentialsCleared_Returns500()
+    {
+        // Với credentials rỗng (override), endpoint báo 500 "not configured" — chứng minh
+        // cổng token phụ thuộc credentials, không phải LiveAgentEnabled.
+        using var factory = new LmKitApiFactory();
+        factory.ConfigurationOverrides["LiveKit:ApiKey"] = "";
+        factory.ConfigurationOverrides["LiveKit:ApiSecret"] = "";
+        factory.ConfigurationOverrides["Voice:LiveKitApiKey"] = "";
+        factory.ConfigurationOverrides["Voice:LiveKitApiSecret"] = "";
+        factory.EnsureSeeded();
+        using var client = await CreateAuthenticatedClientAsync(factory);
+
+        var response = await client.GetAsync("/api/speech/token");
+
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
     }
 
@@ -128,10 +148,11 @@ public sealed class VoiceSpeechApiTests : IClassFixture<LmKitApiFactory>
         Assert.NotNull(provider.GetService<IRequestHandler<SynthesizeSpeechCommand, SynthesizeSpeechResult>>());
         Assert.NotNull(provider.GetService<IStreamRequestHandler<TranscribeAudioStreamCommand, TranscriptionPartial>>());
 
-        // VoiceOptions is bound and off by default.
+        // VoiceOptions bound từ config shipped: LiveAgentEnabled đã BẬT (mở voice agent),
+        // còn TtsEnabled vẫn tắt (cần Piper binary — không liên quan LiveKit).
         var options = provider.GetRequiredService<IOptions<VoiceOptions>>().Value;
         Assert.False(options.TtsEnabled);
-        Assert.False(options.LiveAgentEnabled);
+        Assert.True(options.LiveAgentEnabled);
 
         // The Piper TTS engine is registered but OFF by default: with TtsEnabled=false and no
         // binary/model configured it reports IsAvailable=false, so the synthesize endpoint
@@ -150,14 +171,16 @@ public sealed class VoiceSpeechApiTests : IClassFixture<LmKitApiFactory>
     /// initializers fails here rather than in production.
     /// </summary>
     [Fact]
-    public void VoiceDispatcherOptions_AsShipped_MatchTheCodeDefaults_AndAreOff()
+    public void VoiceDispatcherOptions_AsShipped_MatchTheCodeDefaults_ExceptLiveAgentEnabledIsOn()
     {
         using var scope = _factory.Services.CreateScope();
         var bound = scope.ServiceProvider.GetRequiredService<IOptions<VoiceOptions>>().Value;
         var code = new VoiceOptions();
 
-        // Off by default, both switches — the single-room agent is what ships.
-        Assert.False(bound.LiveAgentEnabled);
+        // Shipped config CỐ Ý bật LiveAgentEnabled (mở voice agent) — khác code default false;
+        // đây là override có chủ đích, không phải giá trị lạc. Dispatcher vẫn tắt (single-room
+        // agent là cái ship), nên hosted service đứng xuống êm tới khi có Voice:AgentTenantId.
+        Assert.True(bound.LiveAgentEnabled);
         Assert.False(bound.DispatcherEnabled);
         Assert.False(bound.DispatcherActive);
 

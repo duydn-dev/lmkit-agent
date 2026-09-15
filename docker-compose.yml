@@ -85,14 +85,17 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # LiveKit cho voice agent khi phát triển. Chế độ --dev: key/secret mặc định là
-  # devkey/secret (không cần file config, tránh bẫy ${...} không được thay trong
-  # file mount). Bật voice ở API bằng env: Voice__LiveAgentEnabled=true,
-  # Voice__LiveKitUrl=ws://localhost:7880, Voice__LiveKitApiKey=devkey,
-  # Voice__LiveKitApiSecret=secret. Prod dùng livekit.yaml trong docker-compose.prod.yml.
+  # LiveKit cho voice agent khi phát triển. KHÔNG dùng --dev: chế độ --dev ép secret
+  # "secret" (6 byte), trong khi endpoint /api/speech/token của API ký JWT bằng
+  # Microsoft.IdentityModel HS256 — đòi khóa >= 32 byte. Vì thế cấp key/secret dev
+  # đủ dài qua LIVEKIT_KEYS, KHỚP LiveKit:ApiKey/ApiSecret trong appsettings.json.
+  # App đã bật sẵn voice (Voice:LiveAgentEnabled=true + LiveKit creds) nên chỉ cần
+  # stack này chạy là kết nối được. Prod dùng livekit.yaml trong docker-compose.prod.yml.
   livekit:
     image: livekit/livekit-server:latest
-    command: --dev
+    command: --bind 0.0.0.0
+    environment:
+      - "LIVEKIT_KEYS=devkey: livekit-dev-secret-0123456789-abcdef"
     ports:
       - "${LIVEKIT_HOST_PORT:-7880}:7880"
       - "7881:7881"
