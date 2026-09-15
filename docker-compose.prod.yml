@@ -1,6 +1,6 @@
 x-api-environment: &api-env
   - ASPNETCORE_ENVIRONMENT=Production
-  - PostgreSql=Server=postgres;Port=5432;Database=LmKitAgent;Username=postgres;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD};
+  - ConnectionStrings__PostgreSql=Server=postgres;Port=5432;Database=LmKitAgent;Username=postgres;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD};
   - Database__ApplyMigrations=true
   - VectorStore__BaseUrl=http://qdrant:6334
   - WebSearch__Searx__BaseUrl=${SEARXNG_BASE_URL:-http://searxng:8080}

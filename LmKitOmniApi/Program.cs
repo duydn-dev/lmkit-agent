@@ -213,20 +213,17 @@ builder.Services.AddScoped<LmKitOmniApi.Application.Widget.WidgetSettingsLookup>
 builder.Services.AddScoped<LmKitOmniApi.Application.Widget.WidgetQuotaService>();
 builder.Services.AddScoped<LmKitOmniApi.Application.Widget.IWidgetChatEngine, LmKitOmniApi.Application.Widget.WidgetChatEngine>();
 
-// 1. Cấu hình DbContext (PostgreSQL) đọc từ AppSettings/environment.
-// Docker Compose truyền key cũ `PostgreSql`; direct dotnet run cũng có thể
-// dùng key chuẩn `ConnectionStrings:PostgreSql`.
-var postgresConnectionString = builder.Configuration["PostgreSql"];
-if (string.IsNullOrWhiteSpace(postgresConnectionString))
-    postgresConnectionString = builder.Configuration.GetConnectionString("PostgreSql");
+// 1. Cấu hình DbContext (PostgreSQL). Chuỗi kết nối chỉ đọc từ MỘT nơi:
+// ConnectionStrings:PostgreSql (env: ConnectionStrings__PostgreSql) — cùng chỗ
+// với Redis, không còn key phẳng.
+var postgresConnectionString = builder.Configuration.GetConnectionString("PostgreSql");
 
 if (string.IsNullOrWhiteSpace(postgresConnectionString)
     && !builder.Environment.IsEnvironment("Testing"))
 {
     throw new InvalidOperationException(
-        "PostgreSQL connection string is missing. Set PostgreSql or "
-        + "ConnectionStrings__PostgreSql before starting the API. "
-        + "The .env file is not loaded automatically by dotnet run.");
+        "PostgreSQL connection string is missing. Set ConnectionStrings__PostgreSql "
+        + "before starting the API. The .env file is not loaded automatically by dotnet run.");
 }
 
 builder.Services.AddHttpContextAccessor();
