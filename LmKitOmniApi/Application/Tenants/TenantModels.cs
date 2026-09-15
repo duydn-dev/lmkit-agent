@@ -5,6 +5,12 @@ public sealed class TenantDto
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    /// <summary>Tên trợ lý AI hiển thị theo tenant (null → dùng mặc định "CILA Agent").</summary>
+    public string? AgentDisplayName { get; set; }
+    /// <summary>Có logo đã tải lên hay chưa — projection chỉ đọc cờ này, không nạp bytes.</summary>
+    public bool HasLogo { get; set; }
+    /// <summary>Mốc cập nhật logo (cache-buster cho URL ảnh phía client).</summary>
+    public DateTime? LogoUpdatedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public int UserCount { get; set; }
     public int DatabaseConnectionCount { get; set; }
@@ -20,4 +26,6 @@ public sealed class TenantOptionDto
 public sealed class SaveTenantRequest
 {
     public string? Name { get; set; }
+    /// <summary>Tên trợ lý AI hiển thị cho tenant. Rỗng/null → xóa override, dùng mặc định.</summary>
+    public string? AgentDisplayName { get; set; }
 }

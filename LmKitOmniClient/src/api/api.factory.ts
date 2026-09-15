@@ -116,7 +116,9 @@ export const ApiFactory = {
   TENANTS: {
     BASE: '/api/tenants',
     OPTIONS: '/api/tenants/options',
-    BY_ID: (id: string) => `/api/tenants/${id}`
+    BY_ID: (id: string) => `/api/tenants/${id}`,
+    // Admin logo (xem/tải/xóa) cho MỘT tenant bất kỳ — dùng ở form quản lý tenant.
+    LOGO: (id: string) => `/api/tenants/${id}/logo`
   },
   LORA: {
     BASE: '/api/lora-adapters',

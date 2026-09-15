@@ -136,6 +136,25 @@ public sealed class ReActPlannerInstructionTests
     }
 
     /// <summary>
+    /// Per-tenant branding: a configured agent name replaces the "CILA Agent" self-introduction
+    /// in BOTH the "You are …" line and the "introduce yourself as …" line, while the 3-arg
+    /// default preserves the historical "CILA Agent" identity byte-for-byte.
+    /// </summary>
+    [Fact]
+    public void ACustomAgentName_ReplacesTheDefaultSelfIntroduction_ButTheDefaultIsUnchanged()
+    {
+        var custom = AgentOrchestrator.BuildReActInstruction(Query, "", null, "Trợ lý CILA");
+        Assert.Contains("You are Trợ lý CILA -", custom, StringComparison.Ordinal);
+        Assert.Contains("introduce yourself as Trợ lý CILA", custom, StringComparison.Ordinal);
+        Assert.DoesNotContain("CILA Agent", custom, StringComparison.Ordinal);
+
+        // Default (no name / whitespace) keeps the shipped identity.
+        Assert.Contains("You are CILA Agent -", Build(), StringComparison.Ordinal);
+        Assert.Contains("You are CILA Agent -",
+            AgentOrchestrator.BuildReActInstruction(Query, "", null, "   "), StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The request is interpolated verbatim, and it stays inside its block: a query carrying
     /// marker text of its own must not be able to swallow the rules that follow the block — the
     /// web-search rule is what makes the search toggle work, so it has to survive.

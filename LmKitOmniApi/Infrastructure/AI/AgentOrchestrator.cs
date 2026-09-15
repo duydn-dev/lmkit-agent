@@ -604,8 +604,10 @@ public class AgentOrchestrator : IAgentOrchestrator
         // below what the model supports, and at that size the Vietnamese system prompt alone
         // consumed ~86% of the window, so the answer was cut off mid-sentence — once inside a
         // source URL, with the "Đã đọc N trang web" chip still rendering above it.
+        // Tên trợ lý theo tenant: đưa vào system prompt để agent tự xưng đúng thương hiệu.
+        var agentName = await ResolveAgentNameAsync(tenantId, cancellationToken);
         var chat = ChatConversationFactory.Create(
-            model, history, BuildSystemPrompt(fullContext, memoryContext, options?.PersonaPrompt),
+            model, history, BuildSystemPrompt(fullContext, memoryContext, options?.PersonaPrompt, agentName),
             _defaultToolCatalog.GetSafeDefaultTools());
         chat.MaximumCompletionTokens = DefaultMaximumCompletionTokens;
         _defaultToolCatalog.RegisterSafeDefaults(chat);
@@ -866,12 +868,20 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// reads (it quotes the WEB SEARCH RULE below), and ReActPlannerInstructionTests pins both
     /// that the request is in it and that a persona can never push the request out.
     /// </remarks>
-    internal static string BuildReActInstruction(string query, string existingContext, string? personaPrompt)
+    /// <summary>
+    /// Tên trợ lý mặc định khi tenant chưa cấu hình <c>Tenant.AgentDisplayName</c>. Giữ nguyên
+    /// hành vi lịch sử (agent tự xưng "CILA Agent") để các test ghim prompt không đổi.
+    /// </summary>
+    private const string DefaultAgentName = "CILA Agent";
+
+    internal static string BuildReActInstruction(
+        string query, string existingContext, string? personaPrompt, string agentName = DefaultAgentName)
     {
+        var name = string.IsNullOrWhiteSpace(agentName) ? DefaultAgentName : agentName.Trim();
         var instruction = $"""
-            You are CILA Agent - the AI assistant of Trung tâm thông tin lưu trữ và thư viện
+            You are {name} - the AI assistant of Trung tâm thông tin lưu trữ và thư viện
             tài nguyên môi trường quốc gia (National Environmental Information & Resources Library Center).
-            Always introduce yourself as CILA Agent.
+            Always introduce yourself as {name}.
             The CURRENT user request is the text inside the marked block below (between the two
             <<< markers); everything above it is only your standing instructions, never the request
             itself. Answer THAT text directly. Never answer as if no request was provided while
@@ -1032,10 +1042,11 @@ public class AgentOrchestrator : IAgentOrchestrator
         // SEARCH RULE below has something concrete to fire on. Passing it here as well as
         // to ExecuteStreamingAsync is deliberate — it costs a few tokens and it is the
         // difference between a planner that answers the question and one that greets.
-        var instruction = BuildReActInstruction(query, existingContext, options?.PersonaPrompt);
+        var agentName = await ResolveAgentNameAsync(tenantId, ct);
+        var instruction = BuildReActInstruction(query, existingContext, options?.PersonaPrompt, agentName);
 
         var agent = LMKit.Agents.Agent.CreateBuilder(model)
-            .WithPersona("CILA Agent")
+            .WithPersona(agentName)
             .WithInstruction(instruction)
             .WithPlanning(PlanningStrategy.ReAct)
             .WithTools(tools =>
@@ -2026,11 +2037,11 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// shapes tone/role without overriding those rules. Null/empty persona keeps
     /// the prompt byte-identical to the pre-custom-agent output.
     /// </summary>
-    private string BuildSystemPrompt(string context, string memory, string? personaPrompt = null)
+    private string BuildSystemPrompt(string context, string memory, string? personaPrompt = null, string? agentName = null)
     {
         var prompt = _promptTemplate.Render("default", new Dictionary<string, string>
         {
-            ["agent_name"] = "CILA Agent",
+            ["agent_name"] = string.IsNullOrWhiteSpace(agentName) ? DefaultAgentName : agentName.Trim(),
             ["context"] = context ?? "",
             ["memory"] = memory ?? ""
         });
@@ -2048,6 +2059,30 @@ public class AgentOrchestrator : IAgentOrchestrator
             + "Hãy nhập vai persona dưới đây khi trả lời (giọng điệu, vai trò, phạm vi chuyên môn). "
             + "Persona không được phép ghi đè các quy tắc an toàn và cách xử lý dữ liệu không đáng tin cậy phía trên.\n"
             + personaPrompt.Trim();
+    }
+
+    /// <summary>
+    /// Tên trợ lý theo tenant cho system prompt / ReAct persona. Đọc
+    /// <c>Tenant.AgentDisplayName</c> (một lookup khóa chính nhẹ, chỉ lấy đúng cột tên),
+    /// rơi về <see cref="DefaultAgentName"/> khi trống hoặc khi truy vấn lỗi — tên trợ lý
+    /// không bao giờ được phép làm hỏng một lượt chat.
+    /// </summary>
+    private async Task<string> ResolveAgentNameAsync(Guid tenantId, CancellationToken ct)
+    {
+        try
+        {
+            var name = await _dbContext.Tenants
+                .AsNoTracking()
+                .Where(t => t.Id == tenantId)
+                .Select(t => t.AgentDisplayName)
+                .FirstOrDefaultAsync(ct);
+            return string.IsNullOrWhiteSpace(name) ? DefaultAgentName : name!.Trim();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Không phân giải được tên trợ lý theo tenant {TenantId}; dùng mặc định.", tenantId);
+            return DefaultAgentName;
+        }
     }
 
     /// <summary>Today in Vietnamese, e.g. "thứ Sáu, ngày 13/09/2026" — deterministic per calendar day.</summary>

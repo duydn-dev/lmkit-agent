@@ -187,7 +187,8 @@ public class AuthController : ControllerBase
             user.Email,
             user.FullName,
             user.Role,
-            user.TenantId
+            user.TenantId,
+            Tenant = await BuildTenantBrandingAsync(user.TenantId)
         });
     }
 
@@ -376,8 +377,33 @@ public class AuthController : ControllerBase
             user.Email,
             user.FullName,
             user.Role,
-            user.TenantId
+            user.TenantId,
+            Tenant = await BuildTenantBrandingAsync(user.TenantId)
         });
+    }
+
+    /// <summary>
+    /// Thương hiệu theo tenant kèm vào phản hồi đăng nhập/`me` để client đổi tên trợ lý,
+    /// tên đơn vị và logo trên header + khung chat. CHỈ projection nhẹ (không kéo bytes
+    /// logo); <c>LogoUrl</c> trỏ tới endpoint phục vụ ảnh, kèm cache-buster theo mốc cập nhật.
+    /// </summary>
+    private async Task<object?> BuildTenantBrandingAsync(Guid tenantId)
+    {
+        var tenant = await _dbContext.Tenants
+            .AsNoTracking()
+            .Where(t => t.Id == tenantId)
+            .Select(t => new { t.Name, t.AgentDisplayName, t.LogoUpdatedAt })
+            .FirstOrDefaultAsync();
+        if (tenant is null) return null;
+
+        return new
+        {
+            tenant.Name,
+            AgentName = tenant.AgentDisplayName,
+            LogoUrl = tenant.LogoUpdatedAt != null
+                ? $"/api/tenant-branding/logo?v={tenant.LogoUpdatedAt.Value.Ticks}"
+                : null
+        };
     }
 
     private string GenerateJwtToken(Domain.Entities.User user, Guid sessionId)

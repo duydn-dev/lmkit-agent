@@ -52,7 +52,7 @@
           <i class="pi pi-sparkles text-2xl text-white"></i>
         </div>
         <h1 class="text-3xl font-bold mb-2">Hôm nay tôi có thể giúp gì cho bạn?</h1>
-        <p class="text-gray-600 max-w-md">CILA - AI Agent hỗ trợ đa năng: phân tích tài liệu, tìm kiếm thông minh, tạo nội dung và nhiều hơn thế.</p>
+        <p class="text-gray-600 max-w-md">{{ authStore.agentName }} hỗ trợ đa năng: phân tích tài liệu, tìm kiếm thông minh, tạo nội dung và nhiều hơn thế.</p>
       </div>
 
       <div v-else class="max-w-3xl mx-auto w-full py-6" :style="{ paddingBottom: composerHeight + 32 + 'px' }">
@@ -83,13 +83,14 @@
           <div v-else class="flex w-full group gap-4">
             <!-- Assistant Avatar -->
             <div class="flex-shrink-0 mt-1">
-              <div class="w-8 h-8 rounded-full bg-chatgpt-dark border border-gray-200 flex items-center justify-center shadow-sm">
-                <i class="pi pi-sparkles text-sm text-gray-700"></i>
+              <div class="w-8 h-8 rounded-full bg-chatgpt-dark border border-gray-200 flex items-center justify-center shadow-sm overflow-hidden">
+                <img v-if="authStore.brandLogoUrl" :src="authStore.brandLogoUrl" :alt="authStore.agentName" class="w-full h-full object-contain" />
+                <i v-else class="pi pi-sparkles text-sm text-gray-700"></i>
               </div>
             </div>
-            
+
             <div class="flex flex-col flex-1 min-w-0">
-              <div class="font-semibold mb-1 text-sm text-gray-700">CILA - AI Agent</div>
+              <div class="font-semibold mb-1 text-sm text-gray-700">{{ authStore.agentName }}</div>
 
               <!-- One reasoning panel: pipeline milestones AND the model's own chain-of-thought
                    live in the same card. They are two halves of one story (what the agent did /
@@ -299,7 +300,7 @@
               rows="1"
               autoResize
               aria-label="Tin nhắn"
-              placeholder="Nhắn tin cho CILA - AI Agent..." />
+              :placeholder="`Nhắn tin cho ${authStore.agentName}...`" />
           </div>
           
           <!-- Bottom Toolbar -->
@@ -362,7 +363,7 @@
           </div>
         </div>
         <div class="text-center text-xs text-gray-500 mt-3">
-          CILA - AI Agent có thể mắc sai lầm. Vui lòng kiểm tra lại các thông tin quan trọng.
+          {{ authStore.agentName }} có thể mắc sai lầm. Vui lòng kiểm tra lại các thông tin quan trọng.
         </div>
       </div>
     </div>
@@ -411,6 +412,7 @@ import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
+import { useAuthStore } from '@/store/auth.store';
 import GenerativeUiRenderer from '@/components/chat/GenerativeUiRenderer.vue';
 import CanvasPanel from '@/components/canvas/CanvasPanel.vue';
 import { largestCodeFence } from '@/components/canvas/codeFence';
@@ -428,6 +430,8 @@ const inputMessage = ref('');
 const messages = ref<ChatMessage[]>([]);
 const { consumeStream, stop, isStreaming } = useChatStream();
 const toast = useToast();
+// Thương hiệu theo tenant: tên trợ lý + logo hiển thị trong khung chat (fallback mặc định).
+const authStore = useAuthStore();
 const chatError = ref('');
 const isGenerating = ref(false);
 const chatContainer = ref<HTMLElement | null>(null);

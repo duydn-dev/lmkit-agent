@@ -47,8 +47,18 @@
 
         <Column field="name" header="Tên tenant">
           <template #body="{ data }">
-            <div class="font-semibold text-gray-900 text-sm">{{ data.name }}</div>
-            <div class="text-xs text-gray-400 mt-0.5">Tạo {{ absoluteDate(data.createdAt) }}</div>
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+                <img v-if="data.hasLogo" :src="rowLogoUrl(data)" :alt="`Logo ${data.name}`" class="w-full h-full object-contain" />
+                <i v-else class="pi pi-building text-gray-300 text-sm" aria-hidden="true"></i>
+              </div>
+              <div class="min-w-0">
+                <div class="font-semibold text-gray-900 text-sm truncate">{{ data.name }}</div>
+                <div class="text-xs text-gray-400 mt-0.5 truncate">
+                  <span v-if="data.agentDisplayName" class="text-gray-500">🤖 {{ data.agentDisplayName }} · </span>Tạo {{ absoluteDate(data.createdAt) }}
+                </div>
+              </div>
+            </div>
           </template>
         </Column>
         <Column field="userCount" header="Người dùng" :style="{ width: '130px' }">
@@ -67,7 +77,7 @@
         </Column>
       </DataTable>
 
-      <Dialog v-model:visible="dialogVisible" modal :header="editingId ? 'Đổi tên tenant' : 'Thêm tenant'" class="w-[28rem] max-w-[95vw]">
+      <Dialog v-model:visible="dialogVisible" modal :header="editingId ? 'Sửa tenant' : 'Thêm tenant'" class="w-[30rem] max-w-[95vw]">
         <form class="grid gap-3" @submit.prevent="save">
           <div v-if="formError" role="alert" class="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
             {{ formError }}
@@ -75,6 +85,33 @@
           <div class="grid gap-1">
             <label for="tenant-name" class="text-sm font-medium text-gray-700">Tên tenant <span class="text-red-500">*</span></label>
             <InputText id="tenant-name" v-model="form.name" required maxlength="200" placeholder="Ví dụ: Chi cục Bảo vệ môi trường" class="w-full" autofocus />
+          </div>
+          <div class="grid gap-1">
+            <label for="tenant-agent" class="text-sm font-medium text-gray-700">Tên trợ lý AI</label>
+            <InputText id="tenant-agent" v-model="form.agentDisplayName" maxlength="100" placeholder="Ví dụ: Trợ lý CILA (để trống dùng mặc định)" class="w-full" />
+            <small class="text-xs text-gray-400">Hiển thị trên header và trong khung chat cho người dùng thuộc tenant này.</small>
+          </div>
+
+          <div class="grid gap-1.5">
+            <span class="text-sm font-medium text-gray-700">Logo đơn vị</span>
+            <template v-if="editingId">
+              <div class="flex items-center gap-3">
+                <div class="w-14 h-14 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+                  <img v-if="logoPreviewUrl" :src="logoPreviewUrl" alt="Logo hiện tại" class="w-full h-full object-contain" />
+                  <i v-else class="pi pi-image text-gray-300 text-xl" aria-hidden="true"></i>
+                </div>
+                <div class="flex flex-col gap-1.5 min-w-0">
+                  <div class="flex items-center gap-2">
+                    <Button label="Tải logo" icon="pi pi-upload" size="small" outlined :loading="logoBusy" @click="triggerLogoPick" />
+                    <Button v-if="editingHasLogo" label="Gỡ" icon="pi pi-trash" size="small" severity="danger" text :loading="logoBusy" @click="removeLogo" />
+                  </div>
+                  <small class="text-xs text-gray-400">PNG, JPG, WEBP, GIF, BMP · tối đa 2MB.</small>
+                </div>
+                <input ref="logoInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" class="hidden" @change="onLogoChange" />
+              </div>
+              <small v-if="logoError" role="alert" class="text-xs text-red-600">{{ logoError }}</small>
+            </template>
+            <small v-else class="text-xs text-gray-400">Lưu tenant trước, rồi mở lại để tải logo.</small>
           </div>
         </form>
         <template #footer>
@@ -87,7 +124,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
@@ -98,10 +135,16 @@ import { useServerPage } from '@/composables/useServerPage';
 interface TenantRow {
   id: string;
   name: string;
+  agentDisplayName?: string | null;
+  hasLogo?: boolean;
+  logoUpdatedAt?: string | null;
   createdAt: string;
   userCount: number;
   databaseConnectionCount: number;
 }
+
+const MAX_LOGO_BYTES = 2 * 1024 * 1024; // 2 MB — khớp giới hạn phía server
+const ALLOWED_LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp'];
 
 const confirm = useConfirm();
 const toast = useToast();
@@ -116,18 +159,40 @@ const dialogVisible = ref(false);
 const editingId = ref<string | null>(null);
 const saving = ref(false);
 const formError = ref('');
-const form = ref({ name: '' });
+const form = ref<{ name: string; agentDisplayName: string }>({ name: '', agentDisplayName: '' });
+
+// --- Logo (chỉ thao tác khi tenant đã tồn tại) ------------------------------
+const logoInput = ref<HTMLInputElement | null>(null);
+const logoBusy = ref(false);
+const logoError = ref('');
+const editingHasLogo = ref(false);
+/** Đổi khi upload/xóa logo → ép <img> tải lại (bỏ cache) trong lúc dialog đang mở. */
+const logoCacheBust = ref(Date.now());
+
+const logoPreviewUrl = computed(() =>
+  editingId.value && editingHasLogo.value
+    ? `${ApiFactory.TENANTS.LOGO(editingId.value)}?v=${logoCacheBust.value}`
+    : '');
+
+/** URL logo cho thumbnail ở bảng — cache-buster theo mốc cập nhật của chính row. */
+const rowLogoUrl = (row: TenantRow) =>
+  `${ApiFactory.TENANTS.LOGO(row.id)}?v=${row.logoUpdatedAt ? Date.parse(row.logoUpdatedAt) : 0}`;
 
 const openCreate = () => {
   editingId.value = null;
-  form.value = { name: '' };
+  form.value = { name: '', agentDisplayName: '' };
+  editingHasLogo.value = false;
+  logoError.value = '';
   formError.value = '';
   dialogVisible.value = true;
 };
 
 const openEdit = (tenant: TenantRow) => {
   editingId.value = tenant.id;
-  form.value = { name: tenant.name };
+  form.value = { name: tenant.name, agentDisplayName: tenant.agentDisplayName ?? '' };
+  editingHasLogo.value = !!tenant.hasLogo;
+  logoCacheBust.value = tenant.logoUpdatedAt ? Date.parse(tenant.logoUpdatedAt) : Date.now();
+  logoError.value = '';
   formError.value = '';
   dialogVisible.value = true;
 };
@@ -136,22 +201,82 @@ const save = async () => {
   formError.value = '';
   const name = form.value.name.trim();
   if (!name) { formError.value = 'Vui lòng nhập tên tenant.'; return; }
+  const payload = { name, agentDisplayName: form.value.agentDisplayName.trim() || null };
   saving.value = true;
   try {
     const response = editingId.value
-      ? await http.put(ApiFactory.TENANTS.BY_ID(editingId.value), { name })
-      : await http.post(ApiFactory.TENANTS.BASE, { name });
+      ? await http.put(ApiFactory.TENANTS.BY_ID(editingId.value), payload)
+      : await http.post(ApiFactory.TENANTS.BASE, payload);
     if (!response.ok) {
       formError.value = await readApiError(response, 'Không thể lưu tenant');
       return;
     }
     dialogVisible.value = false;
-    toast.add({ severity: 'success', summary: editingId.value ? 'Đã đổi tên tenant' : 'Đã thêm tenant', life: 3000 });
+    toast.add({ severity: 'success', summary: editingId.value ? 'Đã lưu tenant' : 'Đã thêm tenant', life: 3000 });
     await list.reload();
   } catch (cause) {
     formError.value = errorMessage(cause, 'Không thể lưu tenant.');
   } finally {
     saving.value = false;
+  }
+};
+
+const triggerLogoPick = () => logoInput.value?.click();
+
+const onLogoChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = ''; // cho phép chọn lại đúng file vừa chọn
+  if (!file || !editingId.value) return;
+
+  logoError.value = '';
+  if (!ALLOWED_LOGO_TYPES.includes(file.type)) {
+    logoError.value = 'Định dạng phải là PNG, JPG, WEBP, GIF hoặc BMP.';
+    return;
+  }
+  if (file.size > MAX_LOGO_BYTES) {
+    logoError.value = 'Logo tối đa 2MB.';
+    return;
+  }
+
+  logoBusy.value = true;
+  try {
+    const fd = new FormData();
+    fd.append('logo', file);
+    const response = await http.post(ApiFactory.TENANTS.LOGO(editingId.value), fd);
+    if (response.ok) {
+      editingHasLogo.value = true;
+      logoCacheBust.value = Date.now();
+      toast.add({ severity: 'success', summary: 'Đã cập nhật logo', life: 3000 });
+      await list.reload();
+    } else {
+      logoError.value = await readApiError(response, 'Không thể tải logo');
+    }
+  } catch (cause) {
+    logoError.value = errorMessage(cause, 'Không thể tải logo.');
+  } finally {
+    logoBusy.value = false;
+  }
+};
+
+const removeLogo = async () => {
+  if (!editingId.value) return;
+  logoBusy.value = true;
+  logoError.value = '';
+  try {
+    const response = await http.delete(ApiFactory.TENANTS.LOGO(editingId.value));
+    if (response.ok) {
+      editingHasLogo.value = false;
+      logoCacheBust.value = Date.now();
+      toast.add({ severity: 'success', summary: 'Đã gỡ logo', life: 3000 });
+      await list.reload();
+    } else {
+      logoError.value = await readApiError(response, 'Không thể gỡ logo');
+    }
+  } catch (cause) {
+    logoError.value = errorMessage(cause, 'Không thể gỡ logo.');
+  } finally {
+    logoBusy.value = false;
   }
 };
 

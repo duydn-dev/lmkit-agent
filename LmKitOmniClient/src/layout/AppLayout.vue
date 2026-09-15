@@ -11,9 +11,9 @@
       <div class="h-14 shrink-0 px-4 bg-[var(--color-gov-blue-dark)] flex items-center">
         <div class="flex items-center gap-2.5 min-w-0">
           <div class="w-9 h-9 rounded-full bg-white flex items-center justify-center flex-shrink-0 overflow-hidden p-0.5">
-            <img src="@/assets/quochuy.svg" alt="Quốc huy Việt Nam" class="w-full h-full object-contain" />
+            <img :src="authStore.brandLogoUrl || quochuyLogo" :alt="brandTitle" class="w-full h-full object-contain" />
           </div>
-          <div class="text-sm font-bold text-white truncate tracking-wide">CILA · AI AGENT</div>
+          <div class="text-sm font-bold text-white truncate tracking-wide">{{ brandTitle }}</div>
         </div>
       </div>
 
@@ -75,7 +75,7 @@
       <header class="h-14 shrink-0 flex items-center justify-between gap-3 px-5 bg-[var(--color-gov-blue-dark)]">
         <div class="flex items-center gap-3 min-w-0 flex-1">
           <button @click="mobileNavOpen = !mobileNavOpen" :aria-expanded="mobileNavOpen" aria-controls="mobile-navigation" class="w-10 h-10 md:hidden flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors" :aria-label="mobileNavOpen ? 'Đóng menu điều hướng' : 'Mở menu điều hướng'"><i class="pi pi-bars text-lg text-blue-100"></i></button>
-          <p class="text-[13px] font-medium text-blue-100 truncate" title="Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi trường quốc gia">Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi trường quốc gia</p>
+          <p class="text-[13px] font-medium text-blue-100 truncate" :title="orgName">{{ orgName }}</p>
         </div>
         <div class="flex items-center gap-1.5">
           <button @click="openHistoryDrawer" class="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors cursor-pointer" aria-label="Lịch sử chat" aria-haspopup="true">
@@ -202,6 +202,7 @@ import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import { useAuthStore } from '@/store/auth.store';
+import quochuyLogo from '@/assets/quochuy.svg';
 
 interface ChatSession {
   id: string;
@@ -236,6 +237,12 @@ const userName = computed(() => authStore.currentUser?.fullName || authStore.cur
 const userRole = computed(() => authStore.currentUser?.role || 'Member');
 
 const isAdmin = computed(() => userRole.value === 'Admin');
+
+// --- Thương hiệu theo tenant (logo + tên trợ lý + tên đơn vị) -----------------
+// Khi chưa cấu hình, giữ nguyên nhận diện mặc định của hệ thống.
+const DEFAULT_ORG = 'Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi trường quốc gia';
+const brandTitle = computed(() => authStore.currentUser?.tenant?.agentName?.trim() || 'CILA · AI AGENT');
+const orgName = computed(() => authStore.tenantName || DEFAULT_ORG);
 
 // --- Grouped navigation --------------------------------------------------------
 // Data-driven so the desktop sidebar and the mobile drawer render the exact same

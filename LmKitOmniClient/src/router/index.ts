@@ -232,10 +232,11 @@ router.beforeEach(async (to, _from, next) => {
     next();
   }
 
-  // Dynamic page title
+  // Dynamic page title — mang tên đơn vị (tenant) khi đã đăng nhập, fallback tên hệ thống.
   const pageName = to.name as string | undefined;
   const pageTitle = pageName && PAGE_TITLES[pageName];
-  document.title = pageTitle ? `${pageTitle} | ${APP_NAME}` : APP_NAME;
+  const appName = authStore.currentUser?.tenant?.name?.trim() || APP_NAME;
+  document.title = pageTitle ? `${pageTitle} | ${appName}` : appName;
 });
 
 export default router;
