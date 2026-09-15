@@ -335,6 +335,12 @@ Script là **nguồn duy nhất** của bộ env var này — đừng chép lạ
 | `VectorStore__ApiKey` | Tùy chọn: api-key gửi kèm khi Qdrant có xác thực (`VectorStore__BaseUrl` hỗ trợ `https://`) |
 | `SemaphoreLimits__Chat` | Số luồng inference chat đồng thời (mỗi slot model có limit riêng) |
 
+> **Vì sao `appsettings.json` để trống `PostgreSql` và `ConnectionStrings:Redis`?** Đây là *placeholder* theo mẫu 12-factor — giá trị thật đến từ biến môi trường lúc chạy (không commit secret vào repo), `docker-compose.prod.yml` bơm sẵn. Trống ≠ chưa hoạt động:
+> - **Postgres — bắt buộc.** `Program.cs` đọc `PostgreSql` (hoặc `ConnectionStrings:PostgreSql`) và **ném lỗi ngay khi khởi động nếu trống** (trừ môi trường `Testing`) — không thể chạy ngầm với DB rỗng. Compose bơm từ `POSTGRES_PASSWORD`.
+> - **Redis — tùy chọn.** Trống → tự dùng cache in-memory một node (rate-limit/cache vẫn chạy, chỉ không phân tán đa replica). Compose bơm `ConnectionStrings__Redis` từ `REDIS_CONNECTION_STRING` + `REDIS_PASSWORD` để bật Redis phân tán.
+>
+> **LiveKit** CÓ trong `docker-compose.prod.yml` (service `livekit` + file `livekit.yaml`), nhưng đứng sau `profiles: ["development","production"]` nên chỉ khởi động khi chạy kèm `--profile production` (hoặc `development`); `docker compose up` không kèm profile sẽ không thấy container này — đúng thiết kế opt-in, không phải thiếu. Voice agent vẫn TẮT cho tới khi bật `Voice__LiveAgentEnabled=true` + có `LIVEKIT_*` keys ([mục opt-in](LmKitOmniApi/docs/ai-agent-capabilities.md#chức-năng-opt-in)). Dev compose (`docker-compose.yml`) cố ý chỉ có hạ tầng (postgres/qdrant/searxng/redis), không có livekit/api/client.
+
 Tài liệu chi tiết:
 
 - [Khả năng AI đang được hỗ trợ](LmKitOmniApi/docs/ai-agent-capabilities.md) — hiện trạng từng chức năng, bất biến vận hành
