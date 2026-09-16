@@ -6,7 +6,6 @@ import '../../app/theme.dart';
 import '../../app/ui/app_controls.dart';
 import '../../core/auth/auth_provider.dart';
 import '../../core/config/app_config_provider.dart';
-import '../settings/api_endpoint_screen.dart';
 import '../share/shared_chat_screen.dart';
 
 /// Màn đăng nhập, bố cục theo `LoginView.vue`: Quốc huy + tên đơn vị trên cùng,
@@ -24,6 +23,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _email = TextEditingController();
   final _password = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Chế độ dữ liệu mẫu: điền sẵn tài khoản demo để vào app chỉ bằng một lần
+    // bấm — người xem giao diện không phải gõ gì.
+    if (ref.read(appConfigProvider).useMockData) {
+      _email.text = 'admin@cila.gov.vn';
+      _password.text = 'demo1234';
+    }
+  }
 
   @override
   void dispose() {
@@ -102,6 +112,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          if (ref.watch(appConfigProvider).useMockData) ...[
+                            const AppAlert(
+                              title: 'Đang ở chế độ dữ liệu mẫu',
+                              message:
+                                  'Mọi tài khoản đều đăng nhập được. Toàn bộ số '
+                                  'liệu bạn thấy là dữ liệu giả dựng sẵn trong '
+                                  'app, không gọi ra máy chủ.',
+                            ),
+                            const SizedBox(height: 4),
+                          ],
                           if (error != null) AppErrorBanner(message: error),
                           TextFormField(
                             controller: _email,
@@ -149,14 +169,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _ServerRow(
-                    label: ref.watch(appConfigProvider).apiBaseUrl,
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<bool>(
-                        builder: (_) => const ApiEndpointScreen(),
-                      ),
-                    ),
-                  ),
+                  // Máy chủ chỉ **hiển thị**. API URL là giá trị build-time
+                  // (`--dart-define-from-file=env/<flavor>.json`): app không có
+                  // đường nào đổi nó lúc chạy, nên một lần bấm nhầm cũng không
+                  // để lại URL sai trên thiết bị.
+                  _ServerRow(label: ref.watch(appConfigProvider).apiBaseUrl),
                   TextButton.icon(
                     onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
@@ -176,21 +193,30 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 }
 
-/// Dòng hiển thị máy chủ đang cấu hình — bấm để mở màn đổi API URL.
+/// Dòng hiển thị máy chủ đang cấu hình (chỉ đọc).
+///
+/// Cố ý không phải nút: người dùng cần biết app đang nói chuyện với máy chủ nào
+/// khi báo lỗi cho bộ phận hỗ trợ, nhưng không cần — và không nên — đổi được nó.
 class _ServerRow extends StatelessWidget {
-  const _ServerRow({required this.label, required this.onPressed});
+  const _ServerRow({required this.label});
 
   final String label;
-  final VoidCallback onPressed;
 
   @override
-  Widget build(BuildContext context) => TextButton.icon(
-    onPressed: onPressed,
-    icon: const Icon(Icons.settings_ethernet, size: 18),
-    label: Text(
-      'Máy chủ: $label',
-      overflow: TextOverflow.ellipsis,
-      maxLines: 1,
-    ),
+  Widget build(BuildContext context) => Row(
+    mainAxisAlignment: MainAxisAlignment.center,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const Icon(Icons.dns_outlined, size: 16, color: AppTheme.textMuted),
+      const SizedBox(width: 6),
+      Flexible(
+        child: Text(
+          'Máy chủ: $label',
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ),
+    ],
   );
 }

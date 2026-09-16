@@ -18,6 +18,36 @@ flutter run --dart-define-from-file=env/dev-ios.json      # iOS simulator / desk
 Cấu hình môi trường nằm trong `env/` — xem [`env/README.md`](env/README.md) để
 biết cách đổi API URL, kể cả đổi ngay trên thiết bị mà không cần build lại.
 
+### Máy ảo Android: bỏ thanh công cụ nổi của Gboard
+
+Máy ảo khai với Android là **có bàn phím cứng** (`AT Translated Set 2 keyboard`),
+nên Gboard không hiện bàn phím ảo thường mà hiện **thanh công cụ bàn phím cứng**:
+một dải dọc nổi ở mép trái (micro, xoá, enter, emoji, ≡), và bấm micro trên dải đó
+sẽ mở màn "Tap to speak" của Google. **Đây không phải giao diện của app** — cây
+accessibility của app không có node nào ứng với nó, và đổi IME thì nó đổi theo.
+
+Tắt nó trên máy ảo (đã áp dụng cho `Pixel_5_API_36`):
+
+```bash
+adb root
+adb shell am force-stop com.google.android.inputmethod.latin
+adb shell "sed -i 's/name=\"enable_physical_keyboard_widget\" value=\"true\"/name=\"enable_physical_keyboard_widget\" value=\"false\"/' \
+  /data/data/com.google.android.inputmethod.latin/shared_prefs/flag_value.xml"
+adb shell "chown u0_a154:u0_a154 /data/data/com.google.android.inputmethod.latin/shared_prefs/flag_value.xml"
+adb reboot
+```
+
+Chủ sở hữu tệp phải trả lại như cũ, nếu không Gboard mất quyền đọc `shared_prefs`
+và không khởi động được. Trên máy thật (không có bàn phím cứng) hiện tượng này
+không xảy ra; nếu có bàn phím Bluetooth thì tắt trong Gboard → *Preferences*.
+
+Muốn bàn phím ảo hiện khi chạm vào ô nhập (mặc định của máy ảo là ẩn vì tưởng có
+bàn phím cứng):
+
+```bash
+adb shell settings put secure show_ime_with_hard_keyboard 1
+```
+
 ## Cấu trúc
 
 ```text
@@ -91,7 +121,7 @@ Material chỉ còn ở lớp hạ tầng (`Scaffold`, `AppBar`, danh sách).
 
 ```bash
 flutter analyze   # clean
-flutter test      # 113 test
+flutter test      # 170 test
 flutter build apk --release --dart-define-from-file=env/prod.json
 ```
 

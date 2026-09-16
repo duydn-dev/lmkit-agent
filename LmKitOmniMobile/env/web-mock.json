@@ -1,0 +1,10 @@
+{
+  "API_BASE_URL": "http://localhost:5032",
+  "APP_WEB_BASE_URL": "http://localhost:5173",
+  "APP_FLAVOR": "web-mock",
+  "API_CONNECT_TIMEOUT_SECONDS": 20,
+  "API_RECEIVE_TIMEOUT_SECONDS": 300,
+  "API_SEND_TIMEOUT_SECONDS": 120,
+  "API_LOG_HTTP": false,
+  "USE_MOCK_DATA": true
+}

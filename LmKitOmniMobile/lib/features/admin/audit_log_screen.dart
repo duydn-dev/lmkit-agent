@@ -154,7 +154,7 @@ class _AuditLogScreenState extends ConsumerState<AuditLogScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: AppTopBar(
       title: const Text('Nhật ký kiểm toán'),
       actions: [
         IconButton(

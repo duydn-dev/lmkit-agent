@@ -2,6 +2,60 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
 import '../theme.dart';
+import 'button_frame.dart';
+
+export 'button_frame.dart' show buttonHorizontalPadding;
+
+/// Thanh trên cùng của app: y như `AppBar` của Material, chỉ khác **vùng sáng
+/// của nút icon**.
+///
+/// `AppBar` ép `leading` và `actions` vào ô cao bằng cả thanh (56dp) để tiêu đề
+/// thẳng hàng, mà Material lại vẽ nước chạm kín ô đó — đo được **56×56** trên
+/// header, nên hover/nhấn thành một khối vuông to gần gấp rưỡi nút bình thường.
+/// Bọc mỗi nút trong `Center` là cách duy nhất gỡ ràng buộc chặt đó *mà không hạ
+/// vùng chạm*: nút vẽ 40×40 (chuẩn Material 3, xem `AppTheme.iconButtonTheme`)
+/// còn vùng bấm vẫn 48×48 nhờ `tapTargetSize: padded`.
+class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
+  const AppTopBar({
+    super.key,
+    this.title,
+    this.leading,
+    this.actions,
+    this.bottom,
+  });
+
+  final Widget? title;
+  final Widget? leading;
+  final List<Widget>? actions;
+  final PreferredSizeWidget? bottom;
+
+  @override
+  Size get preferredSize => _bar.preferredSize;
+
+  AppBar get _bar => AppBar(toolbarHeight: AppTheme.appBarHeight, bottom: bottom);
+
+  @override
+  Widget build(BuildContext context) {
+    // Nút quay lại do `AppBar` tự sinh cũng nằm trong ô 56dp — Material chỉ tự
+    // bọc `Center` khi `leading` **là** `IconButton`, còn `BackButton` thì không.
+    // Tự dựng lấy khi màn này đẩy được về trước, để mọi nút trên header đều cùng
+    // một kích thước; trường hợp còn lại (ngăn kéo, `CloseButton`) vẫn để
+    // Material quyết định.
+    final resolvedLeading =
+        leading ??
+        (Navigator.of(context).canPop() ? const BackButton() : null);
+
+    return AppBar(
+      toolbarHeight: AppTheme.appBarHeight,
+      title: title,
+      leading: resolvedLeading == null ? null : Center(child: resolvedLeading),
+      actions: [
+        for (final action in actions ?? const <Widget>[]) Center(child: action),
+      ],
+      bottom: bottom,
+    );
+  }
+}
 
 /// Lớp primitive dùng Forui làm design system cho toàn app.
 ///
@@ -11,15 +65,6 @@ import '../theme.dart';
 ///
 /// Material vẫn được dùng cho hạ tầng (`Scaffold`, `AppBar`, `ListView`,
 /// `IconButton` trên AppBar) vì Forui không thay thế các lớp đó.
-/// Lề ngang mà `FButton` tự thêm quanh nội dung (padding vùng chạm) — phải trừ
-/// ra khi giới hạn bề ngang cho nhãn, nếu không chính hàng bên trong nút sẽ tràn.
-///
-/// Số này **đo được**, không phải phỏng đoán: ở khổ 320dp nút rộng 288 còn hàng
-/// nội dung bên trong rộng 264 → 12 mỗi bên. Chỉnh lại thì chạy
-/// `flutter test test/layout_test.dart` (lưới quét toàn màn ở 320dp và 1.3×) để
-/// chắc không có nút nào tràn trở lại.
-const buttonHorizontalPadding = 24.0;
-
 /// Kẹp nội dung nút vào đúng bề ngang còn lại sau lề của `FButton`.
 ///
 /// Trừ thẳng có thể ra số âm khi ô chứa rất hẹp (bảng dữ liệu, ô lưới), mà
@@ -30,6 +75,70 @@ BoxConstraints _labelConstraints(BoxConstraints constraints) => BoxConstraints(
     double.infinity,
   ),
 );
+
+/// Nút Forui có nhãn: icon/vòng xoay + nhãn, tự cắt nhãn theo chỗ thực có.
+///
+/// Ba lớp lồng nhau, mỗi lớp một việc — đổi thứ tự là hỏng (xem [ButtonFrame]):
+/// [ButtonFrame] (trả lời truy vấn intrinsic cho hộp thoại) → `LayoutBuilder` (đo
+/// bề ngang thực có) → `FButton` (vẽ nút).
+class _LabeledButton extends StatelessWidget {
+  const _LabeledButton({
+    required this.label,
+    required this.onPressed,
+    this.icon,
+    this.busy = false,
+    this.spinnerColor,
+    this.variant = FButtonVariant.primary,
+    this.mainAxisSize = MainAxisSize.max,
+  });
+
+  final String label;
+  final VoidCallback? onPressed;
+  final IconData? icon;
+  final bool busy;
+
+  /// Màu vòng xoay khi nút đang xử lý (nút nền navy cần màu chữ trên nền chính).
+  final Color? spinnerColor;
+
+  final FButtonVariant variant;
+  final MainAxisSize mainAxisSize;
+
+  @override
+  Widget build(BuildContext context) => ButtonFrame(
+    label: label,
+    icon: icon,
+    busy: busy,
+    child: LayoutBuilder(
+      builder: (context, constraints) => FButton(
+        variant: variant,
+        onPress: busy ? null : onPressed,
+        mainAxisSize: mainAxisSize,
+        child: ConstrainedBox(
+          constraints: _labelConstraints(constraints),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (busy)
+                SizedBox(
+                  height: ButtonFrame.spinnerSize,
+                  width: ButtonFrame.spinnerSize,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: spinnerColor,
+                  ),
+                )
+              else if (icon != null)
+                Icon(icon, size: ButtonFrame.iconSize),
+              if (busy || icon != null) const SizedBox(width: ButtonFrame.iconGap),
+              Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
 
 /// Nút hành động chính.
 ///
@@ -57,38 +166,15 @@ class AppPrimaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final button = LayoutBuilder(
-      builder: (context, constraints) => FButton(
-        onPress: busy ? null : onPressed,
-        mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
-        // Chặn bề ngang của nội dung đúng bằng chỗ thực có. Không làm việc này
-        // thì với nút co theo nội dung, nhãn dài ("Nạp vào kho tri thức") tràn ra
-        // ngoài khung — đã bắt được ở màn Cơ sở kiến thức và API Keys.
-        child: ConstrainedBox(
-          constraints: _labelConstraints(constraints),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (busy)
-                SizedBox(
-                  height: 16,
-                  width: 16,
-                  // Nút chính nền navy: vòng xoay phải lấy màu chữ trên nền chính,
-                  // nếu để mặc định thì trùng màu nền và gần như vô hình.
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Theme.of(context).colorScheme.onPrimary,
-                  ),
-                )
-              else if (icon != null)
-                Icon(icon, size: 18),
-              if (busy || icon != null) const SizedBox(width: 8),
-              Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
-            ],
-          ),
-        ),
-      ),
+    final button = _LabeledButton(
+      label: label,
+      icon: icon,
+      busy: busy,
+      onPressed: onPressed,
+      mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+      // Nút chính nền navy: vòng xoay phải lấy màu chữ trên nền chính, nếu để
+      // mặc định thì trùng màu nền và gần như vô hình.
+      spinnerColor: Theme.of(context).colorScheme.onPrimary,
     );
     return expand ? SizedBox(width: double.infinity, child: button) : button;
   }
@@ -110,24 +196,13 @@ class AppSecondaryButton extends StatelessWidget {
   final bool busy;
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) => FButton(
-      variant: FButtonVariant.outline,
-      onPress: busy ? null : onPressed,
-      child: ConstrainedBox(
-        constraints: _labelConstraints(constraints),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (icon != null) ...[
-              Icon(icon, size: 18),
-              const SizedBox(width: 8),
-            ],
-            Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
-          ],
-        ),
-      ),
-    ),
+  Widget build(BuildContext context) => _LabeledButton(
+    label: label,
+    icon: icon,
+    busy: busy,
+    onPressed: onPressed,
+    variant: FButtonVariant.outline,
+    mainAxisSize: MainAxisSize.min,
   );
 }
 
@@ -147,25 +222,12 @@ class AppDestructiveButton extends StatelessWidget {
   final IconData? icon;
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) => FButton(
-      variant: FButtonVariant.destructive,
-      onPress: onPressed,
-      mainAxisSize: MainAxisSize.min,
-      child: ConstrainedBox(
-        constraints: _labelConstraints(constraints),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (icon != null) ...[
-              Icon(icon, size: 18),
-              const SizedBox(width: 8),
-            ],
-            Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
-          ],
-        ),
-      ),
-    ),
+  Widget build(BuildContext context) => _LabeledButton(
+    label: label,
+    icon: icon,
+    onPressed: onPressed,
+    variant: FButtonVariant.destructive,
+    mainAxisSize: MainAxisSize.min,
   );
 }
 
@@ -364,13 +426,22 @@ class AppCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: FCard(
-        child: onTap == null
-            ? content
-            : GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: onTap,
-                child: content,
-              ),
+        // `FCard` là `DecoratedBox`, không phải `Material`. Con của nó mà cần
+        // `Material` (`ListTile`, `InkWell`, chip…) sẽ vẽ nước chạm lên lớp
+        // Material gần nhất — tức là ra ngoài thẻ, và Flutter còn assert
+        // "ListTile background color or ink splashes may be invisible".
+        // Một lớp Material trong suốt đặt đúng chỗ này sửa cả hai việc, cho mọi
+        // thẻ trong app chứ không riêng màn nào.
+        child: Material(
+          type: MaterialType.transparency,
+          child: onTap == null
+              ? content
+              : GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: onTap,
+                  child: content,
+                ),
+        ),
       ),
     );
   }

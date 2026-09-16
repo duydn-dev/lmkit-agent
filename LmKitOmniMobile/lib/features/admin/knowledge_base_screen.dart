@@ -78,7 +78,7 @@ class _KnowledgeBaseScreenState extends ConsumerState<KnowledgeBaseScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Cơ sở kiến thức')),
+    appBar: AppTopBar(title: const Text('Cơ sở kiến thức')),
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [

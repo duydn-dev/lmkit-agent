@@ -88,7 +88,7 @@ class _CustomInstructionsScreenState
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Custom Instructions')),
+    appBar: AppTopBar(title: const Text('Custom Instructions')),
     body: _loading
         ? const Center(child: CircularProgressIndicator())
         : ListView(

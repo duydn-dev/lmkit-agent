@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart';
 import 'package:lmkit_omni_mobile/app/app.dart';
@@ -22,9 +23,8 @@ import 'package:lmkit_omni_mobile/features/canvas/canvas_panel_screen.dart';
 import 'package:lmkit_omni_mobile/features/chat/chat_message_view.dart';
 import 'package:lmkit_omni_mobile/features/chat/chat_models.dart';
 import 'package:lmkit_omni_mobile/features/chat/chat_screen.dart';
-import 'package:lmkit_omni_mobile/features/more/more_screen.dart';
+import 'package:lmkit_omni_mobile/features/more/function_menu.dart';
 import 'package:lmkit_omni_mobile/features/notifications/notifications_screen.dart';
-import 'package:lmkit_omni_mobile/features/settings/api_endpoint_screen.dart';
 import 'package:lmkit_omni_mobile/features/share/shared_chat_screen.dart';
 import 'package:lmkit_omni_mobile/features/studio/run_detail_screen.dart';
 import 'package:lmkit_omni_mobile/features/studio/studio_screen.dart';
@@ -70,7 +70,6 @@ final _screens = <String, Widget Function()>{
   'LoRA Adapters': () => const LoraAdaptersScreen(),
   'Widget Settings': () => const WidgetSettingsScreen(),
   'Nhật ký kiểm toán': () => const AuditLogScreen(),
-  'Cấu hình kết nối API': () => const ApiEndpointScreen(),
   'Đoạn chat được chia sẻ': () => const SharedChatScreen(),
   'Chi tiết agent run': () =>
       const RunDetailScreen(runId: 'run-1', goal: 'Tổng hợp báo cáo tuần'),
@@ -85,11 +84,16 @@ void _sizeTo(WidgetTester tester, Size size) {
 }
 
 /// Dựng một màn lẻ trong đúng theme và phiên đăng nhập mà app dùng.
+///
+/// [screenKey] đổi khoá của màn: `pumpWidget` gặp cùng loại widget ở cùng vị trí
+/// sẽ **giữ nguyên State cũ** (ví dụ đổi tab của cùng một `StudioScreen`), nên
+/// lượt dựng sau cần khoá riêng mới thật sự là màn mới.
 Future<void> _pumpScreen(
   WidgetTester tester,
   Widget screen, {
   Size size = _narrow,
   bool signedIn = true,
+  String? screenKey,
 }) async {
   _sizeTo(tester, size);
 
@@ -104,7 +108,10 @@ Future<void> _pumpScreen(
         theme: AppTheme.material(AppTheme.forui()),
         builder: (context, inner) =>
             FTheme(data: AppTheme.forui(), child: inner ?? const SizedBox()),
-        home: screen,
+        home: KeyedSubtree(
+          key: ValueKey(screenKey ?? screen.runtimeType.toString()),
+          child: screen,
+        ),
       ),
     ),
   );
@@ -112,6 +119,11 @@ Future<void> _pumpScreen(
 }
 
 /// Dựng toàn bộ app (đã đăng nhập) để kiểm tra shell và từng tab.
+///
+/// `ProviderScope` được gắn khoá theo tham số: gọi lần thứ hai với tham số khác
+/// phải **dựng lại từ đầu**. Không có khoá thì `pumpWidget` chỉ cập nhật cây
+/// hiện có, `Navigator` cũ được giữ nguyên — và sheet chức năng của lượt trước
+/// vẫn nằm trên đó, khiến lượt sau đọc nhầm nội dung của lượt trước.
 Future<void> _pumpApp(
   WidgetTester tester, {
   Size size = _narrow,
@@ -121,6 +133,7 @@ Future<void> _pumpApp(
 
   await tester.pumpWidget(
     ProviderScope(
+      key: ValueKey('app-$admin-${size.width}'),
       overrides: [
         authControllerProvider.overrideWith(() => _FakeAuth(_session(admin))),
       ],
@@ -158,29 +171,37 @@ class _FakeAuth extends AuthController {
   Future<AuthSession?> build() async => session;
 }
 
-/// Nhãn trên thanh điều hướng dưới cùng, đúng thứ tự hiển thị.
-const _tabs = ['AI Chat', 'Projects', 'Documents', 'AI Studio', 'Thêm'];
-
-Future<void> _tapTab(WidgetTester tester, String label) async {
-  final target = find.descendant(
-    of: find.byType(NavigationBar),
-    matching: find.text(label),
-  );
-  expect(target, findsOneWidget, reason: 'không thấy tab "$label"');
-  await tester.tap(target);
-  await tester.pump(const Duration(milliseconds: 150));
+/// Mở danh sách chức năng bằng nút ba chấm trên header — cửa duy nhất vào các
+/// mục cấp một kể từ khi bỏ thanh điều hướng dưới.
+Future<void> _openFunctionMenu(WidgetTester tester) async {
+  final button = find.byTooltip('Danh sách chức năng');
+  expect(button, findsOneWidget, reason: 'header không có nút ba chấm');
+  await tester.tap(button);
+  await tester.pump(const Duration(milliseconds: 300));
 }
 
-/// Danh sách của tab "Thêm". Mỗi tab được giữ sống nên phải chỉ đích danh nó
-/// thay vì để `scrollUntilVisible` tự đoán Scrollable nào.
-Finder get _moreList => find.descendant(
-  of: find.byType(MoreScreen),
+/// Danh sách của sheet chức năng. Phải chỉ đích danh nó thay vì để
+/// `scrollUntilVisible` tự đoán Scrollable nào (khung chat phía sau cũng cuộn
+/// được).
+Finder get _menuList => find.descendant(
+  of: find.byType(FunctionMenuSheet),
   matching: find.byType(Scrollable),
+);
+
+/// Mục trong sheet chức năng theo nhãn.
+///
+/// Phải chỉ đích danh trong sheet: vài nhãn trùng với tiêu đề trang (ví dụ "AI
+/// Chat" vừa là mục trong danh sách vừa là tiêu đề header đang mở) nên
+/// `find.text` trần sẽ trả về hai widget và `scrollUntilVisible` báo
+/// "Too many elements".
+Finder _menuItem(String label) => find.descendant(
+  of: find.byType(FunctionMenuSheet),
+  matching: find.text(label),
 );
 
 Future<void> _scrollTo(WidgetTester tester, String label, Finder list) =>
     tester.scrollUntilVisible(
-      find.text(label),
+      _menuItem(label),
       240,
       scrollable: list,
       maxScrolls: 40,
@@ -196,35 +217,68 @@ void _pressFab(WidgetTester tester) {
 
 void main() {
   group('shell', () {
-    testWidgets('duyệt hết 5 tab mà không tràn ở 320dp', (tester) async {
+    testWidgets('không còn thanh điều hướng dưới', (tester) async {
+      // Quyết định bố cục: màn chat là màn gốc duy nhất, điều hướng nằm ở
+      // header. Thanh dưới quay trở lại là mất 64dp chiều cao của transcript,
+      // và kéo theo cảnh thanh dưới tô sáng nhầm mục ở các màn đẩy sang.
       await _pumpApp(tester);
 
-      for (final label in _tabs) {
-        await _tapTab(tester, label);
-        expect(tester.takeException(), isNull, reason: 'tab $label');
+      expect(find.byType(NavigationBar), findsNothing);
+      expect(find.byType(BottomNavigationBar), findsNothing);
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('nút ba chấm mở đủ danh sách chức năng ở 320dp', (tester) async {
+      await _pumpApp(tester);
+      await _openFunctionMenu(tester);
+
+      expect(find.byType(FunctionMenuSheet), findsOneWidget);
+
+      // Danh sách dài hơn một màn 640dp nên mọi mục đều phải **tới được** bằng
+      // cách cuộn — trong đó có nhóm "Không gian làm việc", tức nhóm đã thay
+      // các tab cũ (AI Chat / Projects / RAG Documents).
+      for (final label in const [
+        'AI Chat',
+        'Projects',
+        'RAG Documents',
+        'Agent Studio',
+        'HITL Approvals',
+        'Đoạn chat được chia sẻ',
+        'Đăng xuất',
+      ]) {
+        await _scrollTo(tester, label, _menuList);
+        expect(_menuItem(label), findsOneWidget, reason: 'thiếu mục "$label"');
+        expect(tester.takeException(), isNull, reason: 'mục "$label"');
       }
     });
 
-    testWidgets('vẫn đúng ở khổ máy thật (390dp)', (tester) async {
+    testWidgets('menu chức năng vẫn đúng ở khổ máy thật (390dp)', (
+      tester,
+    ) async {
       await _pumpApp(tester, size: _phone);
+      await _openFunctionMenu(tester);
+      await _scrollTo(tester, 'Đăng xuất', _menuList);
 
-      for (final label in _tabs) {
-        await _tapTab(tester, label);
-        expect(tester.takeException(), isNull, reason: 'tab $label');
-      }
+      expect(_menuItem('Đăng xuất'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
-    testWidgets('chịu được cỡ chữ hệ thống lớn (1.3×) ở 320dp', (tester) async {
+    testWidgets('menu chịu được cỡ chữ hệ thống lớn (1.3×) ở 320dp', (
+      tester,
+    ) async {
       // Người dùng lớn tuổi là nhóm chính của app hành chính: cỡ chữ hệ thống
       // lớn hơn vẫn phải dùng được, không cắt nhãn hay đè lên nhau.
       tester.platformDispatcher.textScaleFactorTestValue = 1.3;
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 
       await _pumpApp(tester);
+      await _openFunctionMenu(tester);
 
-      for (final label in _tabs) {
-        await _tapTab(tester, label);
-        expect(tester.takeException(), isNull, reason: 'tab $label ở 1.3×');
+      for (final label in const ['AI Chat', 'HITL Approvals', 'Đăng xuất']) {
+        await _scrollTo(tester, label, _menuList);
+        expect(_menuItem(label), findsOneWidget, reason: 'thiếu mục "$label"');
+        expect(tester.takeException(), isNull, reason: 'mục "$label" ở 1.3×');
       }
     });
 
@@ -232,17 +286,17 @@ void main() {
       tester,
     ) async {
       await _pumpApp(tester);
-      await _tapTab(tester, 'Thêm');
-      await _scrollTo(tester, 'Dashboard quản trị', _moreList);
-      expect(find.text('Dashboard quản trị'), findsOneWidget);
+      await _openFunctionMenu(tester);
+      await _scrollTo(tester, 'Dashboard quản trị', _menuList);
+      expect(_menuItem('Dashboard quản trị'), findsOneWidget);
 
       await _pumpApp(tester, admin: false);
-      await _tapTab(tester, 'Thêm');
+      await _openFunctionMenu(tester);
       // Cuộn hết danh sách rồi mới kết luận: mục quản trị nằm ngay trước nhóm
       // "Cài đặt", nên nếu tồn tại thì phải thấy ở đoạn này.
-      await _scrollTo(tester, 'Đăng xuất', _moreList);
-      expect(find.text('Đăng xuất'), findsOneWidget);
-      expect(find.text('Dashboard quản trị'), findsNothing);
+      await _scrollTo(tester, 'Đăng xuất', _menuList);
+      expect(_menuItem('Đăng xuất'), findsOneWidget);
+      expect(_menuItem('Dashboard quản trị'), findsNothing);
     });
   });
 
@@ -264,6 +318,30 @@ void main() {
           tester.takeException(),
           isNull,
           reason: 'màn "${entry.key}" ở 1.3×',
+        );
+      }
+    });
+
+    testWidgets('tiêu đề màn con là **tên trang**, không phải tên nhóm', (
+      tester,
+    ) async {
+      // Người dùng bấm "Deep Research" trong menu chức năng thì thanh trên cùng
+      // phải đọc đúng "Deep Research"; nếu chỉ ghi tên nhóm ("AI Studio") thì
+      // header nói một đằng còn màn đang mở nói một nẻo.
+      for (final entry in const {
+        'Deep Research': StudioScreen(initialTab: 3),
+        'HITL Approvals': StudioScreen(initialTab: 4),
+        'Vision & OCR': ToolsScreen(initialTab: 1),
+        'Text Analytics': ToolsScreen(),
+      }.entries) {
+        // `screenKey` riêng cho từng màn: cùng loại widget ở cùng vị trí thì
+        // `pumpWidget` giữ nguyên State cũ — không có khoá thì tab của lượt
+        // trước còn nguyên và test sẽ đọc nhầm tiêu đề của lượt trước.
+        await _pumpScreen(tester, entry.value, screenKey: entry.key);
+        expect(
+          find.widgetWithText(AppBar, entry.key),
+          findsOneWidget,
+          reason: 'header không đọc tên trang "${entry.key}"',
         );
       }
     });
@@ -400,8 +478,19 @@ void main() {
 
       expect(tester.takeException(), isNull);
       expect(find.text('Trợ lý CILA'), findsOneWidget);
-      // Chưa có logo tải được trong test → avatar rơi về chữ cái đầu của đơn vị.
-      expect(find.text('T'), findsOneWidget);
+      // Đơn vị chưa cấu hình logo (và trong test cũng không tải được ảnh nào) →
+      // avatar phải là **Quốc huy** đóng gói trong app, không phải avatar chữ cái.
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w is SvgPicture &&
+              w.bytesLoader.toString().contains('quochuy.svg'),
+        ),
+        findsOneWidget,
+        reason: 'avatar mặc định phải là Quốc huy',
+      );
+      // Và không còn avatar chữ cái nào lọt lại.
+      expect(find.text('T'), findsNothing);
     });
 
     testWidgets('khung danh sách admin gọn ở 320dp với dữ liệu thật', (

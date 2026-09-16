@@ -176,7 +176,7 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: AppTopBar(
       title: const Text('Projects'),
       actions: [
         IconButton(

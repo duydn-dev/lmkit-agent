@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme.dart';
+import '../../app/ui/app_controls.dart';
 import 'api_keys_screen.dart';
 import 'audit_log_screen.dart';
 import 'database_connections_screen.dart';
@@ -78,7 +79,7 @@ class AdminHubScreen extends ConsumerWidget {
         ];
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Quản trị')),
+      appBar: AppTopBar(title: const Text('Dashboard quản trị')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

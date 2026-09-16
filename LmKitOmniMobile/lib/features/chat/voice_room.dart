@@ -273,7 +273,7 @@ class VoiceRoomScreen extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Thoại thời gian thực')),
+      appBar: AppTopBar(title: const Text('Thoại thời gian thực')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

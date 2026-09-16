@@ -98,7 +98,7 @@ class _AdminListViewState<T> extends ConsumerState<AdminListView<T>> {
   Widget build(BuildContext context) {
     final reload = _load;
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppTopBar(
         title: Text(widget.title),
         actions: [
           IconButton(

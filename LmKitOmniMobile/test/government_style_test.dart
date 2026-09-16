@@ -1,6 +1,10 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:forui/forui.dart';
 import 'package:lmkit_omni_mobile/app/app.dart';
 import 'package:lmkit_omni_mobile/app/theme.dart';
 import 'package:lmkit_omni_mobile/app/ui/app_controls.dart';
@@ -120,9 +124,31 @@ void main() {
       expect(AppTheme.hitlText, const Color(0xFFC2410C)); // orange-700
     });
 
-    test('thanh điều hướng dưới cùng cao 64px, nền trắng', () {
-      expect(theme.navigationBarTheme.height, 64);
-      expect(theme.navigationBarTheme.backgroundColor, Colors.white);
+    /// Nút icon là loại nút Material duy nhất của app nằm trên chrome navy, nên
+    /// nền của nó **không được đổi theo trạng thái**. Forui dựng
+    /// `iconButtonTheme` từ nút "ghost" của nó, và nút ghost đổi nền khi hover
+    /// thành một tông gần trắng — trên dải navy, hover biến nút thành ô trắng
+    /// đúng bằng kích thước nút rồi icon trắng biến mất trong đó.
+    test('nút icon không đổi nền khi hover/nhấn, phản hồi nằm ở lớp phủ', () {
+      final style = theme.iconButtonTheme.style!;
+      for (final state in <WidgetState>{
+        WidgetState.hovered,
+        WidgetState.pressed,
+        WidgetState.focused,
+        WidgetState.disabled,
+      }) {
+        expect(
+          style.backgroundColor?.resolve({state}),
+          Colors.transparent,
+          reason: 'nền nút icon phải luôn trong suốt (trạng thái $state)',
+        );
+      }
+      final hoverOverlay = style.overlayColor?.resolve({WidgetState.hovered});
+      expect(hoverOverlay, isNotNull);
+      // Lớp phủ phải là navy mờ: thấy được trên nền trắng mà không chói trên
+      // chrome tối. Trắng ở đây chính là lỗi cũ.
+      expect(hoverOverlay!.a, greaterThan(0));
+      expect(hoverOverlay.g, lessThan(0.5));
     });
 
     test('snackbar nổi (không che nội dung cuối trang)', () {
@@ -179,11 +205,17 @@ void main() {
     );
     expect(appBarSurface.color, AppTheme.govBlueDark);
 
-    // Không được có chỉ báo Material mặc định (nền hồng/tím của M3).
+    // Thanh điều hướng dưới đã bị bỏ khỏi app: mọi mục cấp một giờ nằm sau nút
+    // ba chấm trên **chính header xanh này**. Kiểm luôn chỗ đó, nếu không hai
+    // phép đo màu/chiều cao ở trên chỉ đang đo một thanh mà app không còn dùng.
+    expect(find.byType(NavigationBar), findsNothing);
     expect(
-      tester.getSize(find.byType(NavigationBar)).height,
-      64,
-      reason: 'chiều cao thanh tab phải theo theme',
+      find.descendant(
+        of: find.byType(AppBar).first,
+        matching: find.byTooltip('Danh sách chức năng'),
+      ),
+      findsOneWidget,
+      reason: 'nút mở danh sách chức năng phải nằm trong header',
     );
   });
 
@@ -215,6 +247,168 @@ void main() {
     await tester.tap(find.byTooltip('Đóng thông báo lỗi'));
     await tester.pump(const Duration(milliseconds: 350));
     expect(dismissed, 1);
+  });
+
+  /// Bắt đúng thứ người dùng nhìn thấy: **pixel vẽ ra** khi hover nút trên
+  /// header. Test theme ở trên chỉ khẳng định giá trị token; chỉ phép đo pixel
+  /// mới phát hiện được lớp khác (theme của Forui, AppBar sinh lại style) ghi đè
+  /// lên đó — chính là lúc bug cũ lọt qua 147 test xanh.
+  testWidgets('hover nút trên header không làm nút thành ô trắng', (tester) async {
+    tester.view.physicalSize = const Size(390, 200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final key = GlobalKey();
+    await tester.pumpWidget(
+      FTheme(
+        data: AppTheme.forui(),
+        child: RepaintBoundary(
+          key: key,
+          child: MaterialApp(
+            theme: AppTheme.material(AppTheme.forui()),
+            home: Scaffold(
+              appBar: AppTopBar(
+                title: const Text('AI Chat'),
+                actions: [
+                  IconButton(
+                    tooltip: 'Danh sách chức năng',
+                    onPressed: () {},
+                    icon: const Icon(Icons.more_vert),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final button = find.byTooltip('Danh sách chức năng');
+    final box = tester.getRect(button);
+    final gesture = await tester.createGesture(kind: ui.PointerDeviceKind.mouse);
+    await gesture.addPointer(location: Offset.zero);
+    await gesture.moveTo(tester.getCenter(button));
+    await tester.pumpAndSettle();
+
+    // Đọc pixel phải chạy trong `runAsync`: `toImage` cần event loop thật.
+    final boundary =
+        key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final bytes = await tester.runAsync(() async {
+      final image = await boundary.toImage();
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      image.dispose();
+      return data!.buffer.asUint8List();
+    });
+    await gesture.removePointer();
+
+    final width = tester.view.physicalSize.width.round();
+    ({int r, int g, int b}) at(double x, double y) {
+      final o = (y.round() * width + x.round()) * 4;
+      return (r: bytes![o], g: bytes[o + 1], b: bytes[o + 2]);
+    }
+
+    // Hai điểm trong nút nhưng tránh nét icon (icon nằm giữa): sát trái, sát phải.
+    for (final point in [
+      at(box.left + 3, box.center.dy),
+      at(box.right - 3, box.center.dy),
+    ]) {
+      expect(
+        point.g,
+        lessThan(120),
+        reason: 'nút hover ra gần trắng ($point) — icon trắng sẽ biến mất',
+      );
+      expect(
+        point.b,
+        greaterThan(point.r),
+        reason: 'lớp phủ hover phải giữ tông navy của header ($point)',
+      );
+    }
+
+    // Và phản hồi phải **nhìn thấy được**: nút không được trùng màu nền header.
+    final chrome = at(8, box.center.dy);
+    expect(
+      at(box.left + 3, box.center.dy).b,
+      greaterThan(chrome.b),
+      reason: 'nút lúc hover phải sáng hơn dải header',
+    );
+  });
+
+  /// Nút trên header phải vẽ **đúng 40×40** (kích thước nút Material 3) trong khi
+  /// vùng bấm vẫn **48×48**.
+  ///
+  /// `AppBar` ép `leading`/`actions` vào ô 56×56 (cao bằng cả thanh) và Material
+  /// vẽ nước chạm kín ô đó, nên hover thành một khối vuông to hơn nút gần gấp
+  /// rưỡi. Đo bằng pixel/kích thước thật thay vì đọc mã: `AppTopBar` phải giữ
+  /// được cả hai vế — vẽ nhỏ mà **không** thu hẹp vùng chạm.
+  testWidgets('nút header vẽ 40×40 nhưng vùng chạm vẫn 48×48', (tester) async {
+    tester.view.physicalSize = const Size(390, 400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      FTheme(
+        data: AppTheme.forui(),
+        child: MaterialApp(
+          theme: AppTheme.material(AppTheme.forui()),
+          home: Scaffold(
+            appBar: AppTopBar(
+              title: const Text('AI Chat'),
+              leading: Builder(
+                builder: (context) => IconButton(
+                  tooltip: 'Lịch sử chat',
+                  onPressed: () {},
+                  icon: const Icon(Icons.menu),
+                ),
+              ),
+              actions: [
+                IconButton(
+                  tooltip: 'Danh sách chức năng',
+                  onPressed: () {},
+                  icon: const Icon(Icons.more_vert),
+                ),
+              ],
+            ),
+            body: const SizedBox.shrink(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Nút trên header: một ở `leading`, một ở `actions`.
+    final buttons = find.descendant(
+      of: find.byType(AppBar),
+      matching: find.byType(IconButton),
+    );
+    expect(buttons, findsNWidgets(2));
+
+    for (final element in buttons.evaluate()) {
+      final button = find.byWidget(element.widget);
+      final label = tester.widget<Tooltip>(
+        find.descendant(of: button, matching: find.byType(Tooltip)),
+      ).message;
+
+      // Vùng **vẽ ra**: Material của nút, tức chỗ nước chạm được tô.
+      final visual = tester.getSize(
+        find.descendant(of: button, matching: find.byType(Material)).first,
+      );
+      expect(
+        visual.width,
+        lessThanOrEqualTo(40.5),
+        reason: 'vùng sáng của "$label" còn rộng $visual',
+      );
+      expect(visual.height, lessThanOrEqualTo(40.5));
+
+      // Vùng **bấm được**: phải rộng hơn phần vẽ ra, không được thu hẹp theo.
+      final tapTarget = tester.getSize(button);
+      expect(
+        tapTarget.width,
+        greaterThanOrEqualTo(48),
+        reason: 'thu nhỏ "$label" nhưng đã hạ vùng chạm xuống $tapTarget',
+      );
+      expect(tapTarget.height, greaterThanOrEqualTo(48));
+    }
   });
 }
 

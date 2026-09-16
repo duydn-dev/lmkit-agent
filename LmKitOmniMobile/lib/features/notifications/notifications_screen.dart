@@ -149,7 +149,7 @@ class NotificationsScreen extends ConsumerWidget {
     final unread = ref.watch(unreadNotificationCountProvider);
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppTopBar(
         title: const Text('Thông báo'),
         actions: [
           IconButton(

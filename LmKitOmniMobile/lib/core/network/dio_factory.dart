@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../config/app_config.dart';
+import '../mock/mock_http_adapter.dart';
 
 /// Dựng `Dio` từ [AppConfig]. Mọi nơi cần HTTP client đều đi qua đây để
 /// base URL, timeout và log chỉ tồn tại ở một chỗ.
@@ -15,6 +16,12 @@ Dio buildDio(AppConfig config, {List<Interceptor> interceptors = const []}) {
       headers: const {'Accept': 'application/json'},
     ),
   );
+  if (config.useMockData) {
+    // Chế độ dữ liệu mẫu: đổi adapter, không request nào ra mạng. Mọi tầng phía
+    // trên (interceptor, parser SSE, provider, UI) vẫn chạy như thật.
+    dio.httpClientAdapter = MockHttpAdapter();
+    debugPrint('[mock] đang phục vụ DỮ LIỆU MẪU — không gọi ra máy chủ.');
+  }
   if (config.logHttp) {
     dio.interceptors.add(
       LogInterceptor(requestBody: true, responseBody: false),

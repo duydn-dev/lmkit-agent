@@ -17,6 +17,17 @@ import 'studio_models.dart';
 import 'studio_provider.dart';
 import 'studio_repository.dart';
 
+/// Tên trang của từng tab, đúng bằng nhãn mục trong menu chức năng — nên header
+/// luôn đọc đúng tên trang người dùng vừa bấm vào, và đổi theo khi họ đổi tab.
+const _pageTitles = <String>[
+  'Agent Studio',
+  'Task Scheduler',
+  'Automation Agent',
+  'Deep Research',
+  'HITL Approvals',
+  'Content Studio',
+];
+
 class StudioScreen extends ConsumerStatefulWidget {
   const StudioScreen({super.key, this.onOpenSession, this.initialTab = 0});
 
@@ -361,8 +372,15 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('AI Studio'),
+    appBar: AppTopBar(
+      // Tiêu đề là **tên trang đang mở**, không phải tên nhóm "AI Studio":
+      // người dùng bấm "Deep Research" trong menu chức năng thì header phải đọc
+      // đúng "Deep Research" — nếu không, thanh trên cùng lại nói một đằng còn
+      // màn đang mở nói một nẻo, đúng thứ đã phải đi sửa.
+      title: ListenableBuilder(
+        listenable: _tabs,
+        builder: (context, _) => Text(_pageTitles[_tabs.index]),
+      ),
       actions: [
         IconButton(
           tooltip: 'Làm mới',
@@ -742,8 +760,13 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(item['details'].toString()),
                   ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                // `Wrap` chứ không phải `Row`: ở cỡ chữ hệ thống lớn (1.3×) hai
+                // nhãn này cộng lại vượt bề ngang thẻ ở máy 320dp và tràn ra
+                // ngoài (đã đo được 64px). Xuống dòng thì luôn còn bấm được.
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
                     TextButton(
                       onPressed: () => _decide(item['id'].toString(), false),

@@ -229,6 +229,46 @@ class AppTheme {
         iconColor: govBlueDark,
         contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       ),
+      // `IconButton` là loại nút Material duy nhất của app nằm trên chrome navy:
+      // AppBar dùng nó cho nút mở ngăn kéo và các nút hành động ở mọi màn. Forui
+      // dựng `iconButtonTheme` từ kiểu nút "ghost" của nó, và nút ghost **đổi nền
+      // theo trạng thái** — ở theme sáng, nền lúc hover là một tông gần trắng.
+      // Đặt lên dải navy, hover biến nút thành một ô trắng đúng bằng kích thước
+      // nút (đo được #F3F6FA trên nền #1E3A8A) rồi icon trắng biến mất trong đó.
+      //
+      // Chặn ở gốc: nền luôn trong suốt, phản hồi chuyển hết sang lớp phủ màu
+      // navy mờ (nhìn thấy trên nền trắng, không bao giờ chói trên chrome tối).
+      // Riêng trên AppBar, `AppBar` tự sinh lại `foregroundColor` và `overlayColor`
+      // theo `appBarTheme.iconTheme` (trắng) và giữ nguyên nền trong suốt ở đây,
+      // nên nút trên header vẫn có nước chạm trắng mờ.
+      //
+      // **Kích thước**: kiểu ghost của Forui không đặt `minimumSize`/`maximumSize`
+      // nên nút phình theo ô chứa — đo được **56×56** trên header (bằng cả chiều
+      // cao AppBar), tức vùng sáng khi hover/đè rộng gần gấp rưỡi bình thường.
+      // Ghim lại đúng chuẩn Material 3: **nút 40×40**, vùng chạm vẫn 48×48 nhờ
+      // `tapTargetSize: padded` (`_InputPadding` mở rộng vùng bấm mà không vẽ
+      // thêm), nên ngón tay không phải nhắm chính xác hơn.
+      iconButtonTheme: IconButtonThemeData(
+        style: (base.iconButtonTheme.style ?? const ButtonStyle()).copyWith(
+          backgroundColor: const WidgetStatePropertyAll<Color>(
+            Colors.transparent,
+          ),
+          padding: const WidgetStatePropertyAll<EdgeInsets>(EdgeInsets.zero),
+          minimumSize: const WidgetStatePropertyAll<Size>(Size.square(40)),
+          maximumSize: const WidgetStatePropertyAll<Size>(Size.square(40)),
+          tapTargetSize: MaterialTapTargetSize.padded,
+          overlayColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.pressed)) {
+              return govBlueDark.withValues(alpha: 0.14);
+            }
+            if (states.contains(WidgetState.hovered) ||
+                states.contains(WidgetState.focused)) {
+              return govBlueDark.withValues(alpha: 0.08);
+            }
+            return Colors.transparent;
+          }),
+        ),
+      ),
       dialogTheme: DialogThemeData(
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
@@ -255,35 +295,8 @@ class AppTheme {
           borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
         ),
       ),
-      navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        indicatorColor: govBlueDark.withValues(alpha: 0.12),
-        elevation: 0,
-        height: 64,
-        // Nhãn tab: 12 (`text-xs`) — bước nhỏ nhất trên thang chữ vẫn đọc được
-        // ở 320dp và khớp `text-xs` mà web dùng cho nhãn phụ.
-        labelTextStyle: WidgetStateProperty.resolveWith(
-          (states) => TextStyle(
-            fontFamily: fontFamily,
-            fontSize: 12,
-            fontWeight: states.contains(WidgetState.selected)
-                ? FontWeight.w600
-                : FontWeight.w500,
-            color: states.contains(WidgetState.selected)
-                ? govBlueDark
-                : textMuted,
-          ),
-        ),
-        iconTheme: WidgetStateProperty.resolveWith(
-          (states) => IconThemeData(
-            size: 22,
-            color: states.contains(WidgetState.selected)
-                ? govBlueDark
-                : textMuted,
-          ),
-        ),
-      ),
+      // Không còn `navigationBarTheme`: app đã bỏ thanh điều hướng dưới, mọi mục
+      // cấp một nằm trong danh sách chức năng của nút ba chấm trên header.
       tabBarTheme: const TabBarThemeData(
         labelColor: Colors.white,
         unselectedLabelColor: Color(0xFFCBD5E1),

@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/auth/auth_provider.dart';
 import '../../core/network/api_exception.dart';
 import 'chat_models.dart';
 import 'chat_provider.dart';
 import '../../app/ui/app_controls.dart';
+import '../../app/ui/tenant_logo.dart';
 
 /// Lịch sử phiên chat: tìm kiếm phía server, đổi tên và xoá.
 class ChatSessionDrawer extends ConsumerStatefulWidget {
@@ -118,19 +120,64 @@ class _ChatSessionDrawerState extends ConsumerState<ChatSessionDrawer> {
   @override
   Widget build(BuildContext context) {
     final sessions = ref.watch(chatSessionSearchProvider(_query));
+    final user = ref.watch(authControllerProvider).asData?.value?.user;
+    final tenantName = user?.tenant?.name.trim() ?? '';
 
     return Drawer(
       child: SafeArea(
         child: Column(
           children: [
+            // Đầu ngăn kéo là **danh tính đơn vị** (logo + tên đơn vị + tên trợ
+            // lý) — đúng chỗ sidebar web đặt nó. Header chính chỉ đọc tên trang
+            // nên khối này giữ lại dấu hiệu "đang dùng hệ thống của cơ quan
+            // nào", mà không phải nhồi tên đơn vị vào thanh tiêu đề rồi cắt
+            // giữa từ.
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+              padding: const EdgeInsets.fromLTRB(16, 16, 12, 6),
+              child: Row(
+                children: [
+                  TenantLogo(path: user?.tenant?.logoUrl, size: 34),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Tên đơn vị để **nguyên vẹn**, xuống dòng bao nhiêu
+                        // cũng được. Tên cơ quan nhà nước thường 60–80 ký tự và
+                        // khác nhau ở *cuối* câu ("…môi trường quốc gia"), nên
+                        // cắt bằng `…` là cắt đúng phần phân biệt đơn vị này với
+                        // đơn vị khác — người dùng chỉ thấy các đơn vị na ná
+                        // nhau. Bề ngang ngăn kéo có hạn nhưng đây là chỗ duy
+                        // nhất trong app nói rõ đang ở hệ thống của ai.
+                        Text(
+                          tenantName.isEmpty
+                              ? 'Trợ lý ảo - CILA AI'
+                              : tenantName,
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        // Tên trợ lý hiện **nguyên văn**, không thêm tiền tố "Trợ
+                        // lý:": tên do đơn vị đặt ("Trợ lý CILA", "CILA - AI
+                        // Agent") nên ghép thêm là ra "Trợ lý: Trợ lý CILA". Web
+                        // cũng chỉ in `agentName`.
+                        Text(
+                          user?.agentName ?? '',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
               child: Row(
                 children: [
                   Expanded(
                     child: Text(
                       'Lịch sử chat',
-                      style: Theme.of(context).textTheme.titleLarge,
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
                   ),
                   IconButton(

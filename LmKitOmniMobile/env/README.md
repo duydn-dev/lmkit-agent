@@ -15,6 +15,7 @@ Mọi giá trị phụ thuộc môi trường của app mobile nằm trong các 
 | `API_SEND_TIMEOUT_SECONDS` | int | Timeout gửi (upload file). |
 | `API_LOG_HTTP` | bool | In log request/response ra console, chỉ bật ở dev. |
 | `LIVEKIT_URL` | string | URL phòng thoại LiveKit (`ws://` hoặc `wss://`). Bỏ trống thì app tự suy ra từ host của `API_BASE_URL` với cổng 7880. |
+| `USE_MOCK_DATA` | bool | `true` = phục vụ **dữ liệu mẫu** ngay trong app thay vì gọi mạng. Xem mục dưới. |
 
 ## File có sẵn
 
@@ -22,6 +23,7 @@ Mọi giá trị phụ thuộc môi trường của app mobile nằm trong các 
 |---|---|
 | `dev.json` | Android emulator (`10.0.2.2` là alias của `localhost` máy dev). |
 | `dev-ios.json` | iOS simulator, macOS/Windows/Linux desktop. |
+| `dev-mock.json` | Duyệt giao diện bằng dữ liệu mẫu, không cần backend. |
 | `prod.json` | Bản phát hành — **nhớ sửa `API_BASE_URL` thành domain thật.** |
 
 ## Chạy
@@ -29,29 +31,51 @@ Mọi giá trị phụ thuộc môi trường của app mobile nằm trong các 
 ```bash
 flutter run --dart-define-from-file=env/dev.json          # Android emulator
 flutter run --dart-define-from-file=env/dev-ios.json      # iOS simulator / desktop
+flutter run --dart-define-from-file=env/dev-mock.json     # xem giao diện bằng dữ liệu mẫu
 flutter build apk --release --dart-define-from-file=env/prod.json
 ```
 
 VS Code: chọn sẵn cấu hình trong `.vscode/launch.json`, không cần nhớ tham số.
 
-## Đổi API URL mà không cần build lại
+## Đổi API URL
 
-Vì env là cấu hình lúc build, app có thêm lớp override chạy trên thiết bị:
+Địa chỉ máy chủ nằm trong `API_BASE_URL` của file env đang dùng — **giá trị
+build-time**. App cố ý **không** có màn cấu hình kết nối và không lưu override
+trên thiết bị:
 
-- Mở màn **Cấu hình kết nối** (nút trên AppBar, drawer, hoặc link dưới màn đăng nhập).
-- Nhập URL, bấm **Kiểm tra kết nối** (app gọi `GET /health`), rồi **Lưu**.
-- Đổi URL sẽ xoá phiên hiện tại và yêu cầu đăng nhập lại, vì token cấp cho server cũ.
+- Mọi bản cài trong một môi trường luôn trỏ về đúng máy chủ đã được duyệt.
+- Không có đường nào để một lần bấm nhầm để lại URL sai trên máy người dùng.
 
-Thứ tự ưu tiên:
+Muốn đổi thì sửa `API_BASE_URL` trong `env/<flavor>.json` rồi chạy/build lại:
 
-```text
-override trên thiết bị  →  env build (--dart-define-from-file)  →  mặc định trong AppConfig
+```bash
+flutter run --dart-define-from-file=env/dev.json
 ```
 
-Xoá app hoặc bấm **Khôi phục URL từ env** để quay lại giá trị build.
+Máy thật (không phải emulator) thì đặt `API_BASE_URL` thành IP LAN của máy chạy
+backend — emulator Android dùng `10.0.2.2`, còn máy thật không truy cập được
+`localhost` của máy dev.
+
+Màn đăng nhập vẫn hiển thị **Máy chủ: …** (chỉ đọc) để khi báo lỗi cho hỗ trợ thì
+biết bản cài đang nói chuyện với máy chủ nào.
 
 URL LiveKit đi theo `API_BASE_URL`: nếu không đặt `LIVEKIT_URL` thì app dùng
-`ws(s)://<host của API>:7880`, nên đổi server trong app là phòng thoại đổi theo.
+`ws(s)://<host của API>:7880`.
+
+## Xem giao diện khi chưa có backend (dữ liệu mẫu)
+
+`USE_MOCK_DATA=true` (đặt trong `env/dev-mock.json`) đặt một adapter dữ liệu mẫu
+vào Dio, nên **không request nào ra mạng**
+nhưng mọi tầng khác vẫn chạy như thật: interceptor xác thực, chuyển đổi JSON,
+parser SSE của chat/agent, provider và toàn bộ giao diện.
+
+- Đăng nhập bằng **bất kỳ** tài khoản/mật khẩu nào (ở `dev-mock.json` form được
+  điền sẵn).
+- Dữ liệu mẫu nằm ở `lib/core/mock/mock_fixtures.dart`; thêm endpoint mới thì
+  khai báo thêm ở đó. Endpoint bị app gọi mà chưa có dữ liệu sẽ được ghi log
+  `[mock] chưa có dữ liệu mẫu cho: …` và `test/mock_adapter_test.dart` sẽ đỏ.
+- Quay lại gọi máy chủ thật bằng cách chạy lại với env không bật
+  `USE_MOCK_DATA` (`env/dev.json`).
 
 ## Thêm môi trường mới
 

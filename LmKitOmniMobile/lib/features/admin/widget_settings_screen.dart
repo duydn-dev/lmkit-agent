@@ -185,7 +185,7 @@ class _WidgetSettingsScreenState extends ConsumerState<WidgetSettingsScreen> {
     final webBaseUrl = ref.watch(appConfigProvider).webBaseUrl;
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppTopBar(
         title: const Text('Widget Settings'),
         actions: [
           IconButton(

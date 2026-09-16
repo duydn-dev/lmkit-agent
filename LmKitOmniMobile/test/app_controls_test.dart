@@ -21,6 +21,14 @@ Widget _wrapApp(Widget child) => MaterialApp(
   home: Scaffold(body: child),
 );
 
+/// Khổ máy thật phổ thông (411dp ≈ Pixel) ở cỡ chữ 1× — đúng trường hợp lỗi
+/// intrinsic của `AlertDialog` xảy ra, khác với 320dp/1.3× của `layout_test`.
+void _phoneSize(WidgetTester tester) {
+  tester.view.physicalSize = const Size(411, 891);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+}
+
 /// Cỡ chữ / độ đậm đã vẽ thật của một đoạn chữ trên màn.
 ({double? size, FontWeight? weight}) _measured(
   WidgetTester tester,
@@ -178,6 +186,73 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets(
+    'nút của app nằm trong AlertDialog vẫn dựng được hàng nút',
+    (tester) async {
+      // `AlertDialog` bọc nội dung và hàng nút trong `IntrinsicWidth`, mà
+      // `LayoutBuilder` — cách chặn bề ngang nhãn trước đây — **không trả lời
+      // được truy vấn intrinsic**. Hậu quả trên máy thật (411dp, cỡ chữ 1×): ném
+      // "LayoutBuilder does not support returning intrinsic dimensions", hàng
+      // nút không dựng xong và **nút Lưu biến mất** khỏi hộp thoại. Test cũ ở
+      // 320dp/1.3× không bắt được vì ở khổ đó `OverflowBar` xếp nút theo chiều
+      // dọc nên không hỏi intrinsic.
+      _phoneSize(tester);
+
+      await tester.pumpWidget(
+        _wrapApp(
+          Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Sửa tenant'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AppTextField(
+                        controller: TextEditingController(text: 'Sở TNMT'),
+                        label: 'Tên tenant',
+                      ),
+                      const SizedBox(height: 12),
+                      // Nút trong **nội dung** cũng bị `IntrinsicWidth` hỏi
+                      // intrinsic, không chỉ hàng nút.
+                      AppSecondaryButton(label: 'Tải logo', onPressed: _noop),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(onPressed: () {}, child: const Text('Huỷ')),
+                    AppPrimaryButton(
+                      label: 'Lưu',
+                      expand: false,
+                      onPressed: () {},
+                    ),
+                    AppDestructiveButton(
+                      label: 'Xoá tenant',
+                      onPressed: () {},
+                    ),
+                  ],
+                ),
+              ),
+              child: const Text('Mở hộp thoại'),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Mở hộp thoại'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Lưu'), findsOneWidget, reason: 'nút Lưu không dựng ra');
+      expect(find.text('Tải logo'), findsOneWidget);
+      expect(find.text('Xoá tenant'), findsOneWidget);
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'hộp thoại quản trị ném lỗi bố cục',
+      );
+    },
+  );
+
   testWidgets('AppAlert hiển thị thông báo lỗi', (tester) async {
     await tester.pumpWidget(
       _wrap(
@@ -242,3 +317,5 @@ void main() {
     ));
   });
 }
+
+void _noop() {}

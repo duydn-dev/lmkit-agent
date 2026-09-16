@@ -229,7 +229,7 @@ class _CanvasPanelScreenState extends ConsumerState<CanvasPanelScreen> {
     final detail = _detail;
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppTopBar(
         title: const Text('Canvas'),
         actions: [
           IconButton(

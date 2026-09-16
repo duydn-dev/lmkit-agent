@@ -85,7 +85,7 @@ class _RunDetailScreenState extends ConsumerState<RunDetailScreen> {
     final run = _run;
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppTopBar(
         title: const Text('Chi tiết Agent Run'),
         actions: [
           IconButton(

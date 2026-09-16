@@ -140,8 +140,13 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen>
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('AI Tools'),
+    appBar: AppTopBar(
+      // Tên trang theo tab đang mở, đúng nhãn mục trong menu chức năng.
+      title: ListenableBuilder(
+        listenable: _tabs,
+        builder: (context, _) =>
+            Text(_tabs.index == 1 ? 'Vision & OCR' : 'Text Analytics'),
+      ),
       bottom: TabBar(
         controller: _tabs,
         tabs: const [

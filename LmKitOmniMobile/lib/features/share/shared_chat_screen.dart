@@ -65,7 +65,7 @@ class _SharedChatScreenState extends ConsumerState<SharedChatScreen> {
     final result = _result;
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppTopBar(
         title: const Text('Đoạn chat được chia sẻ'),
         actions: [
           IconButton(

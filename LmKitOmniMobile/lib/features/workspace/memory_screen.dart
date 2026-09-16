@@ -79,7 +79,7 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: AppTopBar(
       title: const Text('Agent Memory'),
       actions: [
         IconButton(

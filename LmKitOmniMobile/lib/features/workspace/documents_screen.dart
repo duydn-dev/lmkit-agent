@@ -125,7 +125,7 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
     final visible = _visible;
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppTopBar(
         title: const Text('RAG Documents'),
         actions: [
           IconButton(
