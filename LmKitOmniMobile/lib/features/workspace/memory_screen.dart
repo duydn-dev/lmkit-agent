@@ -47,23 +47,11 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
   }
 
   Future<void> _forget(MemoryModel memory) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Quên thông tin này?'),
-        content: Text(memory.memoryKey),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Huỷ'),
-          ),
-          AppPrimaryButton(
-            label: 'Quên',
-            onPressed: () => Navigator.pop(context, true),
-            expand: false,
-          ),
-        ],
-      ),
+    final confirmed = await confirmAppAction(
+      context,
+      title: 'Quên thông tin này?',
+      message: memory.memoryKey,
+      confirmLabel: 'Quên',
     );
     if (confirmed != true) return;
     try {
@@ -82,10 +70,10 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
     appBar: AppTopBar(
       title: const Text('Agent Memory'),
       actions: [
-        IconButton(
-          onPressed: _load,
+        AppIconButton(
+          icon: Icons.refresh,
           tooltip: 'Làm mới',
-          icon: const Icon(Icons.refresh),
+          onPressed: _load,
         ),
       ],
     ),
@@ -114,7 +102,7 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
             )
           else ...[
             for (final memory in _memories)
-              Card(
+              AppCard(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Column(
@@ -146,18 +134,16 @@ class _MemoryScreenState extends ConsumerState<MemoryScreen> {
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
                           if (!memory.isConfirmed)
-                            IconButton(
-                              onPressed: () => _confirm(memory),
+                            AppIconButton(
+                              icon: Icons.check,
+                              color: AppTheme.success,
                               tooltip: 'Xác nhận',
-                              icon: const Icon(
-                                Icons.check,
-                                color: AppTheme.success,
-                              ),
+                              onPressed: () => _confirm(memory),
                             ),
-                          IconButton(
-                            onPressed: () => _forget(memory),
+                          AppIconButton(
+                            icon: Icons.delete_outline,
                             tooltip: 'Quên',
-                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => _forget(memory),
                           ),
                         ],
                       ),

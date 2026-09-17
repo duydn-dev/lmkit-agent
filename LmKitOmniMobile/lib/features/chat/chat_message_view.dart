@@ -20,11 +20,17 @@ class ChatMessageView extends ConsumerWidget {
   const ChatMessageView({
     super.key,
     required this.message,
+    this.isLive = false,
     this.onRegenerate,
     this.onEdit,
   });
 
   final ChatMessageModel message;
+
+  /// Tin nhắn này thuộc lượt đang được sinh (stream chưa xong) — đúng bằng
+  /// `isGenerating && là tin nhắn cuối` của web. Quyết định xem các mốc tiến
+  /// trình còn được hiển thị hay không (xem `_ReasoningPanel`).
+  final bool isLive;
 
   /// Chỉ có ở tin nhắn trợ lý cuối cùng.
   final VoidCallback? onRegenerate;
@@ -36,6 +42,13 @@ class ChatMessageView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isUser = message.isUser;
     final session = ref.watch(authControllerProvider).asData?.value;
+    // Panel suy luận chỉ tồn tại khi lượt có gì để nói về CÁCH nó đi tới câu trả
+    // lời. Lúc đang chạy, đó là mốc tiến trình và/hoặc chuỗi suy luận đang về;
+    // khi đã trả lời xong thì chỉ còn chuỗi suy luận quyết định — mốc tiến trình
+    // là giàn giáo không ai đọc lại (đúng logic `hasReasoning` của web).
+    final hasReasoning = isLive
+        ? message.reasoning.isNotEmpty || message.thinkingSteps.isNotEmpty
+        : message.reasoning.isNotEmpty;
     // Trợ lý có thể nhúng biểu đồ bằng khối <chart>{json}</chart>; phần chữ được
     // tách ra để vẽ như bình thường.
     final generative = isUser
@@ -75,23 +88,24 @@ class ChatMessageView extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (message.thinkingSteps.isNotEmpty)
-            _Collapsible(
-              title: 'Quá trình suy luận',
-              body: message.thinkingSteps.join('\n'),
-            ),
-          if (message.reasoning.isNotEmpty)
-            _Collapsible(
-              title: 'Suy luận của mô hình',
-              body: message.reasoning,
+          if (hasReasoning)
+            _ReasoningPanel(
+              milestones: isLive ? message.thinkingSteps : const [],
+              reasoning: message.reasoning,
+              live: isLive,
+              // Còn đang sinh mà chưa có chữ nào thì mốc cuối là việc đang chạy.
+              waiting: isLive && message.content.isEmpty,
             ),
           if (generative.text.isNotEmpty)
             FormattedMessage(
               text: generative.text,
-              // Web: người dùng `text-base font-medium` (16/500), trợ lý
-              // `text-base` (16) với dòng thoáng — không dùng cỡ 14 mặc định.
+              // 14 là cỡ chữ chuẩn của màn chat (bằng `bodyMedium`/`text-sm`
+              // của web): trước đây lấy 16 theo `text-base` nhưng trên màn điện
+              // thoại cỡ đó làm câu trả lời dài chiếm gần hết khung nhìn. Người
+              // dùng vẫn phân biệt được với chú thích 12 và tiêu đề 14–16 nhờ
+              // khoảng cách dòng thoáng (1.6) và đậm nhạt.
               style: TextStyle(
-                fontSize: 16,
+                fontSize: 14,
                 color: AppTheme.textPrimary,
                 fontWeight: isUser ? FontWeight.w500 : FontWeight.w400,
                 height: isUser ? 1.5 : 1.6,
@@ -142,9 +156,7 @@ class ChatMessageView extends ConsumerWidget {
                       ClipboardData(text: message.content),
                     );
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Đã sao chép tin nhắn.')),
-                      );
+                      showAppSnack(context, 'Đã sao chép tin nhắn.');
                     }
                   },
                 ),
@@ -228,54 +240,164 @@ class _ActionButton extends StatelessWidget {
   );
 }
 
-class _Collapsible extends StatelessWidget {
-  const _Collapsible({required this.title, required this.body});
+/// Panel "Quá trình suy luận" — MỘT thẻ duy nhất chứa cả mốc tiến trình của
+/// pipeline lẫn chuỗi suy luận (chain-of-thought) của mô hình, đúng như web
+/// (`ChatView.vue`). Hai nửa của cùng một câu chuyện (agent đã làm gì / mô hình
+/// đã nghĩ gì) mà tách thành hai ô riêng thì vừa trùng nhãn vừa làm transcript
+/// rối.
+class _ReasoningPanel extends StatelessWidget {
+  const _ReasoningPanel({
+    required this.milestones,
+    required this.reasoning,
+    required this.live,
+    required this.waiting,
+  });
 
-  final String title;
-  final String body;
+  /// Mốc tiến trình của lượt. Rỗng sau khi lượt kết thúc — mốc chỉ có nghĩa
+  /// trong lúc chạy.
+  final List<String> milestones;
 
-  // Web bọc khối suy luận trong `bg-gray-50 border border-gray-200 rounded-lg
-  // p-3` — trước đây tile trần nằm trực tiếp trên nền trang nên trông lạc lõng
-  // giữa các khối có viền khác.
+  /// Chuỗi suy luận của mô hình — phần còn lại sau khi trả lời xong.
+  final String reasoning;
+
+  /// Lượt này vẫn đang được sinh.
+  final bool live;
+
+  /// Đang chờ nội dung trả lời đầu tiên.
+  final bool waiting;
+
   @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    margin: const EdgeInsets.only(bottom: 8),
-    // `Material` là bắt buộc: `ExpansionTile` dựng `ListTile` bên trong và
-    // `ListTile` cần tổ tiên Material — không có thì lỗi khi tin nhắn được vẽ
-    // ngoài Scaffold (test, màn chia sẻ).
-    child: Material(
-      color: AppTheme.surfaceMuted,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-        side: const BorderSide(color: AppTheme.border),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-          collapsedIconColor: AppTheme.textMuted,
-          iconColor: AppTheme.textMuted,
-          title: Text(
-            // Web: `text-[11px] font-semibold uppercase tracking-wider`.
-            title.toUpperCase(),
-            style: Theme.of(context).textTheme.labelSmall,
-          ),
-          children: [
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                body,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(height: 1.45),
-              ),
+  Widget build(BuildContext context) {
+    final streaming = live && reasoning.isNotEmpty;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      // Web bọc khối suy luận trong `bg-gray-50 border border-gray-200 rounded-lg
+      // p-3` — trước đây tile trần nằm trực tiếp trên nền trang nên trông lạc
+      // lõng giữa các khối có viền khác.
+      //
+      // `Material` là bắt buộc: `ExpansionTile` dựng `ListTile` bên trong và
+      // `ListTile` cần tổ tiên Material — không có thì lỗi khi tin nhắn được vẽ
+      // ngoài Scaffold (test, màn chia sẻ).
+      child: Material(
+        color: AppTheme.surfaceMuted,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+          side: const BorderSide(color: AppTheme.border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            // Lượt đang chạy mở sẵn: giấu tiến trình sau một khối đóng là thứ
+            // khiến một lượt đang chạy trông như bị treo. Panel đã mở thì
+            // `ExpansionTile` giữ nguyên trạng thái sau khi trả lời xong, nên
+            // chuỗi suy luận vẫn đọc lại được; tin nhắn cũ trong lịch sử thì
+            // đóng sẵn cho gọn transcript.
+            initiallyExpanded: live,
+            tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+            childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            collapsedIconColor: AppTheme.textMuted,
+            iconColor: AppTheme.textMuted,
+            title: Text(
+              // Web: `text-[11px] font-semibold uppercase tracking-wider`.
+              'Quá trình suy luận'.toUpperCase(),
+              style: Theme.of(context).textTheme.labelSmall,
             ),
-          ],
+            children: <Widget>[
+              for (var i = 0; i < milestones.length; i++)
+                _MilestoneRow(
+                  step: milestones[i],
+                  // Mốc cuối là việc đang chạy cho tới khi có nội dung trả lời.
+                  running: waiting && i == milestones.length - 1,
+                ),
+              if (reasoning.isNotEmpty)
+                Padding(
+                  // Chuỗi suy luận tách khỏi mốc bằng khoảng đệm khi cả hai cùng
+                  // có mặt (web: `border-t` + `pt-2`).
+                  padding: EdgeInsets.only(
+                    top: streaming && milestones.isNotEmpty ? 8 : 0,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      if (streaming) ...<Widget>[
+                        Row(
+                          children: <Widget>[
+                            const SizedBox(
+                              height: 10,
+                              width: 10,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.5,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'ĐANG SUY LUẬN',
+                              style: Theme.of(context).textTheme.labelSmall,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                      ],
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          reasoning.trimRight(),
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.copyWith(height: 1.45),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+/// Một mốc tiến trình: dấu tích cho bước đã xong, vòng xoay cho bước đang chạy.
+class _MilestoneRow extends StatelessWidget {
+  const _MilestoneRow({required this.step, required this.running});
+
+  final String step;
+  final bool running;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 2),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: running
+              ? const SizedBox(
+                  height: 12,
+                  width: 12,
+                  child: CircularProgressIndicator(strokeWidth: 1.5),
+                )
+              : const Icon(
+                  Icons.check_circle,
+                  size: 14,
+                  color: AppTheme.textMuted,
+                ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            step,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              height: 1.35,
+              color: running ? AppTheme.textPrimary : AppTheme.textMuted,
+            ),
+          ),
+        ),
+      ],
     ),
   );
 }
@@ -354,17 +476,12 @@ class _ProducedFilesState extends ConsumerState<_ProducedFiles> {
           .read(chatRepositoryProvider)
           .downloadProducedFile(file);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Đã lưu: $path')));
+      showAppSnack(context, 'Đã lưu: $path');
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            error is ApiException ? error.message : error.toString(),
-          ),
-        ),
+      showAppSnack(
+        context,
+        error is ApiException ? error.message : error.toString(),
       );
     } finally {
       if (mounted) setState(() => _downloadingId = null);
@@ -424,30 +541,27 @@ class _ApprovalPanelState extends ConsumerState<_ApprovalPanel> {
     var comment = '';
     if (!approve) {
       final controller = TextEditingController();
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Từ chối yêu cầu'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            maxLines: 3,
-            decoration: const InputDecoration(
-              labelText: 'Lý do (không bắt buộc)',
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Huỷ'),
-            ),
-            AppPrimaryButton(
-              label: 'Từ chối',
-              onPressed: () => Navigator.pop(context, true),
-              expand: false,
-            ),
-          ],
+      final confirmed = await showAppDialog<bool>(
+        context,
+        title: 'Từ chối yêu cầu',
+        content: AppTextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 3,
+          label: 'Lý do (không bắt buộc)',
         ),
+        actions: [
+          AppSecondaryButton(
+            label: 'Huỷ',
+            onPressed: () => Navigator.pop(context, false),
+          ),
+          const SizedBox(width: 10),
+          AppPrimaryButton(
+            label: 'Từ chối',
+            onPressed: () => Navigator.pop(context, true),
+            expand: false,
+          ),
+        ],
       );
       comment = controller.text.trim();
       controller.dispose();

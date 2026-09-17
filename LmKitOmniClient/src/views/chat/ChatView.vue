@@ -362,7 +362,9 @@
             </div>
           </div>
         </div>
-        <div class="text-center text-xs text-gray-500 mt-3">
+        <!-- `leading-relaxed`: dòng ghi chú này bị ngắt hai dòng ở màn hẹp,
+             để mặc định (1.5) thì hai dòng dính vào nhau. -->
+        <div class="text-center text-xs leading-relaxed text-gray-500 mt-3">
           {{ authStore.agentName }} có thể mắc sai lầm. Vui lòng kiểm tra lại các thông tin quan trọng.
         </div>
       </div>

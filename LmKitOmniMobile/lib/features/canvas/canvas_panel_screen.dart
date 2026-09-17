@@ -141,35 +141,34 @@ class _CanvasPanelScreenState extends ConsumerState<CanvasPanelScreen> {
   Future<void> _createArtifact() async {
     _newTitle.clear();
     _editor.text = widget.draft;
-    final created = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Tạo artifact mới'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppTextField(
-                controller: _newTitle,
-                label: 'Tiêu đề',
-                hint: 'Ví dụ: Bản nháp email',
-              ),
-              AppTextField(controller: _editor, label: 'Nội dung', maxLines: 6),
-            ],
-          ),
+    final created = await showAppDialog<bool>(
+      context,
+      title: 'Tạo artifact mới',
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AppTextField(
+              controller: _newTitle,
+              label: 'Tiêu đề',
+              hint: 'Ví dụ: Bản nháp email',
+            ),
+            AppTextField(controller: _editor, label: 'Nội dung', maxLines: 6),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Huỷ'),
-          ),
-          AppPrimaryButton(
-            label: 'Tạo',
-            onPressed: () => Navigator.pop(context, true),
-            expand: false,
-          ),
-        ],
       ),
+      actions: [
+        AppSecondaryButton(
+          label: 'Huỷ',
+          onPressed: () => Navigator.pop(context, false),
+        ),
+        const SizedBox(width: 10),
+        AppPrimaryButton(
+          label: 'Tạo',
+          onPressed: () => Navigator.pop(context, true),
+          expand: false,
+        ),
+      ],
     );
     if (created != true) return;
 
@@ -232,10 +231,10 @@ class _CanvasPanelScreenState extends ConsumerState<CanvasPanelScreen> {
       appBar: AppTopBar(
         title: const Text('Canvas'),
         actions: [
-          IconButton(
+          AppIconButton(
+            icon: Icons.refresh,
             tooltip: 'Làm mới',
             onPressed: _loading ? null : _loadArtifacts,
-            icon: const Icon(Icons.refresh),
           ),
         ],
       ),

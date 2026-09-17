@@ -157,17 +157,16 @@ class _AuditLogScreenState extends ConsumerState<AuditLogScreen> {
     appBar: AppTopBar(
       title: const Text('Nhật ký kiểm toán'),
       actions: [
-        IconButton(
+        AppIconButton(
+          icon: Icons.refresh,
           tooltip: 'Làm mới',
           onPressed: _load,
-          icon: const Icon(Icons.refresh),
         ),
-        IconButton(
+        AppIconButton(
+          // Đổi icon theo trạng thái lọc: đậm khi đang lọc, viền khi không.
+          icon: _hasFilters ? Icons.filter_alt : Icons.filter_alt_outlined,
           tooltip: 'Bộ lọc',
           onPressed: _openFilters,
-          icon: Icon(
-            _hasFilters ? Icons.filter_alt : Icons.filter_alt_outlined,
-          ),
         ),
       ],
     ),
@@ -282,13 +281,11 @@ class _AuditLogScreenState extends ConsumerState<AuditLogScreen> {
     ),
   );
 
-  Future<void> _openFilters() => showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    isScrollControlled: true,
+  Future<void> _openFilters() => showAppSheet<void>(
+    context,
     builder: (sheetContext) => ListView(
       shrinkWrap: true,
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
       children: [
         Text(
           'Bộ lọc audit log',
@@ -318,14 +315,13 @@ class _AuditLogScreenState extends ConsumerState<AuditLogScreen> {
             apply: (String? value) => setState(() => _entityType = value),
           ),
         ])
-          ListTile(
-            contentPadding: EdgeInsets.zero,
+          AppTile(
             title: Text(entry.label),
             subtitle: Text(
               entry.value ??
                   (entry.options.isEmpty ? 'Chưa có gợi ý' : entry.hint),
             ),
-            trailing: const Icon(Icons.chevron_right),
+            suffix: const Icon(Icons.chevron_right, size: 18),
             enabled: entry.options.isNotEmpty,
             onTap: entry.options.isEmpty
                 ? null
@@ -340,21 +336,19 @@ class _AuditLogScreenState extends ConsumerState<AuditLogScreen> {
                   },
           ),
         const Divider(),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
+        AppTile(
           title: const Text('Từ ngày'),
           subtitle: Text(_from == null ? 'Không giới hạn' : _shortDate(_from!)),
-          trailing: const Icon(Icons.calendar_today_outlined),
+          suffix: const Icon(Icons.calendar_today_outlined, size: 18),
           onTap: () async {
             Navigator.pop(sheetContext);
             await _pickDate(isFrom: true);
           },
         ),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
+        AppTile(
           title: const Text('Đến ngày'),
           subtitle: Text(_to == null ? 'Không giới hạn' : _shortDate(_to!)),
-          trailing: const Icon(Icons.event_available_outlined),
+          suffix: const Icon(Icons.event_available_outlined, size: 18),
           onTap: () async {
             Navigator.pop(sheetContext);
             await _pickDate(isFrom: false);
@@ -482,20 +476,16 @@ class _AuditEntryCard extends StatelessWidget {
     ),
   );
 
-  void _showDetails(BuildContext context) => showDialog<void>(
-    context: context,
-    builder: (_) => AlertDialog(
-      title: Text(entry.action),
-      content: SingleChildScrollView(
-        child: SelectableText(_prettyDetails(entry.detailsJson!)),
+  void _showDetails(BuildContext context) => showAppDialog<void>(
+    context,
+    title: entry.action,
+    content: SelectableText(_prettyDetails(entry.detailsJson!)),
+    actions: [
+      AppSecondaryButton(
+        label: 'Đóng',
+        onPressed: () => Navigator.pop(context),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Đóng'),
-        ),
-      ],
-    ),
+    ],
   );
 
   /// `detailsJson` là JSON thô; hiển thị đúng nguyên văn nếu không parse được.

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
+import '../../features/notifications/notifications_screen.dart';
 import '../theme.dart';
 import 'button_frame.dart';
 
@@ -15,6 +16,10 @@ export 'button_frame.dart' show buttonHorizontalPadding;
 /// Bọc mỗi nút trong `Center` là cách duy nhất gỡ ràng buộc chặt đó *mà không hạ
 /// vùng chạm*: nút vẽ 40×40 (chuẩn Material 3, xem `AppTheme.iconButtonTheme`)
 /// còn vùng bấm vẫn 48×48 nhờ `tapTargetSize: padded`.
+/// Ngoài `actions` của màn, header còn có **chuông thông báo** ở vị trí cố định —
+/// bên trái cụm hành động — để người dùng không phải đi tìm nó ở từng trang, đúng
+/// như thanh header dùng chung của web. Màn nào không nên có (chính màn Thông
+/// báo) thì truyền `showNotificationBell: false`.
 class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
   const AppTopBar({
     super.key,
@@ -22,17 +27,20 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
     this.leading,
     this.actions,
     this.bottom,
+    this.showNotificationBell = true,
   });
 
   final Widget? title;
   final Widget? leading;
   final List<Widget>? actions;
   final PreferredSizeWidget? bottom;
+  final bool showNotificationBell;
 
   @override
   Size get preferredSize => _bar.preferredSize;
 
-  AppBar get _bar => AppBar(toolbarHeight: AppTheme.appBarHeight, bottom: bottom);
+  AppBar get _bar =>
+      AppBar(toolbarHeight: AppTheme.appBarHeight, bottom: bottom);
 
   @override
   Widget build(BuildContext context) {
@@ -42,15 +50,34 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
     // một kích thước; trường hợp còn lại (ngăn kéo, `CloseButton`) vẫn để
     // Material quyết định.
     final resolvedLeading =
-        leading ??
-        (Navigator.of(context).canPop() ? const BackButton() : null);
+        leading ?? (Navigator.of(context).canPop() ? const BackButton() : null);
 
     return AppBar(
       toolbarHeight: AppTheme.appBarHeight,
+      // Khe giữa lề và tiêu đề hẹp lại còn 4: mọi nút trên header đều rộng 48
+      // (giữ đúng vùng chạm), nên ở máy 320dp chuông + ba hành động là vừa hết
+      // chỗ và tiêu đề "AI Chat" bị cắt còn "AI …". Bớt 12 px ở khe này là đủ để
+      // tiêu đề đọc trọn mà không phải bỏ bớt nút nào.
+      titleSpacing: 4,
       title: title,
       leading: resolvedLeading == null ? null : Center(child: resolvedLeading),
       actions: [
-        for (final action in actions ?? const <Widget>[]) Center(child: action),
+        if (showNotificationBell)
+          const Center(
+            child: IconTheme(
+              data: IconThemeData(color: Colors.white, size: 20),
+              child: NotificationBell(),
+            ),
+          ),
+        for (final action in actions ?? const <Widget>[])
+          Center(
+            // Nút hành động trên header nằm trên nền navy: `IconTheme` trắng ở
+            // đây là thứ giữ icon đúng màu cho mọi nút do màn truyền vào.
+            child: IconTheme(
+              data: const IconThemeData(color: Colors.white, size: 20),
+              child: action,
+            ),
+          ),
       ],
       bottom: bottom,
     );
@@ -130,7 +157,8 @@ class _LabeledButton extends StatelessWidget {
                 )
               else if (icon != null)
                 Icon(icon, size: ButtonFrame.iconSize),
-              if (busy || icon != null) const SizedBox(width: ButtonFrame.iconGap),
+              if (busy || icon != null)
+                const SizedBox(width: ButtonFrame.iconGap),
               Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
             ],
           ),
@@ -238,18 +266,42 @@ class AppIconButton extends StatelessWidget {
     required this.icon,
     required this.onPressed,
     this.tooltip,
+    this.color,
+    this.busy = false,
   });
 
   final IconData icon;
   final VoidCallback? onPressed;
   final String? tooltip;
 
+  /// Màu icon riêng (xanh cho xác nhận, đỏ cho phá huỷ…).
+  final Color? color;
+
+  /// Thay icon bằng vòng quay nhỏ khi đang xử lý (tải file…).
+  final bool busy;
+
   @override
   Widget build(BuildContext context) {
+    // Màu icon lấy từ `IconTheme` ngay tại đây (chứ không phải bên trong
+    // `FButton`) để `AppTopBar` chỉ cần bọc `IconTheme` màu trắng là mọi nút
+    // hành động trên header xanh ra đúng màu, không phải sửa từng màn.
+    final iconColor =
+        color ?? IconTheme.of(context).color ?? AppTheme.govBlueDark;
+    final child = busy
+        ? SizedBox(
+            height: 14,
+            width: 14,
+            child: CircularProgressIndicator(strokeWidth: 2, color: iconColor),
+          )
+        : Icon(icon, size: 20, color: iconColor);
+    // `ghost`: nút icon **không nền, không viền**. Mặc định cũ của `FButton.icon`
+    // là `outline` — một ô sáng bo góc — nên trên thanh header navy nó thành
+    // "ô vuông trắng" lạc lõng, còn trong thẻ thì nặng hơn nội dung xung quanh.
     final button = FButton.icon(
+      variant: FButtonVariant.ghost,
       onPress: onPressed ?? () {},
       semanticsLabel: tooltip,
-      child: Icon(icon, size: 18),
+      child: child,
     );
     return onPressed == null ? Opacity(opacity: 0.5, child: button) : button;
   }
@@ -275,6 +327,8 @@ class AppTextField extends StatefulWidget {
     this.obscure = false,
     this.keyboardType,
     this.enabled = true,
+    this.autofocus = false,
+    this.icon,
     this.onChanged,
     this.onSubmitted,
   });
@@ -287,6 +341,12 @@ class AppTextField extends StatefulWidget {
   final bool obscure;
   final TextInputType? keyboardType;
   final bool enabled;
+
+  /// Icon dẫn trước trong ô (kính lúp cho ô tìm kiếm, ổ khoá cho ô mật khẩu…).
+  final IconData? icon;
+
+  /// Tự.focus khi hiện (dùng cho form nhập nhanh trong hộp thoại).
+  final bool autofocus;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
 
@@ -341,6 +401,17 @@ class _AppTextFieldState extends State<AppTextField> {
       obscureText: widget.obscure,
       keyboardType: widget.keyboardType,
       enabled: widget.enabled,
+      autofocus: widget.autofocus,
+      // Dùng lại `prefixIconBuilder` của Forui để icon cùng cỡ/cùng màu với các
+      // ô nhập khác trong app (màn đăng nhập cũng đi đường này).
+      prefixBuilder: widget.icon == null
+          ? null
+          : (context, style, variants) => FTextField.prefixIconBuilder(
+              context,
+              style,
+              variants,
+              Icon(widget.icon, size: 20),
+            ),
       onSubmit: widget.onSubmitted,
     ),
   );
@@ -560,50 +631,279 @@ Future<bool> confirmAppAction(
   required String message,
   String confirmLabel = 'Xoá',
 }) async {
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text(title),
-      content: Text(message),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('Huỷ'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, true),
-          child: Text(confirmLabel),
-        ),
-      ],
-    ),
+  final confirmed = await showAppDialog<bool>(
+    context,
+    title: title,
+    barrierDismissible: false,
+    content: Text(message, style: Theme.of(context).textTheme.bodyMedium),
+    actions: [
+      AppSecondaryButton(
+        label: 'Huỷ',
+        onPressed: () => Navigator.pop(context, false),
+      ),
+      const SizedBox(width: 10),
+      AppDestructiveButton(
+        label: confirmLabel,
+        onPressed: () => Navigator.pop(context, true),
+      ),
+    ],
   );
   return confirmed == true;
 }
 
-/// Danh sách chọn một giá trị trong bottom sheet.
+/// Mở bottom sheet theo Forui (`showFSheet`) — thay `showModalBottomSheet`
+/// của Material, để cùng một ngôn ngữ chuyển động với phần còn lại.
+///
+/// Nội dung bên trong nên tự thêm padding `EdgeInsets.fromLTRB(16, 20, 16, 24)`
+/// và `SafeArea` để không dính mép/vùng cử chỉ hệ thống.
+Future<T?> showAppSheet<T>(
+  BuildContext context, {
+  required WidgetBuilder builder,
+  bool isScrollControlled = false,
+}) async => _afterExit(
+  showFSheet<T>(
+    context: context,
+    side: FLayout.btt,
+    mainAxisMaxRatio: isScrollControlled ? 0.92 : 3 / 4,
+    useSafeArea: true,
+    builder: (sheetContext) =>
+        SheetSurface(child: SafeArea(child: builder(sheetContext))),
+  ),
+);
+
+/// Thời gian chờ hoạt ảnh thoát của hộp thoại/sheet trước khi trả kết quả.
+///
+/// Màn gọi thường `controller.dispose()` **ngay sau** `await showAppDialog(…)`,
+/// nhưng lúc đó route vẫn đang chạy hoạt ảnh thoát và `FTextField` bên trong
+/// còn nghe chính controller đó. Disposed ngay lúc đó làm cây widget vỡ đúng lúc
+/// hộp thoại biến mất:
+///
+/// ```
+/// 'package:flutter/src/widgets/framework.dart': Failed assertion:
+/// line 6268 pos 12: '_dependents.isEmpty': is not true.
+/// ```
+///
+/// Đã tái hiện 100% trên emulator với "Đổi tên đoạn chat" và "Tạo lịch tự động"
+/// (có ô nhập đã focus), và **hết** khi chậm dispose lại — nên chờ hết hoạt ảnh
+/// mới trả kết quả là cách chữa gọn nhất, không phải sửa từng màn.
+const dialogExitGrace = Duration(milliseconds: 400);
+
+Future<T?> _afterExit<T>(Future<T?> future) async {
+  final value = await future;
+  await Future<void>.delayed(dialogExitGrace);
+  return value;
+}
+
+/// Nền đục cho bottom sheet Forui — **bắt buộc** với `showFSheet`.
+///
+/// `showFSheet` chỉ lo vị trí và chuyển động; nó không vẽ nền cho sheet (khác
+/// `showModalBottomSheet` của Material vốn tự tô theo `bottomSheetTheme`). Nếu
+/// nội dung không tự tô thì cả tấm sheet trong suốt: chữ của màn phía sau —
+/// tiêu đề chat, ô nhập tin nhắn, hoạ tiết trống đồng — lộ thẳng qua danh sách
+/// chức năng. Bọc ở đây một lớp để mọi sheet của app dùng chung nền, bo góc
+/// trên; nội dung bên trong vẫn có thể đặt card trắng nổi lên trên.
+class SheetSurface extends StatelessWidget {
+  const SheetSurface({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: const BoxDecoration(
+      color: AppTheme.surface,
+      borderRadius: BorderRadius.vertical(
+        top: Radius.circular(AppTheme.radius),
+      ),
+    ),
+    // Lưới an toàn: `FDialog`/`showFSheet` dựng route **không có `Material`**,
+    // nên chỉ cần lọt vào đây một `TextField`/`Checkbox`/`Slider` của Material là
+    // cả sheet thành màn đỏ "No Material widget found" (đã từng xảy ra với hộp
+    // thoại "Tạo lịch tự động" và form agent). Lớp trong suốt này không đổi màu
+    // gì của sheet, chỉ trả lại tổ tiên `Material`.
+    child: Material(type: MaterialType.transparency, child: child),
+  );
+}
+
+/// Danh sách chọn một giá trị trong bottom sheet Forui.
+///
+/// Dùng `showFSheet` (mặc định trượt từ dưới, `FLayout.btt`? — không: `side:
+/// FLayout.ttb` là từ trên xuống; dưới lên là `FLayout.btt`. Sheet dưới cần
+/// `btt`) thay cho `showModalBottomSheet` của Material để cùng một ngôn ngữ
+/// chuyển động với phần còn lại của design system.
 Future<T?> showAppPicker<T>(
   BuildContext context, {
   required String title,
   required List<T> items,
   required String Function(T item) labelOf,
   String Function(T item)? subtitleOf,
-}) => showModalBottomSheet<T>(
-  context: context,
-  showDragHandle: true,
-  builder: (context) => ListView(
-    padding: const EdgeInsets.all(16),
-    children: [
-      Text(title, style: Theme.of(context).textTheme.titleLarge),
-      const SizedBox(height: 8),
-      for (final item in items)
-        ListTile(
-          title: Text(labelOf(item)),
-          subtitle: subtitleOf == null ? null : Text(subtitleOf(item)),
-          onTap: () => Navigator.pop(context, item),
+}) async => _afterExit(
+  showFSheet<T>(
+    context: context,
+    side: FLayout.btt,
+    mainAxisMaxRatio: 3 / 4,
+    useSafeArea: true,
+    builder: (context) => SheetSurface(
+      child: SafeArea(
+        // `shrinkWrap`: danh sách 2–3 mục thì sheet phải vừa khít nội dung,
+        // không kéo dài hết 3/4 màn rồi để trống một khoảng lớn dưới đáy.
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            FTileGroup(
+              children: [
+                for (final item in items)
+                  FTile(
+                    title: Text(labelOf(item)),
+                    subtitle: subtitleOf == null
+                        ? null
+                        : Text(subtitleOf(item)),
+                    onPress: () => Navigator.pop(context, item),
+                  ),
+              ],
+            ),
+          ],
         ),
-    ],
+      ),
+    ),
   ),
 );
+
+/// Hộp thoại theo Forui (`FDialog`) — thay `AlertDialog` của Material.
+///
+/// Nội dung (`content`) được bọc `SingleChildScrollView` nên form dài vẫn cuộn
+/// được khi bàn phím che; hành động xếp phải giống `actions` của AlertDialog,
+/// nhưng dùng nút của hệ (`AppSecondaryButton`/`AppPrimaryButton`/…).
+///
+/// Hiển thị trực tiếp qua [showAppDialog]; widget này vẫn dùng được riêng khi
+/// cần dựng hộp thoại trong widget có trạng thái (form với `setState`).
+class AppDialog extends StatelessWidget {
+  const AppDialog({
+    super.key,
+    required this.title,
+    required this.content,
+    this.actions = const [],
+  });
+
+  final String title;
+  final Widget content;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) => FDialog(
+    style: .delta(
+      decoration: .shapeDelta(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radius),
+          side: const BorderSide(color: AppTheme.border),
+        ),
+      ),
+    ),
+    // Xem [SheetSurface] về lý do có lớp `Material` trong suốt: hộp thoại Forui
+    // không tự có tổ tiên `Material`, mà form nào lỡ dùng widget Material thì
+    // ném lỗi ngay lúc dựng và hộp thoại trắng xoá.
+    builder: (context, style) => Material(
+      type: MaterialType.transparency,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: style.titleTextStyle),
+            const SizedBox(height: 8),
+            Flexible(child: SingleChildScrollView(child: content)),
+            if (actions.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              // `Wrap` chứ không phải `Row`: nhãn nút tiếng Việt khá dài, ở bề
+              // ngang 320dp (máy nhỏ) hai nút cạnh nhau đã tràn ra khỏi hộp thoại
+              // (đo được: tràn 114px ở hộp thoại "Tạo tài khoản mới"). Wrap để
+              // nút xuống dòng thay vì cắt mất phần đuôi nhãn.
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 10,
+                runSpacing: 8,
+                children: actions,
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// Mở hộp thoại Forui trả về giá trị (`T?`) — thay `showDialog` của Material.
+///
+/// Hai cách dùng:
+/// - Truyền `title` + `content` (+ `actions`): hộp thoại dựng sẵn theo ngôn ngữ
+///   chung của [AppDialog].
+/// - Truyền `builder`: cho form có trạng thái riêng — widget con tự dựng
+///   [AppDialog] bên trong để giữ cùng diện mạo.
+Future<T?> showAppDialog<T>(
+  BuildContext context, {
+  String? title,
+  Widget? content,
+  WidgetBuilder? builder,
+  List<Widget> actions = const [],
+  bool barrierDismissible = true,
+}) {
+  assert(
+    builder != null || (title != null && content != null),
+    'Cần builder hoặc title + content.',
+  );
+  return _afterExit(
+    showFDialog<T>(
+      context: context,
+      barrierDismissible: barrierDismissible,
+      builder: (dialogContext, style, animation) =>
+          builder?.call(dialogContext) ??
+          AppDialog(title: title!, content: content!, actions: actions),
+    ),
+  );
+}
+
+/// Hàng ô chọn theo Forui (`FCheckbox` đặt trong [AppTileRaw]) — thay
+/// `CheckboxListTile` của Material trong các sheet chọn nhiều mục.
+class AppCheckTile extends StatelessWidget {
+  const AppCheckTile({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onChanged,
+    this.subtitle,
+  });
+
+  final String label;
+
+  /// Mô tả phụ dưới nhãn (tuỳ chọn).
+  final String? subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) => AppTileRaw(
+    child: Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label),
+              if (subtitle != null)
+                Text(subtitle!, style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        FCheckbox(value: value, onChange: onChanged),
+      ],
+    ),
+  );
+}
 
 /// Tiêu đề nhóm nội dung.
 class AppSectionTitle extends StatelessWidget {
@@ -630,6 +930,296 @@ class AppSectionTitle extends StatelessWidget {
             ),
           ),
       ],
+    ),
+  );
+}
+
+/// Ô danh sách theo Forui (`FTile`) — thay `ListTile` của Material.
+///
+/// Bọc `FTile` đứng một mình (không nằm trong `FTileGroup`) bằng thẻ riêng bo
+/// 12 giống `AppCard`, để danh sách "mỗi mục một thẻ" của app giữ nguyên bố cục
+/// mà vẫn dùng style Forui. Các ô trong **cùng một khối** nên dùng [AppTileGroup]
+/// thay vì đặt nhiều [AppTile] kế nhau — khi đó Forui tự vẽ divider và chỉ bo
+/// góc đầu/cuối một lần.
+///
+/// `title`/`subtitle` của `FTile` không nhận `Expanded`/`FTextField` — với nội
+/// dung phức tạp hơn một `Text`, dùng [AppTile.raw].
+class AppTile extends StatelessWidget {
+  const AppTile({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.prefix,
+    this.suffix,
+    this.details,
+    this.onTap,
+    this.onLongPress,
+    this.destructive = false,
+    this.enabled = true,
+  });
+
+  final Widget title;
+  final Widget? subtitle;
+  final Widget? prefix;
+  final Widget? suffix;
+  final Widget? details;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+
+  /// Ô hành động phá huỷ (xoá/thu hồi): chữ và icon đỏ quốc kỳ.
+  final bool destructive;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: FTile(
+      variant: destructive ? FItemVariant.destructive : FItemVariant.primary,
+      enabled: enabled,
+      onPress: onTap,
+      onLongPress: onLongPress,
+      prefix: prefix,
+      suffix: suffix,
+      details: details,
+      title: title,
+      subtitle: subtitle,
+    ),
+  );
+}
+
+/// Ô chọn một giá trị theo hệ thiết kế — thay `DropdownButtonFormField` của
+/// Material trong hộp thoại và sheet.
+///
+/// **Vì sao cần**: trong hộp thoại/sheet của Forui, các widget Material như
+/// `DropdownButtonFormField`/`TextField` **không tra được tổ tiên `Material`**,
+/// nên chúng ném "No Material widget found" và cả hộp thoại trắng xoá — đã gặp
+/// thật ở hộp thoại "Tạo lịch tự động" và các hộp thoại form của màn quản trị.
+/// Ô này dùng [AppTile] + [showAppPicker] (đều của Forui) nên dùng được ở mọi
+/// nơi và khớp với các ô chọn khác của app.
+///
+/// Widget tự giữ giá trị đang hiển thị: chọn xong nhãn đổi ngay mà không cần
+/// cha dựng lại (cha vẫn nhận giá trị mới qua [onChanged]).
+class AppSelectTile<T> extends StatefulWidget {
+  const AppSelectTile({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.items,
+    required this.labelOf,
+    required this.onChanged,
+    this.subtitleOf,
+    this.helper,
+    this.icon,
+    this.enabled = true,
+  });
+
+  final String label;
+  final T value;
+  final List<T> items;
+  final String Function(T value) labelOf;
+  final ValueChanged<T> onChanged;
+
+  /// Mô tả phụ của từng mục trong sheet chọn.
+  final String Function(T value)? subtitleOf;
+
+  /// Ghi chú dưới ô chọn (thay `helperText` của Material).
+  final String? helper;
+
+  final IconData? icon;
+  final bool enabled;
+
+  @override
+  State<AppSelectTile<T>> createState() => _AppSelectTileState<T>();
+}
+
+class _AppSelectTileState<T> extends State<AppSelectTile<T>> {
+  late T _value = widget.value;
+
+  @override
+  void didUpdateWidget(AppSelectTile<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.value != oldWidget.value) _value = widget.value;
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      AppTile(
+        prefix: widget.icon == null ? null : Icon(widget.icon!),
+        title: Text(widget.label),
+        subtitle: Text(widget.labelOf(_value)),
+        suffix: const Icon(Icons.chevron_right, size: 18),
+        enabled: widget.enabled,
+        onTap: widget.enabled
+            ? () async {
+                final picked = await showAppPicker<T>(
+                  context,
+                  title: widget.label,
+                  items: widget.items,
+                  labelOf: widget.labelOf,
+                  subtitleOf: widget.subtitleOf,
+                );
+                if (picked == null || !mounted || picked == _value) return;
+                setState(() => _value = picked);
+                widget.onChanged(picked);
+              }
+            : null,
+      ),
+      if (widget.helper != null)
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          child: Text(
+            widget.helper!,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppTheme.textMuted),
+          ),
+        ),
+    ],
+  );
+}
+
+/// Nhóm ô Forui: divider tự động, chỉ bo góc ở hai đầu khối.
+///
+/// Chỉ nhận các widget Forui thật (`FTile`, `FTile.raw`…) vì `FTileGroup` của
+/// forui 0.25 đòi `FTileMixin`. Danh sách "mỗi mục một thẻ" của app dùng
+/// [AppTile] riêng lẻ, không qua nhóm này.
+class AppTileGroup extends StatelessWidget {
+  const AppTileGroup({super.key, required this.children});
+
+  final List<FTileMixin> children;
+
+  @override
+  Widget build(BuildContext context) => FTileGroup(children: children);
+}
+
+/// Ô raw cho nội dung phức tạp (form nhúng, hàng nhiều cột) mà `FTile` chuẩn
+/// không chứa được — vẫn giữ diện mạo thẻ của app.
+class AppTileRaw extends StatelessWidget {
+  const AppTileRaw({super.key, required this.child, this.onTap});
+
+  final Widget child;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: FTile.raw(onPress: onTap, child: child),
+  );
+}
+
+/// Hàng công tắc theo Forui (`FSwitch` đặt trong [AppTileRaw]) — thay
+/// `SwitchListTile` của Material trong các dialog form admin.
+class AppSwitchTile extends StatelessWidget {
+  const AppSwitchTile({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onChanged,
+    this.subtitle,
+  });
+
+  final String label;
+
+  /// Mô tả phụ dưới nhãn (tuỳ chọn).
+  final String? subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) => AppTileRaw(
+    child: Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label),
+              if (subtitle != null)
+                Text(subtitle!, style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        FSwitch(value: value, onChange: onChanged),
+      ],
+    ),
+  );
+}
+
+/// Huy hiệu Forui (`FBadge`) — thay viên nhãn đỏ tự dựng của `_UnreadBadge`.
+///
+/// App chỉ cần 2 biến thể; số chưa đọc dùng destructive (đỏ quốc kỳ qua theme),
+/// nhãn trạng thái dùng primary.
+class AppBadge extends StatelessWidget {
+  const AppBadge({super.key, required this.child, this.destructive = false});
+
+  final Widget child;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) => FBadge(
+    variant: destructive ? FBadgeVariant.destructive : FBadgeVariant.primary,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: child,
+    ),
+  );
+}
+
+/// Một mục trong menu ngữ cảnh của [AppMenuButton].
+class AppMenuItem {
+  const AppMenuItem(this.label, this.onSelected, {this.destructive = false});
+
+  final String label;
+  final VoidCallback onSelected;
+
+  /// Mục phá huỷ (xoá/thu hồi) — chữ đỏ theo biến thể destructive của Forui.
+  final bool destructive;
+}
+
+/// Nút ba chấm mở menu ngữ cảnh theo Forui (`FPopoverMenu.tiles`) — thay
+/// `PopupMenuButton` của Material.
+///
+/// Menu của Forui đòi các nhóm tile thật (`FTileGroupMixin`) nên phần `menu`
+/// được dựng bằng một `FTileGroup` ẩn trong builder; mỗi mục là một `FTile`
+/// chọn lựa riêng, không bị divider dính giữa các nhóm.
+///
+/// Nút ba chấm dựng trong `builder` (chứ không phải `child`) vì **nó phải tự mở
+/// menu**: `FPopover` không tự bắt cú nhấn của con, nên `FButton.icon` với
+/// `onPress` rỗng sẽ nuốt cú nhấn và menu không bao giờ hiện — đúng lỗi đã xảy
+/// ra trước đây cho mọi menu dòng (phiên chat, tenant, agent, lịch, MCP…).
+class AppMenuButton extends StatelessWidget {
+  const AppMenuButton({super.key, required this.items, this.tooltip});
+
+  final List<AppMenuItem> items;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) => FPopoverMenu.tiles(
+    semanticsLabel: tooltip,
+    menuBuilder: (context, controller, menu) => [
+      FTileGroup(
+        children: [
+          for (final item in items)
+            FTile(
+              variant: item.destructive
+                  ? FItemVariant.destructive
+                  : FItemVariant.primary,
+              title: Text(item.label),
+              onPress: () {
+                controller.hide();
+                item.onSelected();
+              },
+            ),
+        ],
+      ),
+    ],
+    builder: (context, controller, menu) => FButton.icon(
+      onPress: controller.toggle,
+      semanticsLabel: tooltip,
+      child: const Icon(Icons.more_vert, size: 18),
     ),
   );
 }

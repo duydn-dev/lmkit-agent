@@ -92,16 +92,14 @@ class AdminHubScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
           for (final entry in entries)
-            Card(
-              child: ListTile(
-                leading: Icon(entry.icon),
-                title: Text(entry.title),
-                subtitle: Text(entry.subtitle),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.of(
-                  context,
-                ).push(MaterialPageRoute<void>(builder: entry.build)),
-              ),
+            AppTile(
+              prefix: Icon(entry.icon),
+              title: Text(entry.title),
+              subtitle: Text(entry.subtitle),
+              suffix: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(
+                context,
+              ).push(MaterialPageRoute<void>(builder: entry.build)),
             ),
         ],
       ),

@@ -15,6 +15,7 @@ class TenantsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repository = ref.watch(adminRepositoryProvider);
+    final texts = Theme.of(context).textTheme;
 
     Future<void> edit(
       BuildContext context,
@@ -30,64 +31,63 @@ class TenantsScreen extends ConsumerWidget {
       var hasLogo = existing?.hasLogo ?? false;
       var logoVersion = existing?.logoUpdatedAt?.millisecondsSinceEpoch ?? 0;
 
-      final saved = await showDialog<bool>(
-        context: context,
+      final saved = await showAppDialog<bool>(
+        context,
         builder: (dialogContext) => StatefulBuilder(
-          builder: (dialogContext, setDialogState) => AlertDialog(
-            title: Text(existing == null ? 'Tạo tenant' : 'Sửa tenant'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AdminField(controller: name, label: 'Tên tenant'),
-                  AdminField(
-                    controller: agent,
-                    label: 'Tên trợ lý AI',
-                    hint: 'Để trống để dùng mặc định',
+          builder: (dialogContext, setDialogState) => AppDialog(
+            title: existing == null ? 'Tạo tenant' : 'Sửa tenant',
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AdminField(controller: name, label: 'Tên tenant'),
+                AdminField(
+                  controller: agent,
+                  label: 'Tên trợ lý AI',
+                  hint: 'Để trống để dùng mặc định',
+                ),
+                // Logo là **cấu hình theo từng tenant**; đơn vị chưa tải lên thì
+                // dùng Quốc huy. Chỉ hiện khi sửa: tenant mới chưa có id để gắn
+                // logo (web cũng vậy — "Lưu tenant trước, rồi mở lại").
+                if (existing != null) ...[
+                  const SizedBox(height: 16),
+                  _LogoField(
+                    tenant: existing,
+                    hasLogo: hasLogo,
+                    version: logoVersion,
+                    onPick: () async {
+                      final ok = await _uploadTenantLogo(
+                        dialogContext,
+                        repository,
+                        existing,
+                        reload,
+                      );
+                      if (!ok) return;
+                      setDialogState(() {
+                        hasLogo = true;
+                        // Mốc mới để ảnh không bị `ImageCache` trả bản cũ.
+                        logoVersion = DateTime.now().millisecondsSinceEpoch;
+                      });
+                    },
+                    onRemove: () async {
+                      final ok = await _removeTenantLogo(
+                        dialogContext,
+                        repository,
+                        existing,
+                        reload,
+                      );
+                      if (!ok) return;
+                      setDialogState(() => hasLogo = false);
+                    },
                   ),
-                  // Logo là **cấu hình theo từng tenant**; đơn vị chưa tải lên thì
-                  // dùng Quốc huy. Chỉ hiện khi sửa: tenant mới chưa có id để gắn
-                  // logo (web cũng vậy — "Lưu tenant trước, rồi mở lại").
-                  if (existing != null) ...[
-                    const SizedBox(height: 16),
-                    _LogoField(
-                      tenant: existing,
-                      hasLogo: hasLogo,
-                      version: logoVersion,
-                      onPick: () async {
-                        final ok = await _uploadTenantLogo(
-                          dialogContext,
-                          repository,
-                          existing,
-                          reload,
-                        );
-                        if (!ok) return;
-                        setDialogState(() {
-                          hasLogo = true;
-                          // Mốc mới để ảnh không bị `ImageCache` trả bản cũ.
-                          logoVersion = DateTime.now().millisecondsSinceEpoch;
-                        });
-                      },
-                      onRemove: () async {
-                        final ok = await _removeTenantLogo(
-                          dialogContext,
-                          repository,
-                          existing,
-                          reload,
-                        );
-                        if (!ok) return;
-                        setDialogState(() => hasLogo = false);
-                      },
-                    ),
-                  ],
                 ],
-              ),
+              ],
             ),
             actions: [
-              TextButton(
+              AppSecondaryButton(
+                label: 'Huỷ',
                 onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Huỷ'),
               ),
+              const SizedBox(width: 10),
               AppPrimaryButton(
                 label: 'Lưu',
                 onPressed: () => Navigator.pop(dialogContext, true),
@@ -177,27 +177,47 @@ class TenantsScreen extends ConsumerWidget {
         icon: const Icon(Icons.add),
         label: const Text('Tạo tenant'),
       ),
-      itemBuilder: (context, tenant, reload) => Card(
-        child: ListTile(
-          leading: _TenantLogo(tenant: tenant),
-          title: Text(tenant.name),
-          subtitle: Text(
-            '${tenant.agentDisplayName?.trim().isNotEmpty == true ? tenant.agentDisplayName : 'Trợ lý mặc định'} · '
-            '${tenant.userCount} user · ${tenant.databaseConnectionCount} CSDL',
-          ),
-          trailing: PopupMenuButton<String>(
-            tooltip: 'Tuỳ chọn',
-            onSelected: (value) => switch (value) {
-              // Logo nằm trong hộp thoại sửa — **một chỗ duy nhất** cho cấu hình
-              // theo từng tenant, thay vì hai lối vào cùng làm một việc rồi lệch
-              // nhau lúc sửa. Web cũng đặt logo trong form.
-              'edit' => edit(context, tenant, reload),
-              _ => remove(context, tenant, reload),
-            },
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'edit', child: Text('Sửa (tên, logo)')),
-              PopupMenuItem(value: 'delete', child: Text('Xoá tenant')),
-            ],
+      itemBuilder: (context, tenant, reload) => AppCard(
+        child: AppTileRaw(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+            child: Row(
+              children: [
+                _TenantLogo(tenant: tenant),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(tenant.name, style: texts.titleSmall),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${tenant.agentDisplayName?.trim().isNotEmpty == true ? tenant.agentDisplayName : 'Trợ lý mặc định'} · '
+                        '${tenant.userCount} user · ${tenant.databaseConnectionCount} CSDL',
+                        style: texts.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                AppMenuButton(
+                  tooltip: 'Tuỳ chọn',
+                  items: [
+                    // Logo nằm trong hộp thoại sửa — **một chỗ duy nhất** cho
+                    // cấu hình theo từng tenant, thay vì hai lối vào cùng làm
+                    // một việc rồi lệch nhau lúc sửa. Web cũng đặt logo trong form.
+                    AppMenuItem(
+                      'Sửa (tên, logo)',
+                      () => edit(context, tenant, reload),
+                    ),
+                    AppMenuItem(
+                      'Xoá tenant',
+                      () => remove(context, tenant, reload),
+                      destructive: true,
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

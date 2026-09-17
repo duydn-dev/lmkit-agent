@@ -119,23 +119,11 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
   }
 
   Future<void> _delete(ProjectModel project) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Xóa dự án'),
-        content: Text('Xóa “${project.name}”? Các đoạn chat sẽ được giữ lại.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Huỷ'),
-          ),
-          AppPrimaryButton(
-            label: 'Xóa',
-            onPressed: () => Navigator.pop(context, true),
-            expand: false,
-          ),
-        ],
-      ),
+    final confirmed = await confirmAppAction(
+      context,
+      title: 'Xóa dự án',
+      message: 'Xóa “${project.name}”? Các đoạn chat sẽ được giữ lại.',
+      confirmLabel: 'Xóa',
     );
     if (confirmed != true) return;
     try {
@@ -176,30 +164,22 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppTopBar(
-      title: const Text('Projects'),
-      actions: [
-        IconButton(
-          onPressed: _create,
-          tooltip: 'Tạo dự án',
-          icon: const Icon(Icons.add),
-        ),
-      ],
-    ),
+    // Không thêm nút "Tạo dự án" trên header: màn này đã có FAB cùng chức năng,
+    // hai nút giống nhau cùng lúc chỉ làm header rối mà không thêm đường tắt.
+    appBar: AppTopBar(title: const Text('Projects')),
     body: RefreshIndicator(
       onRefresh: _load,
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          TextField(
+          AppTextField(
             controller: _search,
+            label: 'Tìm dự án',
+            hint: 'Tên hoặc mô tả dự án...',
+            icon: Icons.search,
             onSubmitted: (_) => _load(),
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search),
-              hintText: 'Tìm dự án...',
-            ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
           if (_error != null)
             _ErrorCard(
               message: _error!,
@@ -226,49 +206,67 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
 
   Widget _projectCard(ProjectModel project) {
     final expanded = _expandedId == project.id;
-    return Card(
+    final texts = Theme.of(context).textTheme;
+    return AppCard(
       child: Column(
         children: [
-          ListTile(
-            contentPadding: const EdgeInsets.all(12),
-            leading: CircleAvatar(
-              child: Text(
-                project.icon?.trim().isNotEmpty == true ? project.icon! : '📁',
+          AppTileRaw(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    child: Text(
+                      project.icon?.trim().isNotEmpty == true
+                          ? project.icon!
+                          : '📁',
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Tiêu đề mục: 16/600 (`text-base font-semibold` của
+                        // web) — tránh tự đặt w700 rồi lệch khỏi danh sách khác.
+                        Text(
+                          project.name,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${project.sessionCount} đoạn chat'
+                          '${project.instructions?.trim().isNotEmpty == true ? ' · có hướng dẫn riêng' : ''}'
+                          '\n${project.description ?? 'Chưa có mô tả.'}',
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: texts.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  AppMenuButton(
+                    tooltip: 'Tuỳ chọn',
+                    items: [
+                      AppMenuItem(
+                        expanded ? 'Ẩn đoạn chat' : 'Xem đoạn chat',
+                        () => _toggleSessions(project),
+                      ),
+                      AppMenuItem(
+                        'Chat mới trong dự án',
+                        () => _newChatInProject(project),
+                      ),
+                      AppMenuItem('Sửa dự án', () => _edit(project)),
+                      AppMenuItem(
+                        'Xóa dự án',
+                        () => _delete(project),
+                        destructive: true,
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            ),
-            // Tiêu đề mục: 16/600 (`text-base font-semibold` của web) — tránh
-            // tự đặt w700 rồi lệch khỏi các danh sách khác.
-            title: Text(
-              project.name,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            subtitle: Text(
-              '${project.sessionCount} đoạn chat'
-              '${project.instructions?.trim().isNotEmpty == true ? ' · có hướng dẫn riêng' : ''}'
-              '\n${project.description ?? 'Chưa có mô tả.'}',
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-            ),
-            isThreeLine: true,
-            trailing: PopupMenuButton<String>(
-              onSelected: (value) => switch (value) {
-                'sessions' => _toggleSessions(project),
-                'chat' => _newChatInProject(project),
-                'edit' => _edit(project),
-                _ => _delete(project),
-              },
-              itemBuilder: (_) => [
-                PopupMenuItem(
-                  value: 'sessions',
-                  child: Text(expanded ? 'Ẩn đoạn chat' : 'Xem đoạn chat'),
-                ),
-                const PopupMenuItem(
-                  value: 'chat',
-                  child: Text('Chat mới trong dự án'),
-                ),
-                const PopupMenuItem(value: 'edit', child: Text('Sửa dự án')),
-                const PopupMenuItem(value: 'delete', child: Text('Xóa dự án')),
-              ],
             ),
             onTap: () => _toggleSessions(project),
           ),
@@ -296,10 +294,8 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
                     ),
                   for (final session
                       in _sessions[project.id] ?? const <ChatSessionModel>[])
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                      leading: const Icon(Icons.chat_bubble_outline, size: 18),
+                    AppTile(
+                      prefix: const Icon(Icons.chat_bubble_outline, size: 16),
                       title: Text(
                         session.title?.trim().isNotEmpty == true
                             ? session.title!
@@ -316,7 +312,7 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
                           if (session.isEphemeral) 'tạm thời',
                         ].join(' • '),
                       ),
-                      trailing: const Icon(Icons.chevron_right),
+                      suffix: const Icon(Icons.chevron_right, size: 18),
                       onTap: widget.onOpenSession == null
                           ? null
                           : () => widget.onOpenSession!(session.id),
@@ -345,45 +341,39 @@ class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
     final instructions = TextEditingController(
       text: existing?.instructions ?? '',
     );
-    final result = await showDialog<_ProjectForm>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(existing == null ? 'Tạo dự án mới' : 'Sửa dự án'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: name,
-                decoration: const InputDecoration(labelText: 'Tên dự án'),
-              ),
-              TextField(
-                controller: icon,
-                decoration: const InputDecoration(labelText: 'Biểu tượng'),
-              ),
-              TextField(
-                controller: description,
-                decoration: const InputDecoration(labelText: 'Mô tả'),
-              ),
-              TextField(
-                controller: instructions,
-                maxLines: 4,
-                decoration: const InputDecoration(
-                  labelText: 'Hướng dẫn cho trợ lý',
-                ),
-              ),
-            ],
-          ),
+    final result = await showAppDialog<_ProjectForm>(
+      context,
+      builder: (dialogContext) => AppDialog(
+        title: existing == null ? 'Tạo dự án mới' : 'Sửa dự án',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Ô nhập của hệ thiết kế: `TextField` của Material cần tổ tiên
+            // `Material` mà `AppDialog` (Forui) không có — xem `AppSelectTile`.
+            AppTextField(
+              controller: name,
+              label: 'Tên dự án',
+              autofocus: true,
+            ),
+            AppTextField(controller: icon, label: 'Biểu tượng'),
+            AppTextField(controller: description, label: 'Mô tả'),
+            AppTextField(
+              controller: instructions,
+              label: 'Hướng dẫn cho trợ lý',
+              maxLines: 4,
+            ),
+          ],
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Huỷ'),
+          AppSecondaryButton(
+            label: 'Huỷ',
+            onPressed: () => Navigator.pop(dialogContext),
           ),
+          const SizedBox(width: 10),
           AppPrimaryButton(
             label: existing == null ? 'Tạo' : 'Lưu',
             onPressed: () => Navigator.pop(
-              context,
+              dialogContext,
               _ProjectForm(
                 name.text,
                 description.text,

@@ -152,7 +152,6 @@ class ButtonFrameRenderObject extends RenderProxyBox {
   /// support dry layout"). Cần cả hai lối đo thì nút mới nằm được trong mọi ngữ
   /// cảnh: `AlertDialog` hỏi intrinsic, `Wrap` hỏi dry layout.
   @override
-  Size computeDryLayout(BoxConstraints constraints) => constraints.constrain(
-    Size(_naturalWidth, _naturalHeight),
-  );
+  Size computeDryLayout(BoxConstraints constraints) =>
+      constraints.constrain(Size(_naturalWidth, _naturalHeight));
 }

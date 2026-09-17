@@ -5,6 +5,7 @@ import 'package:forui/forui.dart';
 import '../core/auth/auth_provider.dart';
 import '../features/auth/login_screen.dart';
 import '../features/home/home_screen.dart';
+import 'ui/watermark_background.dart';
 import 'theme.dart';
 
 class LmKitOmniApp extends ConsumerWidget {
@@ -23,8 +24,13 @@ class LmKitOmniApp extends ConsumerWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.material(forui),
       themeMode: ThemeMode.light,
-      builder: (context, child) =>
-          FTheme(data: forui, child: child ?? const SizedBox.shrink()),
+      // Watermark trống đồng nằm ở tầng app: mọi màn (chat, đăng nhập, các
+      // trang đẩy sang…) dùng chung một nền, không phải bọc lại từng Scaffold.
+      // Scaffold phải trong suốt — xem `AppTheme.material`.
+      builder: (context, child) => FTheme(
+        data: forui,
+        child: WatermarkBackground(child: child ?? const SizedBox.shrink()),
+      ),
       home: auth.when(
         loading: () => const _BootScreen(),
         error: (error, _) => LoginScreen(initialError: error.toString()),

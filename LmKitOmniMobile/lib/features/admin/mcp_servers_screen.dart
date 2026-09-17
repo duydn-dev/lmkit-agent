@@ -23,8 +23,8 @@ class McpServersScreen extends ConsumerWidget {
       McpCatalogEntryModel? prefill,
       Future<void> Function() reload,
     ) async {
-      final result = await showDialog<Map<String, dynamic>>(
-        context: context,
+      final result = await showAppDialog<Map<String, dynamic>>(
+        context,
         builder: (context) =>
             _McpServerDialog(existing: existing, prefill: prefill),
       );
@@ -66,25 +66,12 @@ class McpServersScreen extends ConsumerWidget {
       try {
         final entries = await repository.mcpCatalog();
         if (!context.mounted) return;
-        final selected = await showModalBottomSheet<McpCatalogEntryModel>(
-          context: context,
-          showDragHandle: true,
-          builder: (context) => ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Text(
-                'Thư viện MCP server công khai',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              for (final entry in entries)
-                ListTile(
-                  title: Text(entry.id),
-                  subtitle: Text(entry.description),
-                  onTap: () => Navigator.pop(context, entry),
-                ),
-            ],
-          ),
+        final selected = await showAppPicker<McpCatalogEntryModel>(
+          context,
+          title: 'Thư viện MCP server công khai',
+          items: entries,
+          labelOf: (entry) => entry.id,
+          subtitleOf: (entry) => entry.description,
         );
         if (selected == null || !context.mounted) return;
         await openDialog(context, null, selected, reload);
@@ -126,10 +113,10 @@ class McpServersScreen extends ConsumerWidget {
       emptyText: 'Chưa cấu hình MCP server nào.',
       fetch: (search) => repository.mcpServers(search: search),
       extraActions: (context, reload) => [
-        IconButton(
+        AppIconButton(
+          icon: Icons.travel_explore,
           tooltip: 'Thư viện MCP',
           onPressed: () => pickFromCatalog(context, reload),
-          icon: const Icon(Icons.travel_explore),
         ),
       ],
       fabBuilder: (context, reload) => FloatingActionButton.extended(
@@ -266,30 +253,46 @@ class _McpServerCardState extends ConsumerState<_McpServerCard> {
   @override
   Widget build(BuildContext context) {
     final server = widget.server;
-    return Card(
+    final texts = Theme.of(context).textTheme;
+    return AppCard(
       child: Column(
         children: [
-          ListTile(
-            leading: Icon(
-              server.isActive
-                  ? Icons.cloud_done_outlined
-                  : Icons.cloud_off_outlined,
-            ),
-            title: Text(server.name),
-            subtitle: Text(
-              '${server.url}\n${server.authMode}'
-              '${server.hasHeaders ? ' · có header' : ''}'
-              '${server.trustReadOnlyAnnotations ? ' · tin read-only' : ''}',
-            ),
-            isThreeLine: true,
-            trailing: PopupMenuButton<String>(
-              tooltip: 'Tuỳ chọn',
-              onSelected: (value) =>
-                  value == 'edit' ? widget.onEdit() : widget.onDelete(),
-              itemBuilder: (context) => const [
-                PopupMenuItem(value: 'edit', child: Text('Sửa')),
-                PopupMenuItem(value: 'delete', child: Text('Xoá')),
-              ],
+          AppTileRaw(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    server.isActive
+                        ? Icons.cloud_done_outlined
+                        : Icons.cloud_off_outlined,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(server.name, style: texts.titleSmall),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${server.url}\n${server.authMode}'
+                          '${server.hasHeaders ? ' · có header' : ''}'
+                          '${server.trustReadOnlyAnnotations ? ' · tin read-only' : ''}',
+                          style: texts.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  AppMenuButton(
+                    tooltip: 'Tuỳ chọn',
+                    items: [
+                      AppMenuItem('Sửa', widget.onEdit),
+                      AppMenuItem('Xoá', widget.onDelete, destructive: true),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
           if (_needsOAuth)
@@ -467,102 +470,81 @@ class _McpServerDialogState extends State<_McpServerDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.existing == null ? 'Thêm MCP server' : 'Sửa MCP server'),
-    content: SizedBox(
-      width: 420,
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AdminField(controller: _name, label: 'Tên'),
-            AdminField(controller: _url, label: 'URL MCP'),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _isActive,
-              onChanged: (value) => setState(() => _isActive = value),
-              title: const Text('Kích hoạt'),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _trustReadOnly,
-              onChanged: (value) => setState(() => _trustReadOnly = value),
-              title: const Text('Tin công cụ read-only không cần phê duyệt'),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 8, bottom: 4),
-              child: Text(
-                widget.existing?.hasHeaders == true
-                    ? 'Header (đang có header — nhập để thay thế toàn bộ)'
-                    : 'Header (không bắt buộc)',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            AdminField(
-              controller: _headerName,
-              label: 'Tên header',
-              hint: 'Authorization',
-            ),
-            AdminField(controller: _headerValue, label: 'Giá trị header'),
-            if (widget.existing?.hasHeaders == true)
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _replaceHeaders,
-                onChanged: (value) =>
-                    setState(() => _replaceHeaders = value ?? false),
-                title: const Text('Thay thế toàn bộ header đang lưu'),
-              ),
-            const Divider(),
-            DropdownButtonFormField<String>(
-              initialValue: _authMode,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Kiểu xác thực'),
-              items: const [
-                DropdownMenuItem(
-                  value: 'Static',
-                  child: Text('Static (header)'),
-                ),
-                DropdownMenuItem(
-                  value: 'ClientCredentials',
-                  child: Text('OAuth · Client Credentials'),
-                ),
-                DropdownMenuItem(
-                  value: 'AuthorizationCode',
-                  child: Text('OAuth · Authorization Code'),
-                ),
-              ],
-              onChanged: (value) =>
-                  setState(() => _authMode = value ?? 'Static'),
-            ),
-            const SizedBox(height: 12),
-            if (_authMode != 'Static') ...[
-              AdminField(controller: _oauthClientId, label: 'OAuth Client ID'),
-              AdminField(
-                controller: _oauthClientSecret,
-                label: 'OAuth Client Secret',
-                hint: widget.existing == null
-                    ? null
-                    : 'Để trống để giữ secret đang lưu',
-                obscure: true,
-              ),
-              AdminField(controller: _oauthTokenUrl, label: 'Token URL'),
-              if (_authMode == 'AuthorizationCode')
-                AdminField(
-                  controller: _oauthAuthorizeUrl,
-                  label: 'Authorize URL',
-                ),
-              AdminField(controller: _oauthScopes, label: 'Scopes'),
-            ],
-          ],
+  Widget build(BuildContext context) => AppDialog(
+    title: widget.existing == null ? 'Thêm MCP server' : 'Sửa MCP server',
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AdminField(controller: _name, label: 'Tên'),
+        AdminField(controller: _url, label: 'URL MCP'),
+        AppSwitchTile(
+          label: 'Kích hoạt',
+          value: _isActive,
+          onChanged: (value) => setState(() => _isActive = value),
         ),
-      ),
+        AppSwitchTile(
+          label: 'Tin công cụ read-only không cần phê duyệt',
+          value: _trustReadOnly,
+          onChanged: (value) => setState(() => _trustReadOnly = value),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 4),
+          child: Text(
+            widget.existing?.hasHeaders == true
+                ? 'Header (đang có header — nhập để thay thế toàn bộ)'
+                : 'Header (không bắt buộc)',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+        AdminField(
+          controller: _headerName,
+          label: 'Tên header',
+          hint: 'Authorization',
+        ),
+        AdminField(controller: _headerValue, label: 'Giá trị header'),
+        if (widget.existing?.hasHeaders == true)
+          AppCheckTile(
+            label: 'Thay thế toàn bộ header đang lưu',
+            value: _replaceHeaders,
+            onChanged: (value) => setState(() => _replaceHeaders = value),
+          ),
+        const Divider(),
+        // Ô chọn của hệ thiết kế: `DropdownButtonFormField` của Material cần tổ
+        // tiên `Material` mà `AppDialog` (Forui) không có — xem `AppSelectTile`.
+        AppSelectTile<String>(
+          label: 'Kiểu xác thực',
+          icon: Icons.lock_outline,
+          value: _authMode,
+          items: const ['Static', 'ClientCredentials', 'AuthorizationCode'],
+          labelOf: (value) => switch (value) {
+            'ClientCredentials' => 'OAuth · Client Credentials',
+            'AuthorizationCode' => 'OAuth · Authorization Code',
+            _ => 'Static (header)',
+          },
+          onChanged: (value) => setState(() => _authMode = value),
+        ),
+        const SizedBox(height: 12),
+        if (_authMode != 'Static') ...[
+          AdminField(controller: _oauthClientId, label: 'OAuth Client ID'),
+          AdminField(
+            controller: _oauthClientSecret,
+            label: 'OAuth Client Secret',
+            hint: widget.existing == null
+                ? null
+                : 'Để trống để giữ secret đang lưu',
+            obscure: true,
+          ),
+          AdminField(controller: _oauthTokenUrl, label: 'Token URL'),
+          if (_authMode == 'AuthorizationCode')
+            AdminField(controller: _oauthAuthorizeUrl, label: 'Authorize URL'),
+          AdminField(controller: _oauthScopes, label: 'Scopes'),
+        ],
+      ],
     ),
     actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Huỷ'),
-      ),
+      AppSecondaryButton(label: 'Huỷ', onPressed: () => Navigator.pop(context)),
+      const SizedBox(width: 10),
       AppPrimaryButton(label: 'Lưu', onPressed: _submit, expand: false),
     ],
   );

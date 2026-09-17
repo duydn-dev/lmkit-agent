@@ -182,18 +182,14 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen>
       const SizedBox(height: 6),
       const Text('Cảm xúc, thực thể, phân loại, ngôn ngữ và từ khóa.'),
       const SizedBox(height: 16),
-      TextField(
+      AppTextField(
         controller: _text,
-        minLines: 6,
+        label: 'Văn bản đầu vào',
         maxLines: 12,
-        maxLength: 50000,
-        decoration: const InputDecoration(labelText: 'Văn bản đầu vào'),
       ),
-      TextField(
+      AppTextField(
         controller: _categories,
-        decoration: const InputDecoration(
-          labelText: 'Danh mục phân loại (phân tách bằng dấu phẩy)',
-        ),
+        label: 'Danh mục phân loại (phân tách bằng dấu phẩy)',
       ),
       const SizedBox(height: 12),
       Wrap(
@@ -208,11 +204,13 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen>
         ],
       ),
       if (_textResult.isNotEmpty)
-        Card(
-          margin: const EdgeInsets.only(top: 16),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: SelectableText(_textResult),
+        Padding(
+          padding: const EdgeInsets.only(top: 16),
+          child: AppCard(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: SelectableText(_textResult),
+            ),
           ),
         ),
     ],
@@ -237,19 +235,14 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen>
         onPressed: _busy ? null : _pickImage,
       ),
       const SizedBox(height: 12),
-      TextField(
+      AppTextField(
         controller: _imageCategories,
-        decoration: const InputDecoration(
-          labelText: 'Danh mục phân loại ảnh (phân tách bằng dấu phẩy)',
-        ),
+        label: 'Danh mục phân loại ảnh (phân tách bằng dấu phẩy)',
       ),
-      const SizedBox(height: 8),
-      TextField(
+      AppTextField(
         controller: _prompt,
+        label: 'Prompt phân tích hình ảnh',
         maxLines: 3,
-        decoration: const InputDecoration(
-          labelText: 'Prompt phân tích hình ảnh',
-        ),
       ),
       const SizedBox(height: 12),
       Row(
@@ -298,11 +291,13 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen>
         ],
       ),
       if (_visionResult.isNotEmpty)
-        Card(
-          margin: const EdgeInsets.only(top: 16),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: SelectableText(_visionResult),
+        Padding(
+          padding: const EdgeInsets.only(top: 16),
+          child: AppCard(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: SelectableText(_visionResult),
+            ),
           ),
         ),
     ],

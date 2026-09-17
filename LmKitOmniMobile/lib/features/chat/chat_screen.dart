@@ -517,9 +517,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _snack('Hãy gửi tin nhắn đầu tiên trước khi chia sẻ đoạn chat.');
       return;
     }
-    await showDialog<void>(
-      context: context,
-      builder: (context) => _ShareDialog(
+    await showAppDialog<void>(
+      context,
+      builder: (dialogContext) => _ShareDialog(
         sessionId: sessionId,
         initialLink: _shareLinks[sessionId],
         onLinkChanged: (link) => link == null
@@ -531,9 +531,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    showAppSnack(context, message);
   }
 
   /// Cuộn xuống cuối cuộc trò chuyện.
@@ -637,11 +635,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
           IconButton(
             tooltip: 'Danh sách chức năng',
-            onPressed: () => showFunctionMenu(
-              context,
-              onNewChat: _newChat,
-              onShare: _share,
-            ),
+            onPressed: () =>
+                showFunctionMenu(context, onNewChat: _newChat, onShare: _share),
             icon: const Icon(Icons.more_vert),
           ),
         ],
@@ -680,6 +675,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     itemCount: _messages.length,
                     itemBuilder: (context, index) => ChatMessageView(
                       message: _messages[index],
+                      // Mốc tiến trình chỉ thuộc về lượt đang chạy (tương đương
+                      // `isGenerating` của web): xong lượt thì panel suy luận chỉ
+                      // còn lại chuỗi suy luận của mô hình.
+                      isLive: _sending && index == _messages.length - 1,
                       onEdit: index == lastUserIndex && !_sending
                           ? () => _startEditing(index)
                           : null,
@@ -760,7 +759,7 @@ class _ChatEmptyState extends ConsumerWidget {
             // quá nhiều dòng, vẫn trên tiêu đề trang (20).
             style: Theme.of(
               context,
-            ).textTheme.headlineSmall?.copyWith(fontSize: 22),
+            ).textTheme.headlineSmall,
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 8),
@@ -840,8 +839,6 @@ class _Composer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final texts = Theme.of(context).textTheme;
-
     return DecoratedBox(
       // Web không dùng bóng đổ cho cả thanh: composer ngăn cách bằng một đường
       // viền trên, nền trắng, phẳng — cùng ngôn ngữ với thẻ và header.
@@ -881,13 +878,9 @@ class _Composer extends StatelessWidget {
                   surface: AppTheme.infoSurface,
                   border: AppTheme.infoBorder,
                   foreground: AppTheme.infoText,
-                  action: TextButton(
+                  action: AppSecondaryButton(
+                    label: 'Huỷ',
                     onPressed: onCancelEditing,
-                    style: TextButton.styleFrom(
-                      foregroundColor: AppTheme.infoText,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                    ),
-                    child: const Text('Huỷ'),
                   ),
                 ),
               // Một khối bo tròn chứa cả ô nhập lẫn thanh công cụ — đúng
@@ -996,15 +989,6 @@ class _Composer extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(height: 10),
-              // Web: dòng nhắc trách nhiệm nằm ngay dưới khối soạn tin
-              // (`text-center text-xs text-gray-500`).
-              Text(
-                '$agentName có thể mắc sai lầm. Vui lòng kiểm tra lại các '
-                'thông tin quan trọng.',
-                textAlign: TextAlign.center,
-                style: texts.bodySmall,
-              ),
             ],
           ),
         ),
@@ -1033,22 +1017,12 @@ class _Composer extends StatelessWidget {
               ),
           ],
         ),
-        Row(
-          children: [
-            Checkbox(
-              value: saveToKnowledge,
-              visualDensity: VisualDensity.compact,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              onChanged: (value) => onSaveToKnowledgeChanged(value ?? false),
-            ),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                'Lưu nội dung file vào kho tri thức',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-          ],
+        // Ô đánh dấu của hệ thiết kế: `Checkbox` của Material vẽ ô vuông riêng
+        // một kiểu, đặt cạnh các ô Forui trông lạc hẳn.
+        AppCheckTile(
+          label: 'Lưu nội dung file vào kho tri thức',
+          value: saveToKnowledge,
+          onChanged: onSaveToKnowledgeChanged,
         ),
       ],
     ),
@@ -1165,16 +1139,15 @@ class _RecordingStripState extends ConsumerState<_RecordingStrip>
 
   void _listenToLevels() {
     if (widget.transcribing) return;
-    _levelsSubscription = ref
-        .read(voiceRecorderProvider)
-        .levels()
-        .listen((level) {
-          if (!mounted) return;
-          setState(() {
-            _levels.removeAt(0);
-            _levels.add(level);
-          });
-        });
+    _levelsSubscription = ref.read(voiceRecorderProvider).levels().listen((
+      level,
+    ) {
+      if (!mounted) return;
+      setState(() {
+        _levels.removeAt(0);
+        _levels.add(level);
+      });
+    });
   }
 
   @override
@@ -1202,10 +1175,7 @@ class _RecordingStripState extends ConsumerState<_RecordingStrip>
       child: Row(
         children: [
           FadeTransition(
-            opacity: Tween<double>(
-              begin: 0.35,
-              end: 1,
-            ).animate(_pulse),
+            opacity: Tween<double>(begin: 0.35, end: 1).animate(_pulse),
             child: Container(
               width: 10,
               height: 10,
@@ -1278,8 +1248,7 @@ class _RecordingStripState extends ConsumerState<_RecordingStrip>
             padding: const EdgeInsets.only(left: _barGap),
             child: Container(
               width: _barWidth,
-              height:
-                  _minBarHeight + level * (_maxBarHeight - _minBarHeight),
+              height: _minBarHeight + level * (_maxBarHeight - _minBarHeight),
               decoration: BoxDecoration(
                 color: AppTheme.govRed.withValues(alpha: 0.30 + level * 0.70),
                 borderRadius: BorderRadius.circular(_barWidth),
@@ -1615,8 +1584,8 @@ class _ShareDialogState extends ConsumerState<_ShareDialog> {
         ? null
         : ref.watch(appConfigProvider).shareUrlFor(link.token);
 
-    return AlertDialog(
-      title: const Text('Chia sẻ đoạn chat'),
+    return AppDialog(
+      title: 'Chia sẻ đoạn chat',
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1646,41 +1615,40 @@ class _ShareDialogState extends ConsumerState<_ShareDialog> {
         ],
       ),
       actions: [
-        TextButton(
+        AppSecondaryButton(
+          label: 'Đóng',
           onPressed: _busy ? null : () => Navigator.pop(context),
-          child: const Text('Đóng'),
         ),
+        const SizedBox(width: 10),
         if (url != null) ...[
-          TextButton.icon(
+          AppSecondaryButton(
+            label: 'Sao chép',
+            icon: Icons.copy,
             onPressed: _busy
                 ? null
                 : () async {
                     await Clipboard.setData(ClipboardData(text: url));
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Đã sao chép link.')),
-                      );
+                      showAppSnack(context, 'Đã sao chép link.');
                     }
                   },
-            icon: const Icon(Icons.copy, size: 18),
-            label: const Text('Sao chép'),
           ),
-          TextButton.icon(
+          const SizedBox(width: 10),
+          AppSecondaryButton(
+            label: 'Mở',
+            icon: Icons.open_in_new,
             onPressed: _busy
                 ? null
                 : () => launchUrl(
                     Uri.parse(url),
                     mode: LaunchMode.externalApplication,
                   ),
-            icon: const Icon(Icons.open_in_new, size: 18),
-            label: const Text('Mở'),
           ),
-          TextButton.icon(
+          const SizedBox(width: 10),
+          AppDestructiveButton(
+            label: 'Thu hồi',
+            icon: Icons.link_off,
             onPressed: _busy ? null : _revoke,
-            // Thu hồi link là hành động không hoàn tác: tô đỏ để không bị bấm nhầm.
-            style: TextButton.styleFrom(foregroundColor: AppTheme.govRed),
-            icon: const Icon(Icons.link_off, size: 18),
-            label: const Text('Thu hồi'),
           ),
         ] else
           AppPrimaryButton(

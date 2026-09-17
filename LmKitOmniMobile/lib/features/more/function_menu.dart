@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:forui/forui.dart';
 
 import '../../app/theme.dart';
 import '../../app/ui/app_controls.dart';
@@ -30,11 +31,10 @@ Future<void> showFunctionMenu(
   BuildContext context, {
   VoidCallback? onNewChat,
   VoidCallback? onShare,
-}) => showModalBottomSheet<void>(
-  context: context,
+}) => showAppSheet<void>(
+  context,
   isScrollControlled: true,
-  useSafeArea: true,
-  builder: (context) =>
+  builder: (sheetContext) =>
       FunctionMenuSheet(onNewChat: onNewChat, onShare: onShare),
 );
 
@@ -88,14 +88,14 @@ class FunctionMenuSheet extends ConsumerWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Thêm',
+                    'Danh sách chức năng',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),
-                IconButton(
+                AppIconButton(
+                  icon: Icons.close,
                   tooltip: 'Đóng danh sách chức năng',
                   onPressed: navigator.pop,
-                  icon: const Icon(Icons.close),
                 ),
               ],
             ),
@@ -143,9 +143,8 @@ class FunctionMenuSheet extends ConsumerWidget {
                   icon: Icons.folder_outlined,
                   title: 'Projects',
                   subtitle: 'Gom phiên chat và hướng dẫn riêng theo dự án',
-                  onTap: () => push(
-                    (_) => ProjectsScreen(onOpenSession: openSession),
-                  ),
+                  onTap: () =>
+                      push((_) => ProjectsScreen(onOpenSession: openSession)),
                 ),
                 _Tile(
                   icon: Icons.description_outlined,
@@ -176,12 +175,11 @@ class FunctionMenuSheet extends ConsumerWidget {
                 _Tile(
                   icon: Icons.edit_document,
                   title: 'Content Studio',
-                  subtitle: 'Pipeline nghiên cứu → outline → draft → fact-check',
+                  subtitle:
+                      'Pipeline nghiên cứu → outline → draft → fact-check',
                   onTap: () => push(
-                    (_) => StudioScreen(
-                      initialTab: 5,
-                      onOpenSession: openSession,
-                    ),
+                    (_) =>
+                        StudioScreen(initialTab: 5, onOpenSession: openSession),
                   ),
                 ),
                 _Tile(
@@ -189,10 +187,8 @@ class FunctionMenuSheet extends ConsumerWidget {
                   title: 'Automation Agent',
                   subtitle: 'Chạy mục tiêu tự hành và theo dõi từng bước',
                   onTap: () => push(
-                    (_) => StudioScreen(
-                      initialTab: 2,
-                      onOpenSession: openSession,
-                    ),
+                    (_) =>
+                        StudioScreen(initialTab: 2, onOpenSession: openSession),
                   ),
                 ),
                 _Tile(
@@ -210,7 +206,8 @@ class FunctionMenuSheet extends ConsumerWidget {
                 _Tile(
                   icon: Icons.align_horizontal_left,
                   title: 'Text Analytics',
-                  subtitle: 'Sentiment, phân loại, ngôn ngữ, keyword, embedding',
+                  subtitle:
+                      'Sentiment, phân loại, ngôn ngữ, keyword, embedding',
                   onTap: () => push((_) => const ToolsScreen()),
                 ),
                 _Tile(
@@ -225,10 +222,8 @@ class FunctionMenuSheet extends ConsumerWidget {
                   title: 'HITL Approvals',
                   subtitle: 'Phê duyệt hành động agent đang chờ',
                   onTap: () => push(
-                    (_) => StudioScreen(
-                      initialTab: 4,
-                      onOpenSession: openSession,
-                    ),
+                    (_) =>
+                        StudioScreen(initialTab: 4, onOpenSession: openSession),
                   ),
                 ),
                 _Tile(
@@ -249,7 +244,8 @@ class FunctionMenuSheet extends ConsumerWidget {
                   _Tile(
                     icon: Icons.admin_panel_settings_outlined,
                     title: 'Dashboard quản trị',
-                    subtitle: 'User, tenant, CSDL, MCP, LoRA, widget, audit log',
+                    subtitle:
+                        'User, tenant, CSDL, MCP, LoRA, widget, audit log',
                     onTap: () => push((_) => const AdminHubScreen()),
                   ),
                 ],
@@ -266,12 +262,16 @@ class FunctionMenuSheet extends ConsumerWidget {
                 _Tile(
                   icon: Icons.logout,
                   title: 'Đăng xuất',
-                  subtitle: 'Thu hồi phiên trên máy chủ và xoá token trên thiết bị',
+                  subtitle:
+                      'Thu hồi phiên trên máy chủ và xoá token trên thiết bị',
                   onTap: () {
                     navigator.pop();
                     ref.read(authControllerProvider.notifier).logout();
                   },
                 ),
+                // Dòng cuối danh sách: nói rõ bản cài này là môi trường thử
+                // nghiệm, để người dùng không lấy kết quả ở đây làm căn cứ.
+                const _Footnote('Hệ thống thử nghiệm'),
               ],
             ),
           ),
@@ -327,6 +327,25 @@ class _AccountCard extends StatelessWidget {
   );
 }
 
+/// Dòng ghi chú cuối danh sách (nhỏ, nhạt, canh giữa).
+class _Footnote extends StatelessWidget {
+  const _Footnote(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+    child: Text(
+      text,
+      textAlign: TextAlign.center,
+      style: Theme.of(
+        context,
+      ).textTheme.bodySmall?.copyWith(color: AppTheme.textMuted),
+    ),
+  );
+}
+
 class _GroupTitle extends StatelessWidget {
   const _GroupTitle(this.title);
 
@@ -362,28 +381,12 @@ class _Tile extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-    child: AppCard(
-      onTap: onTap,
-      child: Row(
-        children: [
-          Icon(icon, size: 22, color: AppTheme.govBlueDark),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 2),
-                Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-              ],
-            ),
-          ),
-          trailing ?? const Icon(Icons.chevron_right, size: 20),
-        ],
-      ),
+    child: FTile(
+      onPress: onTap,
+      prefix: Icon(icon, size: 20),
+      suffix: trailing ?? const Icon(Icons.chevron_right, size: 18),
+      title: Text(title),
+      subtitle: Text(subtitle),
     ),
   );
 }
@@ -394,21 +397,10 @@ class _UnreadBadge extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final unread = ref.watch(unreadNotificationCountProvider);
-    if (unread == 0) return const Icon(Icons.chevron_right, size: 20);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-      decoration: BoxDecoration(
-        color: AppTheme.govRed,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        unread > 9 ? '9+' : '$unread',
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: AppTheme.badgeSize,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
+    if (unread == 0) return const Icon(Icons.chevron_right, size: 18);
+    return AppBadge(
+      destructive: true,
+      child: Text(unread > 9 ? '9+' : '$unread'),
     );
   }
 }

@@ -48,6 +48,7 @@ class DatabaseConnectionsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repository = ref.watch(adminRepositoryProvider);
+    final texts = Theme.of(context).textTheme;
 
     Future<void> openDialog(
       BuildContext context,
@@ -62,8 +63,8 @@ class DatabaseConnectionsScreen extends ConsumerWidget {
       }
       if (!context.mounted) return;
 
-      final result = await showDialog<Map<String, dynamic>>(
-        context: context,
+      final result = await showAppDialog<Map<String, dynamic>>(
+        context,
         builder: (context) =>
             _DatabaseConnectionDialog(existing: existing, tenants: tenants),
       );
@@ -145,51 +146,71 @@ class DatabaseConnectionsScreen extends ConsumerWidget {
         icon: const Icon(Icons.add),
         label: const Text('Thêm kết nối'),
       ),
-      itemBuilder: (context, connection, reload) => Card(
-        child: ListTile(
-          isThreeLine: true,
-          leading: Icon(
-            connection.isActive ? Icons.storage : Icons.storage_outlined,
-          ),
-          title: Text(connection.name),
-          subtitle: Text(
-            '${_providerLabel(connection.provider)} · '
-            '${connection.isGlobal ? 'Toàn hệ thống' : connection.tenantName ?? 'Theo tenant'}\n'
-            '${_indexLabel(connection)}'
-            '${connection.allowWrites ? ' · cho phép ghi' : ''}',
-          ),
-          trailing: PopupMenuButton<String>(
-            tooltip: 'Tuỳ chọn',
-            onSelected: (value) async {
-              switch (value) {
-                case 'edit':
-                  await openDialog(context, connection, reload);
-                case 'test':
-                  await run(
-                    context,
-                    () => repository.testDatabaseConnection(connection.id),
-                    reload: reload,
-                  );
-                case 'reindex':
-                  await run(
-                    context,
-                    () async {
-                      await repository.reindexDatabaseConnection(connection.id);
-                      return 'Đã xếp hàng đánh lại chỉ mục.';
-                    },
-                    reload: reload,
-                    refreshAfter: true,
-                  );
-                case 'delete':
-                  await remove(context, connection, reload);
-              }
-            },
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'edit', child: Text('Sửa')),
-              PopupMenuItem(value: 'test', child: Text('Kiểm tra kết nối')),
-              PopupMenuItem(value: 'reindex', child: Text('Đánh lại chỉ mục')),
-              PopupMenuItem(value: 'delete', child: Text('Xoá')),
-            ],
+      itemBuilder: (context, connection, reload) => AppCard(
+        child: AppTileRaw(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  connection.isActive ? Icons.storage : Icons.storage_outlined,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(connection.name, style: texts.titleSmall),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${_providerLabel(connection.provider)} · '
+                        '${connection.isGlobal ? 'Toàn hệ thống' : connection.tenantName ?? 'Theo tenant'}\n'
+                        '${_indexLabel(connection)}'
+                        '${connection.allowWrites ? ' · cho phép ghi' : ''}',
+                        style: texts.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                AppMenuButton(
+                  tooltip: 'Tuỳ chọn',
+                  items: [
+                    AppMenuItem(
+                      'Sửa',
+                      () => openDialog(context, connection, reload),
+                    ),
+                    AppMenuItem(
+                      'Kiểm tra kết nối',
+                      () => run(
+                        context,
+                        () => repository.testDatabaseConnection(connection.id),
+                        reload: reload,
+                      ),
+                    ),
+                    AppMenuItem(
+                      'Đánh lại chỉ mục',
+                      () => run(
+                        context,
+                        () async {
+                          await repository.reindexDatabaseConnection(
+                            connection.id,
+                          );
+                          return 'Đã xếp hàng đánh lại chỉ mục.';
+                        },
+                        reload: reload,
+                        refreshAfter: true,
+                      ),
+                    ),
+                    AppMenuItem(
+                      'Xoá',
+                      () => remove(context, connection, reload),
+                      destructive: true,
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -285,82 +306,66 @@ class _DatabaseConnectionDialogState extends State<_DatabaseConnectionDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(
-      widget.existing == null ? 'Thêm kết nối CSDL' : 'Sửa kết nối CSDL',
-    ),
-    content: SizedBox(
-      width: 420,
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AdminField(controller: _name, label: 'Tên kết nối'),
-            DropdownButtonFormField<String>(
-              initialValue: _provider,
-              // `isExpanded`: nhãn tiếng Việt dài + cỡ chữ hệ thống lớn vẫn phải
-              // nằm trong khung, nếu không thì hàng bên trong tràn ra ngoài.
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Loại CSDL'),
-              items: [
-                for (final provider in _providers)
-                  DropdownMenuItem(
-                    value: provider.value,
-                    child: Text(provider.label),
-                  ),
-              ],
-              onChanged: (value) =>
-                  setState(() => _provider = value ?? 'Postgres'),
-            ),
-            const SizedBox(height: 12),
-            AdminField(
-              controller: _connectionString,
-              label: 'Connection string',
-              hint: _sample,
-              maxLines: 3,
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _isActive,
-              onChanged: (value) => setState(() => _isActive = value),
-              title: const Text('Kích hoạt'),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _allowWrites,
-              onChanged: (value) => setState(() => _allowWrites = value),
-              title: const Text('Cho phép ghi (có phê duyệt)'),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _isGlobal,
-              onChanged: (value) => setState(() => _isGlobal = value),
-              title: const Text('Dùng chung toàn hệ thống'),
-            ),
-            if (!_isGlobal && widget.tenants.isNotEmpty)
-              DropdownButtonFormField<String>(
-                initialValue: _tenantId,
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Gán cho tenant'),
-                items: [
-                  for (final tenant in widget.tenants)
-                    DropdownMenuItem(
-                      value: tenant.id,
-                      child: Text(tenant.name),
-                    ),
-                ],
-                onChanged: (value) => setState(() => _tenantId = value),
-              ),
-          ],
+  Widget build(BuildContext context) => AppDialog(
+    title: widget.existing == null ? 'Thêm kết nối CSDL' : 'Sửa kết nối CSDL',
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AdminField(controller: _name, label: 'Tên kết nối'),
+        // Ô chọn của hệ thiết kế: `DropdownButtonFormField` của Material cần tổ
+        // tiên `Material` mà `AppDialog` (Forui) không có — xem `AppSelectTile`.
+        AppSelectTile<String>(
+          label: 'Loại CSDL',
+          icon: Icons.storage_outlined,
+          value: _provider,
+          items: [for (final provider in _providers) provider.value],
+          labelOf: (value) => _providers
+              .firstWhere((provider) => provider.value == value)
+              .label,
+          onChanged: (value) => setState(() => _provider = value),
         ),
-      ),
+        const SizedBox(height: 12),
+        AdminField(
+          controller: _connectionString,
+          label: 'Connection string',
+          hint: _sample,
+          maxLines: 3,
+        ),
+        AppSwitchTile(
+          label: 'Kích hoạt',
+          value: _isActive,
+          onChanged: (value) => setState(() => _isActive = value),
+        ),
+        AppSwitchTile(
+          label: 'Cho phép ghi (có phê duyệt)',
+          value: _allowWrites,
+          onChanged: (value) => setState(() => _allowWrites = value),
+        ),
+        AppSwitchTile(
+          label: 'Dùng chung toàn hệ thống',
+          value: _isGlobal,
+          onChanged: (value) => setState(() => _isGlobal = value),
+        ),
+        if (!_isGlobal && widget.tenants.isNotEmpty)
+          AppSelectTile<String?>(
+            label: 'Gán cho tenant',
+            icon: Icons.apartment_outlined,
+            value: _tenantId,
+            items: [for (final tenant in widget.tenants) tenant.id],
+            labelOf: (value) => widget.tenants
+                .firstWhere(
+                  (tenant) => tenant.id == value,
+                  orElse: () => widget.tenants.first,
+                )
+                .name,
+            onChanged: (value) => setState(() => _tenantId = value),
+          ),
+      ],
     ),
     actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Huỷ'),
-      ),
+      AppSecondaryButton(label: 'Huỷ', onPressed: () => Navigator.pop(context)),
+      const SizedBox(width: 10),
       AppPrimaryButton(label: 'Lưu', onPressed: _submit, expand: false),
     ],
   );

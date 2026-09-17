@@ -31,15 +31,56 @@
   --color-amber-600: #78350f;
 }
 
+html {
+  /* Nền canvas đặt trên `html` (không phải `body`) để watermark `z-index: -1`
+     nằm TRÊN màu nền nhưng DƯỚI mọi nội dung — nếu nền nằm trên `body` thì
+     chính nền body sẽ đè mất watermark âm. */
+  background-color: var(--color-chatgpt-dark);
+}
+
 html, body {
   margin: 0;
   padding: 0;
   height: 100%;
   color-scheme: light;
-  background-color: var(--color-chatgpt-dark);
   color: var(--color-chatgpt-text);
   font-family: var(--font-sans);
   overflow: hidden;
+}
+
+/* Watermark trống đồng Đông Sơn: nằm dưới mọi nội dung, cố định theo viewport
+   (không cuộn theo), nên tất cả các màn (chat, quản trị, login…) đều nhìn thấy
+   cùng một hoạ tiết. Ảnh đã bake sẵn alpha ~8% nên không cần opacity CSS —
+   tránh lớp giả (pseudo) mờ đi cả content nếu ai đó đổi z-index.
+   `pointer-events: none` để không bao giờ chặn click, `z-index: 0` + mọi
+   surface nội dung nằm trên bằng cách nền mặc định của layout trong suốt. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: url('./assets/trongdong.png');
+  background-repeat: no-repeat;
+  background-position: center center;
+  /* `130vmax` (ảnh vuông): hoạ tiết luôn cao/rộng hơn cả hai chiều màn hình
+     1,3 lần — mọi màn hình đều thấy trống đồng tràn kín, chỉ phần giữa của
+     hoạ tiết hiện ra. `auto 100vh` và `cover` trước đây neo đúng vào viewport
+     nên trên màn rộng hoặc màn dọc cao, hoạ tiết vẫn co thành một vòng tròn
+     nhỏ nằm gọn giữa màn. Đây là nền, không phải hình được "đóng khung" cho
+     vừa. */
+  background-size: 130vmax;
+}
+
+/* Mọi main/view nằm trong layout phải trong suốt để lộ watermark phía sau.
+   Chỉ nhắm đúng *surface gốc của trang* (main vùng content + scroll-root của
+   các view), không đụng các card/input nhỏ cũng dùng bg-gray-50 — chúng vẫn
+   đục để nội dung đọc được đè lên hoạ tiết. */
+main.bg-chatgpt-dark,
+.bg-chatgpt-dark,
+div.flex-1.overflow-y-auto.bg-gray-50,
+main.h-full.overflow-y-auto.bg-gray-50 {
+  background-color: transparent;
 }
 
 /* The application is intentionally light-themed. PrimeVue's system dark mode

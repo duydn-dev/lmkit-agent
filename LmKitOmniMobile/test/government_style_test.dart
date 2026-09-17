@@ -73,21 +73,22 @@ void main() {
       expect(theme.colorScheme.error, AppTheme.govRed);
     });
 
-    test('thang chữ đúng từng bước đã đối chiếu với web', () {
-      // Bảng ánh xạ Tailwind → token nằm ở `AppTheme._textTheme`; test này giữ
-      // cho các con số đó không bị sửa lẻ ở một màn nào đó.
-      expect(theme.textTheme.displaySmall?.fontSize, 30); // text-3xl
-      expect(theme.textTheme.headlineSmall?.fontSize, 24); // text-2xl
-      expect(theme.textTheme.titleLarge?.fontSize, 20); // text-xl
-      expect(theme.textTheme.titleMedium?.fontSize, 16); // text-base
-      expect(theme.textTheme.titleSmall?.fontSize, 14); // text-sm
-      expect(theme.textTheme.bodyLarge?.fontSize, 16); // nội dung chat
-      expect(theme.textTheme.bodyMedium?.fontSize, 14); // text-sm
-      expect(theme.textTheme.bodySmall?.fontSize, 12); // text-xs
+    test('thang chữ lấy 14 làm chuẩn cho nội dung và tiêu đề mục', () {
+      // Bảng ánh xạ cỡ chữ nằm ở `AppTheme._textTheme`; test này giữ cho các con
+      // số đó không bị sửa lẻ ở một màn nào đó. 14 là cỡ chuẩn (như `text-sm`
+      // của web): mọi cỡ khác chỉ để phân cấp, không phải cỡ chữ thân.
+      expect(theme.textTheme.displaySmall?.fontSize, 24);
+      expect(theme.textTheme.headlineSmall?.fontSize, 20);
+      expect(theme.textTheme.titleLarge?.fontSize, 16);
+      expect(theme.textTheme.titleMedium?.fontSize, 14);
+      expect(theme.textTheme.titleSmall?.fontSize, 14);
+      expect(theme.textTheme.bodyLarge?.fontSize, 14); // nội dung chat
+      expect(theme.textTheme.bodyMedium?.fontSize, 14);
+      expect(theme.textTheme.bodySmall?.fontSize, 12);
       expect(theme.textTheme.labelLarge?.fontSize, 14);
       expect(theme.textTheme.labelMedium?.fontSize, 12);
-      expect(theme.textTheme.labelSmall?.fontSize, 11); // text-[11px]
-      expect(AppTheme.appBarTitleSize, 18);
+      expect(theme.textTheme.labelSmall?.fontSize, 11);
+      expect(AppTheme.appBarTitleSize, 16);
       expect(AppTheme.badgeSize, 10);
     });
 
@@ -269,6 +270,8 @@ void main() {
             home: Scaffold(
               appBar: AppTopBar(
                 title: const Text('AI Chat'),
+                // Đo nút của chính màn, không cần nhịp thông báo trong cây này.
+                showNotificationBell: false,
                 actions: [
                   IconButton(
                     tooltip: 'Danh sách chức năng',
@@ -326,7 +329,11 @@ void main() {
     }
 
     // Và phản hồi phải **nhìn thấy được**: nút không được trùng màu nền header.
-    final chrome = at(8, box.center.dy);
+    //
+    // Mẫu nền lấy ở đỉnh thanh, nơi chỉ có màu chrome: mép trái (x=8) giờ đã rơi
+    // vào tiêu đề vì khe giữa lề và tiêu đề chỉ còn 4px — đo vào đó là so nút với
+    // chữ trắng, không còn là so với nền header.
+    final chrome = at(width / 2, box.top + 3);
     expect(
       at(box.left + 3, box.center.dy).b,
       greaterThan(chrome.b),
@@ -354,6 +361,7 @@ void main() {
           home: Scaffold(
             appBar: AppTopBar(
               title: const Text('AI Chat'),
+              showNotificationBell: false,
               leading: Builder(
                 builder: (context) => IconButton(
                   tooltip: 'Lịch sử chat',

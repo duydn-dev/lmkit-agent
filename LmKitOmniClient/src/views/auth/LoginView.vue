@@ -1,5 +1,13 @@
 <template>
-  <div class="login-page min-h-screen flex items-center justify-center bg-chatgpt-dark p-4 font-sans relative overflow-hidden">
+  <div class="login-page min-h-screen flex items-center justify-center p-4 font-sans relative overflow-hidden">
+    <!-- Watermark trống đồng: dùng chung asset với body::before, đặt tại đây để
+         đậm hơn chút so với trang trong app (login là màn "đứng riêng" nên
+         hoạ tiết được phép nổi hơn) -->
+    <div
+      class="absolute inset-0 pointer-events-none bg-no-repeat opacity-60"
+      :style="{ backgroundImage: `url(${trongDong})`, backgroundPosition: 'center', backgroundSize: '130vmax' }"
+      aria-hidden="true"
+    ></div>
     <!-- Background Effects -->
     <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-chatgpt-brand/20 rounded-full blur-[100px] pointer-events-none"></div>
     <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/20 rounded-full blur-[100px] pointer-events-none"></div>
@@ -52,6 +60,9 @@
         </form>
         
       </div>
+
+      <!-- Dòng nhận diện môi trường: bản cài này là hệ thống thử nghiệm. -->
+      <p class="mt-6 text-center text-xs leading-relaxed text-gray-600">Hệ thống thử nghiệm</p>
     </div>
   </div>
 </template>
@@ -59,6 +70,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
+import trongDong from '@/assets/trongdong.png';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage as toErrorMessage, readApiError } from '@/api/errors';

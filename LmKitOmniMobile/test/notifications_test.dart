@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart';
+import 'package:lmkit_omni_mobile/app/ui/app_controls.dart';
 import 'package:lmkit_omni_mobile/features/notifications/notifications_screen.dart';
 
 /// Bản giả của controller: giữ nguyên logic cập nhật state nhưng không gọi API.
@@ -48,6 +49,10 @@ class _FakeNotifications extends NotificationsController {
         ),
     ]);
   }
+
+  /// Giống bản thật: lấy lại danh sách mà không bật trạng thái loading.
+  @override
+  Future<void> poll() async => state = AsyncData(List.of(items));
 }
 
 NotificationModel _item(String id, {bool isRead = false}) => NotificationModel(
@@ -168,6 +173,105 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.markAllCalls, 1);
+  });
+
+  testWidgets('header tự gắn chuông kèm badge đỏ, không cần màn tự truyền', (
+    tester,
+  ) async {
+    final controller = _FakeNotifications([
+      _item('1'),
+      _item('2'),
+      _item('3', isRead: true),
+    ]);
+
+    await tester.pumpWidget(
+      _app(
+        Scaffold(
+          appBar: AppTopBar(title: const Text('AI Chat')),
+          body: const SizedBox.shrink(),
+        ),
+        controller,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byIcon(Icons.notifications), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+
+    // Badge phải nằm trong khung header: cắt mất số là badge vô nghĩa.
+    expect(
+      tester.getRect(find.byType(AppTopBar)).contains(
+        tester.getCenter(find.text('2')),
+      ),
+      isTrue,
+    );
+  });
+
+  testWidgets('bấm chuông trên header mở danh sách thông báo', (tester) async {
+    final controller = _FakeNotifications([_item('1')]);
+
+    await tester.pumpWidget(
+      _app(
+        Scaffold(
+          appBar: AppTopBar(title: const Text('AI Chat')),
+          body: const SizedBox.shrink(),
+        ),
+        controller,
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.notifications));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Thông báo'), findsOneWidget);
+    expect(find.text('Thông báo 1'), findsOneWidget);
+  });
+
+  testWidgets('màn tắt được chuông của header', (tester) async {
+    final controller = _FakeNotifications([_item('1')]);
+
+    await tester.pumpWidget(
+      _app(
+        Scaffold(
+          appBar: AppTopBar(
+            title: const Text('AI Chat'),
+            showNotificationBell: false,
+          ),
+          body: const SizedBox.shrink(),
+        ),
+        controller,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byIcon(Icons.notifications_none), findsNothing);
+    expect(find.byIcon(Icons.notifications), findsNothing);
+  });
+
+  testWidgets('nhịp nền cập nhật badge mà không bật vòng xoay', (tester) async {
+    final controller = _FakeNotifications([_item('1')]);
+
+    await tester.pumpWidget(
+      _app(
+        Scaffold(
+          appBar: AppTopBar(title: const Text('AI Chat')),
+          body: const SizedBox.shrink(),
+        ),
+        controller,
+      ),
+    );
+    await tester.pump();
+    expect(find.text('1'), findsOneWidget);
+
+    // Thông báo mới về giữa hai nhịp: badge phải tự đổi, và danh sách đang xem
+    // không được nhảy về trạng thái loading.
+    controller.items.add(_item('2'));
+    await tester.pump(notificationPollInterval);
+    await tester.pump();
+
+    expect(find.text('2'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
   testWidgets('danh sách rỗng hiển thị thông báo trống', (tester) async {

@@ -17,6 +17,7 @@ class LoraAdaptersScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repository = ref.watch(adminRepositoryProvider);
+    final texts = Theme.of(context).textTheme;
 
     Future<void> upload(
       BuildContext context,
@@ -38,40 +39,39 @@ class LoraAdaptersScreen extends ConsumerWidget {
         final description = TextEditingController();
         final scale = TextEditingController(text: '1.0');
         final targetModel = TextEditingController();
-        final saved = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Tải LoRA adapter'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AdminField(controller: name, label: 'Tên adapter'),
-                  AdminField(controller: description, label: 'Mô tả'),
-                  AdminField(
-                    controller: scale,
-                    label: 'Scale',
-                    hint: '1.0',
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
+        final saved = await showAppDialog<bool>(
+          context,
+          builder: (dialogContext) => AppDialog(
+            title: 'Tải LoRA adapter',
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AdminField(controller: name, label: 'Tên adapter'),
+                AdminField(controller: description, label: 'Mô tả'),
+                AdminField(
+                  controller: scale,
+                  label: 'Scale',
+                  hint: '1.0',
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
                   ),
-                  AdminField(
-                    controller: targetModel,
-                    label: 'Model đích',
-                    hint: 'Để trống nếu áp dụng cho model mặc định',
-                  ),
-                ],
-              ),
+                ),
+                AdminField(
+                  controller: targetModel,
+                  label: 'Model đích',
+                  hint: 'Để trống nếu áp dụng cho model mặc định',
+                ),
+              ],
             ),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Huỷ'),
+              AppSecondaryButton(
+                label: 'Huỷ',
+                onPressed: () => Navigator.pop(dialogContext, false),
               ),
+              const SizedBox(width: 10),
               AppPrimaryButton(
                 label: 'Tải lên',
-                onPressed: () => Navigator.pop(context, true),
+                onPressed: () => Navigator.pop(dialogContext, true),
                 expand: false,
               ),
             ],
@@ -108,41 +108,38 @@ class LoraAdaptersScreen extends ConsumerWidget {
       final name = TextEditingController(text: adapter.name);
       final scale = TextEditingController(text: adapter.scale.toString());
       var isActive = adapter.isActive;
-      final saved = await showDialog<bool>(
-        context: context,
-        builder: (context) => StatefulBuilder(
-          builder: (context, setDialogState) => AlertDialog(
-            title: const Text('Sửa adapter'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AdminField(controller: name, label: 'Tên adapter'),
-                  AdminField(
-                    controller: scale,
-                    label: 'Scale',
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
+      final saved = await showAppDialog<bool>(
+        context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AppDialog(
+            title: 'Sửa adapter',
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AdminField(controller: name, label: 'Tên adapter'),
+                AdminField(
+                  controller: scale,
+                  label: 'Scale',
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
                   ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: isActive,
-                    onChanged: (value) =>
-                        setDialogState(() => isActive = value),
-                    title: const Text('Kích hoạt'),
-                  ),
-                ],
-              ),
+                ),
+                AppSwitchTile(
+                  label: 'Kích hoạt',
+                  value: isActive,
+                  onChanged: (value) => setDialogState(() => isActive = value),
+                ),
+              ],
             ),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Huỷ'),
+              AppSecondaryButton(
+                label: 'Huỷ',
+                onPressed: () => Navigator.pop(dialogContext, false),
               ),
+              const SizedBox(width: 10),
               AppPrimaryButton(
                 label: 'Lưu',
-                onPressed: () => Navigator.pop(context, true),
+                onPressed: () => Navigator.pop(dialogContext, true),
                 expand: false,
               ),
             ],
@@ -188,27 +185,12 @@ class LoraAdaptersScreen extends ConsumerWidget {
         return;
       }
 
-      final selected = await showModalBottomSheet<CustomAgentModel>(
-        context: context,
-        showDragHandle: true,
-        builder: (context) => ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text(
-              'Gán adapter cho custom agent',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            for (final agent in agents)
-              ListTile(
-                title: Text(agent.name),
-                subtitle: agent.description == null
-                    ? null
-                    : Text(agent.description!),
-                onTap: () => Navigator.pop(context, agent),
-              ),
-          ],
-        ),
+      final selected = await showAppPicker<CustomAgentModel>(
+        context,
+        title: 'Gán adapter cho custom agent',
+        items: agents,
+        labelOf: (agent) => agent.name,
+        subtitleOf: (agent) => agent.description ?? '',
       );
       if (selected == null || !context.mounted) return;
 
@@ -242,24 +224,11 @@ class LoraAdaptersScreen extends ConsumerWidget {
         return;
       }
       if (!context.mounted) return;
-      final selected = await showModalBottomSheet<CustomAgentModel>(
-        context: context,
-        showDragHandle: true,
-        builder: (context) => ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text(
-              'Bỏ gán adapter khỏi agent',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            for (final agent in agents)
-              ListTile(
-                title: Text(agent.name),
-                onTap: () => Navigator.pop(context, agent),
-              ),
-          ],
-        ),
+      final selected = await showAppPicker<CustomAgentModel>(
+        context,
+        title: 'Bỏ gán adapter khỏi agent',
+        items: agents,
+        labelOf: (agent) => agent.name,
       );
       if (selected == null || !context.mounted) return;
       try {
@@ -321,36 +290,48 @@ class LoraAdaptersScreen extends ConsumerWidget {
         icon: const Icon(Icons.upload),
         label: const Text('Tải adapter'),
       ),
-      itemBuilder: (context, adapter, reload) => Card(
-        child: ListTile(
-          isThreeLine: true,
-          leading: Icon(adapter.isActive ? Icons.tune : Icons.tune_outlined),
-          title: Text(adapter.name),
-          subtitle: Text(
-            '${adapter.description?.trim().isNotEmpty == true ? '${adapter.description}\n' : ''}'
-            'scale ${adapter.scale} · ${adapter.displaySize}'
-            '${adapter.targetModelId?.isNotEmpty == true ? ' · ${adapter.targetModelId}' : ''}',
-          ),
-          trailing: PopupMenuButton<String>(
-            tooltip: 'Tuỳ chọn',
-            onSelected: (value) async {
-              switch (value) {
-                case 'edit':
-                  await edit(context, adapter, reload);
-                case 'assign':
-                  await assign(context, adapter, reload);
-                case 'unassign':
-                  await unassign(context, reload);
-                case 'delete':
-                  await remove(context, adapter, reload);
-              }
-            },
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'edit', child: Text('Sửa')),
-              PopupMenuItem(value: 'assign', child: Text('Gán cho agent')),
-              PopupMenuItem(value: 'unassign', child: Text('Bỏ gán')),
-              PopupMenuItem(value: 'delete', child: Text('Xoá')),
-            ],
+      itemBuilder: (context, adapter, reload) => AppCard(
+        child: AppTileRaw(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(adapter.isActive ? Icons.tune : Icons.tune_outlined),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(adapter.name, style: texts.titleSmall),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${adapter.description?.trim().isNotEmpty == true ? '${adapter.description}\n' : ''}'
+                        'scale ${adapter.scale} · ${adapter.displaySize}'
+                        '${adapter.targetModelId?.isNotEmpty == true ? ' · ${adapter.targetModelId}' : ''}',
+                        style: texts.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                AppMenuButton(
+                  tooltip: 'Tuỳ chọn',
+                  items: [
+                    AppMenuItem('Sửa', () => edit(context, adapter, reload)),
+                    AppMenuItem(
+                      'Gán cho agent',
+                      () => assign(context, adapter, reload),
+                    ),
+                    AppMenuItem('Bỏ gán', () => unassign(context, reload)),
+                    AppMenuItem(
+                      'Xoá',
+                      () => remove(context, adapter, reload),
+                      destructive: true,
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

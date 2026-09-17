@@ -103,6 +103,12 @@ Future<void> _pumpScreen(
         authControllerProvider.overrideWith(
           () => _FakeAuth(signedIn ? _session(true) : null),
         ),
+        // Chuông trên header nạp thông báo ngay khi màn dựng; test bố cục đo
+        // pixel nên không được phụ thuộc mạng thật (một request đang bay cũng
+        // đủ để `flutter_test` báo còn timer treo).
+        notificationsProvider.overrideWith(
+          () => _FakeNotifications(const []),
+        ),
       ],
       child: MaterialApp(
         theme: AppTheme.material(AppTheme.forui()),
@@ -136,6 +142,10 @@ Future<void> _pumpApp(
       key: ValueKey('app-$admin-${size.width}'),
       overrides: [
         authControllerProvider.overrideWith(() => _FakeAuth(_session(admin))),
+        // Như trên: shell có chuông nên phải chặn sẵn nguồn thông báo.
+        notificationsProvider.overrideWith(
+          () => _FakeNotifications(const []),
+        ),
       ],
       child: const LmKitOmniApp(),
     ),

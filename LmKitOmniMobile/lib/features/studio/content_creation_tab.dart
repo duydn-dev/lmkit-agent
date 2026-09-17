@@ -70,12 +70,11 @@ class _ContentCreationTabState extends State<ContentCreationTab> {
         ).textTheme.bodyMedium?.copyWith(color: AppTheme.textMuted),
       ),
       const SizedBox(height: 16),
-      TextField(
+      AppTextField(
         controller: _topic,
-        minLines: 3,
+        label: 'Chủ đề nội dung',
         maxLines: 6,
         enabled: !_busy,
-        decoration: const InputDecoration(labelText: 'Chủ đề nội dung'),
       ),
       const SizedBox(height: 12),
       AppPrimaryButton(
@@ -85,29 +84,35 @@ class _ContentCreationTabState extends State<ContentCreationTab> {
         expand: false,
       ),
       for (final stage in _stages)
-        Card(
-          margin: const EdgeInsets.only(top: 12),
-          child: ExpansionTile(
-            title: Text(stage['stageName']?.toString() ?? 'Bước'),
-            subtitle: Text(stage['isSuccess'] == true ? 'Hoàn tất' : 'Có lỗi'),
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: SelectableText(
-                  stage['content']?.toString() ??
-                      stage['errorMessage']?.toString() ??
-                      '',
-                ),
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: AppCard(
+            child: ExpansionTile(
+              title: Text(stage['stageName']?.toString() ?? 'Bước'),
+              subtitle: Text(
+                stage['isSuccess'] == true ? 'Hoàn tất' : 'Có lỗi',
               ),
-            ],
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: SelectableText(
+                    stage['content']?.toString() ??
+                        stage['errorMessage']?.toString() ??
+                        '',
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       if (_finalContent.isNotEmpty)
-        Card(
-          margin: const EdgeInsets.only(top: 16),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: SelectableText(_finalContent),
+        Padding(
+          padding: const EdgeInsets.only(top: 16),
+          child: AppCard(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: SelectableText(_finalContent),
+            ),
           ),
         ),
     ],

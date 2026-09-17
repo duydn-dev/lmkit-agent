@@ -18,7 +18,12 @@ import 'package:flutter/widgets.dart';
 /// `ImageCache` của Flutter: ảnh chỉ tải và giải mã một lần cho mỗi khoá.
 @immutable
 class DioImage extends ImageProvider<DioImage> {
-  const DioImage(this.dio, this.url, {this.headers = const {}, this.scale = 1.0});
+  const DioImage(
+    this.dio,
+    this.url, {
+    this.headers = const {},
+    this.scale = 1.0,
+  });
 
   /// Client trung tâm của app (đã có interceptor + adapter theo cấu hình).
   final Dio dio;

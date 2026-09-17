@@ -56,8 +56,9 @@ Máy thật (không phải emulator) thì đặt `API_BASE_URL` thành IP LAN c�
 backend — emulator Android dùng `10.0.2.2`, còn máy thật không truy cập được
 `localhost` của máy dev.
 
-Màn đăng nhập vẫn hiển thị **Máy chủ: …** (chỉ đọc) để khi báo lỗi cho hỗ trợ thì
-biết bản cài đang nói chuyện với máy chủ nào.
+Địa chỉ máy chủ **không hiển thị** trên màn đăng nhập: người dùng cuối không cần
+thấy URL kỹ thuật. Khi cần hỗ trợ thì đọc `API_BASE_URL` trong `env/<flavor>.json`
+của đúng bản cài đang chạy.
 
 URL LiveKit đi theo `API_BASE_URL`: nếu không đặt `LIVEKIT_URL` thì app dùng
 `ws(s)://<host của API>:7880`.

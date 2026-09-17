@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:forui/forui.dart';
 
 import '../../app/theme.dart';
 
@@ -137,37 +138,37 @@ class _WidgetSettingsScreenState extends ConsumerState<WidgetSettingsScreen> {
     try {
       final rawKey = await ref.read(adminRepositoryProvider).rotateWidgetKey();
       if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Khóa widget mới'),
+      await showAppDialog<void>(
+        context,
+        builder: (dialogContext) => AppDialog(
+          title: 'Khóa widget mới',
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Khóa chỉ hiển thị MỘT lần. Sao chép và lưu ngay.',
-                style: TextStyle(color: AppTheme.warning),
+              AppAlert(
+                message: 'Khóa chỉ hiển thị MỘT lần. Sao chép và lưu ngay.',
+                isError: true,
               ),
               const SizedBox(height: 12),
               SelectableText(rawKey),
             ],
           ),
           actions: [
-            TextButton.icon(
+            AppSecondaryButton(
+              label: 'Sao chép',
+              icon: Icons.copy,
               onPressed: () async {
+                Navigator.pop(dialogContext);
                 await Clipboard.setData(ClipboardData(text: rawKey));
-                if (context.mounted) {
-                  Navigator.pop(context);
-                  showAdminSnack(context, 'Đã sao chép khóa widget.');
-                }
+                if (!mounted) return;
+                showAdminSnack(context, 'Đã sao chép khóa widget.');
               },
-              icon: const Icon(Icons.copy, size: 18),
-              label: const Text('Sao chép'),
             ),
+            const SizedBox(width: 10),
             AppPrimaryButton(
               label: 'Đã lưu',
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(dialogContext),
               expand: false,
             ),
           ],
@@ -188,10 +189,10 @@ class _WidgetSettingsScreenState extends ConsumerState<WidgetSettingsScreen> {
       appBar: AppTopBar(
         title: const Text('Widget Settings'),
         actions: [
-          IconButton(
+          AppIconButton(
+            icon: Icons.refresh,
             tooltip: 'Làm mới',
             onPressed: _load,
-            icon: const Icon(Icons.refresh),
           ),
         ],
       ),
@@ -202,22 +203,36 @@ class _WidgetSettingsScreenState extends ConsumerState<WidgetSettingsScreen> {
               children: [
                 if (_error != null)
                   AdminBanner(message: _error!, isError: true, onRetry: _load),
-                Card(
+                AppCard(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          value: _isActive,
-                          onChanged: (value) =>
-                              setState(() => _isActive = value),
-                          title: const Text('Bật widget công khai'),
-                          subtitle: const Text(
-                            'Khi bật, trang web có khóa và origin khớp allowlist '
-                            'đều có thể chat bằng tài nguyên AI của tenant.',
-                          ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Bật widget công khai',
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Khi bật, trang web có khóa và origin khớp allowlist '
+                              'đều có thể chat bằng tài nguyên AI của tenant.',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                FSwitch(
+                                  value: _isActive,
+                                  onChange: (value) =>
+                                      setState(() => _isActive = value),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                         const Divider(),
                         AdminField(
@@ -297,7 +312,7 @@ class _WidgetSettingsScreenState extends ConsumerState<WidgetSettingsScreen> {
                 ),
                 const SizedBox(height: 16),
                 if (_isActive)
-                  Card(
+                  AppCard(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
                       child: Column(

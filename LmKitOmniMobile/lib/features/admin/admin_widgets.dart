@@ -101,10 +101,10 @@ class _AdminListViewState<T> extends ConsumerState<AdminListView<T>> {
       appBar: AppTopBar(
         title: Text(widget.title),
         actions: [
-          IconButton(
+          AppIconButton(
+            icon: Icons.refresh,
             tooltip: 'Làm mới',
             onPressed: reload,
-            icon: const Icon(Icons.refresh),
           ),
           ...?widget.extraActions?.call(context, reload),
         ],

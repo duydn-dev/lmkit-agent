@@ -44,8 +44,8 @@ class UsersScreen extends ConsumerWidget {
     WidgetRef ref,
     Future<void> Function() reload,
   ) async {
-    final created = await showDialog<bool>(
-      context: context,
+    final created = await showAppDialog<bool>(
+      context,
       builder: (_) => const _CreateUserDialog(),
     );
     if (created == true) await reload();
@@ -78,36 +78,15 @@ class _UserCardState extends ConsumerState<_UserCard> {
   }
 
   Future<void> _changeRole() async {
-    final role = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => ListView(
-        shrinkWrap: true,
-        padding: const EdgeInsets.only(bottom: 8),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: Text(
-              'Quyền hạn',
-              style: Theme.of(sheetContext).textTheme.titleMedium,
-            ),
-          ),
-          for (final option in const ['Member', 'Admin'])
-            ListTile(
-              leading: const Icon(Icons.verified_user_outlined),
-              title: Text(option),
-              subtitle: Text(
-                option == 'Admin'
-                    ? 'Toàn quyền quản trị tenant.'
-                    : 'Chỉ dùng các tính năng nghiệp vụ.',
-              ),
-              trailing: widget.user.role == option
-                  ? const Icon(Icons.check_circle, color: AppTheme.success)
-                  : null,
-              onTap: () => Navigator.pop(sheetContext, option),
-            ),
-        ],
-      ),
+    const roleOptions = ['Member', 'Admin'];
+    final role = await showAppPicker<String>(
+      context,
+      title: 'Quyền hạn',
+      items: roleOptions,
+      labelOf: (option) => option,
+      subtitleOf: (option) => option == 'Admin'
+          ? 'Toàn quyền quản trị tenant.'
+          : 'Chỉ dùng các tính năng nghiệp vụ.',
     );
     if (role == null || role == widget.user.role) return;
     await _run(
@@ -345,46 +324,45 @@ class _CreateUserDialogState extends ConsumerState<_CreateUserDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Tạo tài khoản mới'),
-    content: SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_error != null) AppAlert(message: _error!, isError: true),
-          AdminField(controller: _email, label: 'Email'),
-          AdminField(controller: _fullName, label: 'Họ và tên'),
-          AdminField(
-            controller: _password,
-            label: 'Mật khẩu',
-            hint: 'Tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và số',
-            obscure: true,
-          ),
-          const SizedBox(height: 4),
-          DropdownButtonFormField<String>(
-            initialValue: _role,
-            isExpanded: true,
-            decoration: const InputDecoration(
-              labelText: 'Quyền hạn',
-              helperText: 'Admin có toàn quyền quản trị tenant.',
-            ),
-            items: const [
-              DropdownMenuItem(value: 'Member', child: Text('Member')),
-              DropdownMenuItem(value: 'Admin', child: Text('Admin')),
-            ],
-            onChanged: _busy
-                ? null
-                : (value) => setState(() => _role = value ?? 'Member'),
-          ),
-        ],
-      ),
+  Widget build(BuildContext context) => AppDialog(
+    title: 'Tạo tài khoản mới',
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_error != null) AppAlert(message: _error!, isError: true),
+        AdminField(controller: _email, label: 'Email'),
+        AdminField(controller: _fullName, label: 'Họ và tên'),
+        AdminField(
+          controller: _password,
+          label: 'Mật khẩu',
+          hint: 'Tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và số',
+          obscure: true,
+        ),
+        const SizedBox(height: 4),
+        // Ô chọn của hệ thiết kế: `DropdownButtonFormField` của Material cần
+        // tổ tiên `Material` mà `AppDialog` (Forui) không có — xem `AppSelectTile`.
+        AppSelectTile<String>(
+          label: 'Quyền hạn',
+          icon: Icons.verified_user_outlined,
+          value: _role,
+          items: const ['Member', 'Admin'],
+          labelOf: (value) => value,
+          subtitleOf: (value) => value == 'Admin'
+              ? 'Toàn quyền quản trị tenant.'
+              : 'Chỉ dùng các tính năng nghiệp vụ.',
+          helper: 'Admin có toàn quyền quản trị tenant.',
+          enabled: !_busy,
+          onChanged: (value) => setState(() => _role = value),
+        ),
+      ],
     ),
     actions: [
-      TextButton(
+      AppSecondaryButton(
+        label: 'Huỷ',
         onPressed: _busy ? null : () => Navigator.pop(context),
-        child: const Text('Huỷ'),
       ),
+      const SizedBox(width: 10),
       AppPrimaryButton(
         label: 'Tạo tài khoản',
         busy: _busy,

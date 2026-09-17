@@ -123,20 +123,21 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
   @override
   Widget build(BuildContext context) {
     final visible = _visible;
+    final texts = Theme.of(context).textTheme;
 
     return Scaffold(
       appBar: AppTopBar(
         title: const Text('RAG Documents'),
         actions: [
-          IconButton(
+          AppIconButton(
+            icon: _grid ? Icons.view_list_outlined : Icons.grid_view,
             tooltip: _grid ? 'Xem dạng danh sách' : 'Xem dạng lưới',
             onPressed: () => setState(() => _grid = !_grid),
-            icon: Icon(_grid ? Icons.view_list_outlined : Icons.grid_view),
           ),
-          IconButton(
-            onPressed: _pickAndUpload,
+          AppIconButton(
+            icon: Icons.cloud_upload_outlined,
             tooltip: 'Tải tài liệu lên',
-            icon: const Icon(Icons.cloud_upload_outlined),
+            onPressed: _pickAndUpload,
           ),
         ],
       ),
@@ -196,18 +197,38 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
                 for (final document in visible)
                   AppCard(
                     padding: EdgeInsets.zero,
-                    child: ListTile(
-                      leading: Icon(_icon(document.fileName)),
-                      title: Text(
-                        document.fileName,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(_status(document)),
-                      trailing: IconButton(
-                        onPressed: () => _delete(document),
-                        tooltip: 'Xóa tài liệu',
-                        icon: const Icon(Icons.delete_outline),
+                    child: AppTileRaw(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                        child: Row(
+                          children: [
+                            Icon(_icon(document.fileName)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    document.fileName,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: texts.titleSmall,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    _status(document),
+                                    style: texts.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            AppIconButton(
+                              icon: Icons.delete_outline,
+                              tooltip: 'Xóa tài liệu',
+                              onPressed: () => _delete(document),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -258,11 +279,10 @@ class _DocumentGridTile extends StatelessWidget {
                       : Icons.description_outlined,
                 ),
                 const Spacer(),
-                IconButton(
+                AppIconButton(
+                  icon: Icons.delete_outline,
                   tooltip: 'Xóa tài liệu',
-                  iconSize: 18,
                   onPressed: onDelete,
-                  icon: const Icon(Icons.delete_outline),
                 ),
               ],
             ),

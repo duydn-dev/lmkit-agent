@@ -44,11 +44,13 @@ Future<AgentFormResult?> showAgentForm(
   required List<KnowledgeDocModel> documents,
   List<LoraAdapterModel> loraAdapters = const [],
   CustomAgentModel? existing,
-}) => showModalBottomSheet<AgentFormResult>(
-  context: context,
+}) => showAppSheet<AgentFormResult>(
+  context,
   isScrollControlled: true,
-  showDragHandle: true,
-  builder: (context) => _AgentFormSheet(
+  // Không tự cộng `viewInsets` ở đây: `showFSheet` đã tự chừa chỗ cho bàn phím,
+  // cộng thêm lần nữa thì phần đầu form (tiêu đề) bị đẩy ra ngoài khung sheet —
+  // đúng hiện tượng tiêu đề "Tạo Custom Agent" bị cắt cụt.
+  builder: (sheetContext) => _AgentFormSheet(
     tools: tools,
     documents: documents,
     loraAdapters: loraAdapters,
@@ -112,6 +114,16 @@ class _AgentFormSheetState extends State<_AgentFormSheet> {
     super.dispose();
   }
 
+  /// Nhãn của adapter đang chọn; `''` (và id không còn tồn tại) là "không dùng".
+  String _adapterLabel(String id) {
+    if (id.isEmpty) return 'Không dùng adapter';
+    final adapter = widget.loraAdapters.firstWhere(
+      (adapter) => adapter.id == id,
+      orElse: () => widget.loraAdapters.first,
+    );
+    return adapter.isActive ? adapter.name : '${adapter.name} (tạm tắt)';
+  }
+
   void _submit() {
     final name = _name.text.trim();
     if (name.isEmpty) {
@@ -138,25 +150,32 @@ class _AgentFormSheetState extends State<_AgentFormSheet> {
   }
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: EdgeInsets.only(
-      left: 16,
-      right: 16,
-      bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+  Widget build(BuildContext context) => ConstrainedBox(
+    // Cao tối đa 85% màn (không phải cố định 85%): form ngắn vừa khít nội dung,
+    // form dài — như khi bật chọn công cụ thủ công — mới chạm trần và cuộn.
+    constraints: BoxConstraints(
+      maxHeight: MediaQuery.of(context).size.height * 0.85,
     ),
-    child: SizedBox(
-      height: MediaQuery.of(context).size.height * 0.85,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Tiêu đề có khoảng thở phía trên: để sát mép sheet thì chữ bị cắt cụt
+        // trông như màn lỗi.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+          child: Text(
             widget.existing == null ? 'Tạo Custom Agent' : 'Sửa Custom Agent',
             style: Theme.of(context).textTheme.titleLarge,
           ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: ListView(
-              children: [
+        ),
+        Flexible(
+          child: ListView(
+            // Không cộng `viewInsets` cho đáy danh sách: `showFSheet` đã tự co
+            // sheet khi bàn phím mở (`resizeToAvoidBottomInset`), cộng thêm lần
+            // nữa thì phần đầu form bị đẩy ra ngoài khung — tiêu đề bị cắt cụt.
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            children: [
                 AppTextField(controller: _name, label: 'Tên'),
                 AppTextField(controller: _description, label: 'Mô tả'),
                 AppTextField(
@@ -170,24 +189,20 @@ class _AgentFormSheetState extends State<_AgentFormSheet> {
                   label: 'Icon',
                   hint: 'Một emoji, ví dụ 🤖',
                 ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
+                AppSwitchTile(
+                  label: 'Chia sẻ cho cả tenant',
+                  subtitle:
+                      'Người dùng khác trong tenant có thể dùng agent này.',
                   value: _shared,
                   onChanged: (value) => setState(() => _shared = value),
-                  title: const Text('Chia sẻ cho cả tenant'),
-                  subtitle: const Text(
-                    'Người dùng khác trong tenant có thể dùng agent này.',
-                  ),
                 ),
                 const Divider(),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
+                AppSwitchTile(
+                  label: 'Dùng bộ công cụ mặc định',
+                  subtitle:
+                      'Tắt để tự chọn đúng những công cụ agent được phép gọi.',
                   value: _defaultTools,
                   onChanged: (value) => setState(() => _defaultTools = value),
-                  title: const Text('Dùng bộ công cụ mặc định'),
-                  subtitle: const Text(
-                    'Tắt để tự chọn đúng những công cụ agent được phép gọi.',
-                  ),
                 ),
                 if (!_defaultTools) ...[
                   const SizedBox(height: 8),
@@ -195,18 +210,17 @@ class _AgentFormSheetState extends State<_AgentFormSheet> {
                     const Text('Server không trả về danh sách công cụ.')
                   else
                     for (final tool in widget.tools)
-                      CheckboxListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppCheckTile(
+                        label: tool.label,
+                        subtitle: tool.description,
                         value: _tools.contains(tool.name),
                         onChanged: (value) => setState(() {
-                          if (value == true) {
+                          if (value) {
                             _tools.add(tool.name);
                           } else {
                             _tools.remove(tool.name);
                           }
                         }),
-                        title: Text(tool.label),
-                        subtitle: Text(tool.description),
                       ),
                 ],
                 const Divider(),
@@ -219,20 +233,19 @@ class _AgentFormSheetState extends State<_AgentFormSheet> {
                   const Text('Bạn chưa có tài liệu nào trong kho.')
                 else
                   for (final document in widget.documents)
-                    CheckboxListTile(
-                      contentPadding: EdgeInsets.zero,
+                    AppCheckTile(
+                      label: document.fileName,
+                      subtitle: document.isVectorized
+                          ? 'Đã vector hóa'
+                          : 'Đang xử lý',
                       value: _documents.contains(document.id),
                       onChanged: (value) => setState(() {
-                        if (value == true) {
+                        if (value) {
                           _documents.add(document.id);
                         } else {
                           _documents.remove(document.id);
                         }
                       }),
-                      title: Text(document.fileName),
-                      subtitle: Text(
-                        document.isVectorized ? 'Đã vector hóa' : 'Đang xử lý',
-                      ),
                     ),
                 const Divider(),
                 const AppSectionTitle(
@@ -245,42 +258,43 @@ class _AgentFormSheetState extends State<_AgentFormSheet> {
                     'Không có adapter khả dụng (tính năng có thể đang tắt).',
                   )
                 else
-                  DropdownButtonFormField<String?>(
-                    initialValue: _loraAdapterId,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Adapter',
-                      helperText: 'Để trống nếu không dùng adapter riêng.',
-                    ),
+                  // Ô chọn của hệ thiết kế: sheet Forui không tra được tổ tiên
+                  // `Material` nên `DropdownButtonFormField` ở đây sẽ làm cả
+                  // sheet trắng xoá — xem `AppSelectTile`.
+                  //
+                  // `''` là "không dùng adapter" chứ không phải `null`: giá trị
+                  // `null` từ sheet chọn trùng với "người dùng bấm ra ngoài", nên
+                  // không phân biệt được hai trường hợp.
+                  AppSelectTile<String>(
+                    label: 'Adapter',
+                    icon: Icons.tune,
+                    value: _loraAdapterId ?? '',
                     items: [
-                      const DropdownMenuItem<String?>(
-                        value: null,
-                        child: Text('Không dùng adapter'),
-                      ),
-                      for (final adapter in widget.loraAdapters)
-                        DropdownMenuItem<String?>(
-                          value: adapter.id,
-                          child: Text(
-                            adapter.isActive
-                                ? adapter.name
-                                : '${adapter.name} (tạm tắt)',
-                          ),
-                        ),
+                      '',
+                      for (final adapter in widget.loraAdapters) adapter.id,
                     ],
-                    onChanged: (value) =>
-                        setState(() => _loraAdapterId = value),
+                    labelOf: _adapterLabel,
+                    helper: 'Để trống nếu không dùng adapter riêng.',
+                    onChanged: (value) => setState(
+                      () => _loraAdapterId = value.isEmpty ? null : value,
+                    ),
                   ),
                 const SizedBox(height: 8),
               ],
             ),
           ),
-          const SizedBox(height: 12),
-          AppPrimaryButton(
+        // Đường kẻ tách vùng cuộn khỏi nút lưu: danh sách bị cắt ở mép cuộn là
+        // chuyện bình thường, nhưng phải đọc ra "còn cuộn được" chứ không phải
+        // "form bị cắt cụt".
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          child: AppPrimaryButton(
             label: widget.existing == null ? 'Tạo agent' : 'Lưu thay đổi',
             onPressed: _submit,
           ),
-        ],
-      ),
+        ),
+      ],
     ),
   );
 }

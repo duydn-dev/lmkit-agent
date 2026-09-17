@@ -119,24 +119,114 @@ class AppTheme {
   /// Forui không cho đổi `colors`/`typography` qua `copyWith`, nên phải tạo
   /// `FThemeData` mới từ bảng màu Chính phủ — cách làm chính thức trong tài liệu
   /// Forui. Chỉ có theme sáng, đúng như web.
+  ///
+  /// Sau khi dựng nền, các style thành phần được "vay" từ theme có sẵn
+  /// (`FThemes.zinc.light.touch`) rồi tinh chỉnh bằng delta của chính Forui:
+  /// thẻ viền phẳng bo 12, alert vuông góc bo 8, tab indicator vàng sao,
+  /// typography đủ các cỡ theo thang chữ của web. Mọi component Forui
+  /// (FCard, FAlert, FTabs, FTextField, FTile…) nhìn thấy đều ra đúng diện mạo
+  /// Chính phủ mà không cần mỗi màn tự style.
   static FThemeData forui() {
     final tokens = colors();
-    return FThemeData(
+    final typeface = FTypeface.inherit(
+      colors: tokens,
+      touch: true,
+      fontFamily: fontFamily,
+    );
+
+    final base = FThemeData(
       debugLabel: 'CILA government light',
       touch: true,
       colors: tokens,
-      typography: FTypography(
-        display: FTypeface.inherit(
-          colors: tokens,
-          touch: true,
-          fontFamily: fontFamily,
-        ),
-        body: FTypeface.inherit(
-          colors: tokens,
-          touch: true,
-          fontFamily: fontFamily,
+      typography: FTypography(display: typeface, body: typeface),
+    );
+
+    // Thẻ: viền phẳng 1px, bo 12 (`rounded-xl` của web), nền trắng — không bóng.
+    // Forui 0.25 dùng **delta** khi copyWith style: `.value(...)` thay hoàn toàn.
+    final cardStyle = base.cardStyle.copyWith(
+      decoration: DecorationDelta.value(
+        BoxDecoration(
+          color: Colors.white,
+          borderRadius: const BorderRadius.all(Radius.circular(radius)),
+          border: Border.all(color: border),
         ),
       ),
+      titleTextStyle: TextStyleDelta.value(
+        typeface.md.copyWith(fontWeight: FontWeight.w600, color: textPrimary),
+      ),
+      subtitleTextStyle: TextStyleDelta.value(
+        typeface.xs.copyWith(color: textMuted),
+      ),
+    );
+
+    // Alert theo đúng biến thể của Forui thay vì tô đỏ mọi thứ: băng thường
+    // (thông tin) dùng bảng xanh của web `bg-blue-50 border-blue-100
+    // text-blue-700`, băng phá huỷ (lỗi) dùng `bg-red-50 border-red-200
+    // text-red-700`. `FAlertVariant` chỉ có 2 giá trị nên ánh xạ 1–1 này là đủ.
+    FAlertStyle alertVariant({
+      required Color background,
+      required Color side,
+      required Color text,
+    }) => FAlertStyle(
+      decoration: ShapeDecoration(
+        color: background,
+        shape: RoundedSuperellipseBorder(
+          side: BorderSide(color: side),
+          borderRadius: const BorderRadius.all(Radius.circular(radiusSmall)),
+        ),
+      ),
+      iconStyle: const IconThemeData(size: 18),
+      titleTextStyle: typeface.xs.copyWith(
+        fontWeight: FontWeight.w600,
+        color: text,
+      ),
+      subtitleTextStyle: typeface.xs.copyWith(color: text),
+    );
+
+    final alertStyles =
+        FVariants<
+          FAlertVariantConstraint,
+          FAlertVariant,
+          FAlertStyle,
+          FAlertStyleDelta
+        >.raw(
+          alertVariant(
+            background: infoSurface,
+            side: infoBorder,
+            text: infoText,
+          ),
+          {
+            FAlertVariant.destructive: alertVariant(
+              background: dangerSurface,
+              side: dangerBorder,
+              text: dangerText,
+            ),
+          },
+        );
+
+    // Tabs: indicator vàng sao dưới tab đang chọn, viền dưới nhạt — đúng
+    // `indicatorColor: govYellow` mà TabBar Material đang dùng.
+    final tabsStyle = base.tabsStyle.copyWith(
+      indicatorDecoration: DecorationDelta.value(
+        ShapeDecoration(
+          color: govYellow,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(2)),
+          ),
+        ),
+      ),
+    );
+
+    // Scaffold: nền surface (F8FAFC) — WatermarkBackground vẫn vẽ hoạ tiết
+    // phía sau vì Scaffold Material nằm trong suốt; đây chỉ là nền cho các
+    // phần Forui tự quản (FScaffold).
+    final scaffoldStyle = base.scaffoldStyle.copyWith(backgroundColor: surface);
+
+    return base.copyWith(
+      cardStyle: cardStyle,
+      alertStyles: alertStyles,
+      tabsStyle: tabsStyle,
+      scaffoldStyle: scaffoldStyle,
     );
   }
 
@@ -150,7 +240,11 @@ class AppTheme {
 
     return base.copyWith(
       brightness: Brightness.light,
-      scaffoldBackgroundColor: surface,
+      // Trong suốt để watermark trống đồng vẽ ở `MaterialApp.builder`
+      // (`WatermarkBackground`) lộ ra sau mọi màn. Màu nền thật vẫn là
+      // `AppTheme.surface`, do chính watermark layer tô — nên Scaffold nào
+      // không tự đặt `backgroundColor` đều nhìn thấy đúng nền cũ + hoạ tiết.
+      scaffoldBackgroundColor: Colors.transparent,
       canvasColor: surface,
       splashFactory: InkSparkle.splashFactory,
       textTheme: textTheme,
@@ -277,7 +371,7 @@ class AppTheme {
         ),
         titleTextStyle: const TextStyle(
           fontFamily: fontFamily,
-          fontSize: 18,
+          fontSize: 16,
           fontWeight: FontWeight.w600,
           color: textPrimary,
         ),
@@ -419,27 +513,27 @@ class AppTheme {
 
   /// Thang chữ duy nhất của app, lấy đúng các bước mà web đang dùng.
   ///
-  /// Web viết bằng Tailwind nên cỡ chữ rơi vào vài giá trị cố định; bảng dưới
-  /// là ánh xạ 1–1 sang token Material để mọi màn dùng chung thay vì tự đặt
-  /// `TextStyle(fontSize: …)`:
+  /// **14 là cỡ chuẩn** cho nội dung và tiêu đề mục (giống `text-sm` của web,
+  /// cũng là `bodyMedium` mặc định của Material trên điện thoại). Cỡ 16 của
+  /// bảng cũ hợp với màn desktop rộng, còn trên điện thoại nó làm mọi danh
+  /// sách, ô nhập và tiêu đề đều phình ra so với bề ngang màn.
   ///
-  /// | Token | px | Nguồn bên web |
+  /// | Token | px | Dùng cho |
   /// |---|---|---|
-  /// | `displaySmall` | 30 | `text-3xl font-bold` |
-  /// | `headlineSmall` | 24 | `text-2xl font-bold` (tiêu đề đăng nhập) |
-  /// | `titleLarge` | 20 | `text-xl font-bold` (tiêu đề trang) |
-  /// | `titleMedium` | 16 | `text-base font-semibold` (tiêu đề thẻ/mục) |
-  /// | `titleSmall` | 14 | `text-sm font-semibold` |
-  /// | `bodyLarge` | 16 | `text-base` (nội dung tin nhắn) |
-  /// | `bodyMedium` | 14 | `text-sm` (thân mặc định của gần 500 chỗ) |
-  /// | `bodySmall` | 12 | `text-xs` (chú thích, mô tả phụ) |
-  /// | `labelLarge` | 14 | `text-sm font-medium` (nhãn nút) |
-  /// | `labelMedium` | 12 | `text-xs font-medium` |
-  /// | `labelSmall` | 11 | `text-[11px] font-semibold uppercase tracking-wider`
-  /// (nhãn siêu nhỏ: khối suy luận, huy hiệu) |
+  /// | `displaySmall` | 24 | Tiêu đề lớn nhất (đăng nhập) |
+  /// | `headlineSmall` | 20 | Tiêu đề khối lớn trong nội dung |
+  /// | `titleLarge` | 16 | Tiêu đề trang/khối, tiêu đề sheet |
+  /// | `titleMedium` | 14 | Tiêu đề thẻ, nhãn nhóm |
+  /// | `titleSmall` | 14 | Tiêu đề mục trong danh sách |
+  /// | `bodyLarge` | 14 | Nội dung chính (tin nhắn, mô tả dài) |
+  /// | `bodyMedium` | 14 | Thân mặc định |
+  /// | `bodySmall` | 12 | Chú thích, mô tả phụ |
+  /// | `labelLarge` | 14 | Nhãn nút |
+  /// | `labelMedium` | 12 | Nhãn nhỏ |
+  /// | `labelSmall` | 11 | Nhãn siêu nhỏ (khối suy luận, huy hiệu)
   ///
-  /// Hai giá trị không nằm trên thang: `appBarTitleSize` (18) là dung hòa cho
-  /// bề ngang 320dp, và `badgeSize` (10) theo huy hiệu `text-[9px]` của web.
+  /// Hai giá trị không nằm trên thang: `appBarTitleSize` (16) và `badgeSize`
+  /// (10) theo huy hiệu `text-[9px]` của web.
   static TextTheme _textTheme(TextTheme base) {
     TextStyle token(
       TextStyle? source, {
@@ -462,23 +556,23 @@ class AppTheme {
         .copyWith(
           displaySmall: token(
             base.displaySmall,
-            size: 30,
+            size: 24,
             weight: FontWeight.w700,
           ),
           headlineSmall: token(
             base.headlineSmall,
-            size: 24,
+            size: 20,
             weight: FontWeight.w700,
           ),
           titleLarge: token(
             base.titleLarge,
-            size: 20,
+            size: 16,
             weight: FontWeight.w700,
             color: textPrimary,
           ),
           titleMedium: token(
             base.titleMedium,
-            size: 16,
+            size: 14,
             weight: FontWeight.w600,
             color: textPrimary,
           ),
@@ -488,11 +582,10 @@ class AppTheme {
             weight: FontWeight.w600,
             color: textPrimary,
           ),
-          // Tin nhắn chat cần dòng thoáng hơn chữ thường (web: `text-base` với
-          // khoảng cách dòng 1.6 trong khối trả lời).
+          // Nội dung dài (tin nhắn, mô tả) cần dòng thoáng hơn chữ thường.
           bodyLarge: token(
             base.bodyLarge,
-            size: 16,
+            size: 14,
             height: 1.6,
             color: textPrimary,
           ),
@@ -527,9 +620,10 @@ class AppTheme {
   }
 
   /// Cỡ tiêu đề trên AppBar. Web đặt tiêu đề trang ở `text-xl` (20) nhưng nằm
-  /// trong vùng nội dung; trên điện thoại 320dp, 20px cộng nút quay lại và hai
-  /// nút hành động sẽ bị cắt, nên lấy 18 (`text-lg`) và luôn cắt bằng ellipsis.
-  static const appBarTitleSize = 18.0;
+  /// trong vùng nội dung; trên điện thoại, 20px cộng nút quay lại và hai nút
+  /// hành động sẽ bị cắt, nên lấy 16 — vẫn hơn nội dung một bậc mà đủ chỗ cho
+  /// tiêu đề dài — và luôn cắt bằng ellipsis.
+  static const appBarTitleSize = 16.0;
 
   /// Huy hiệu số (thông báo chưa đọc) — web dùng `text-[9px]`.
   static const badgeSize = 10.0;

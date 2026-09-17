@@ -80,8 +80,8 @@ class ApiKeysScreen extends ConsumerWidget {
     WidgetRef ref,
     Future<void> Function() reload,
   ) async {
-    final created = await showDialog<Map<String, dynamic>>(
-      context: context,
+    final created = await showAppDialog<Map<String, dynamic>>(
+      context,
       builder: (_) => const _CreateApiKeyDialog(),
     );
     if (created == null) return;
@@ -98,30 +98,27 @@ class ApiKeysScreen extends ConsumerWidget {
     final rawKey = created['rawKey']?.toString() ?? '';
     final name = created['name']?.toString() ?? '';
     var copied = false;
-    await showDialog<void>(
-      context: context,
+    await showAppDialog<void>(
+      context,
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => AlertDialog(
-          icon: const Icon(
-            Icons.warning_amber_rounded,
-            color: AppTheme.warning,
-          ),
-          title: const Text('Lưu khóa ngay bây giờ'),
+        builder: (dialogContext, setDialogState) => AppDialog(
+          title: 'Lưu khóa ngay bây giờ',
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'API key "$name" đã được tạo. Sau khi đóng bảng này, hệ thống '
-                'không thể hiển thị lại khóa.',
+              AppAlert(
+                message:
+                    'API key "$name" đã được tạo. Sau khi đóng bảng này, hệ '
+                    'thống không thể hiển thị lại khóa.',
+                isError: true,
               ),
-              const SizedBox(height: 12),
               SelectableText(
                 rawKey,
                 style: const TextStyle(fontFamily: 'monospace'),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   AppSecondaryButton(
@@ -310,39 +307,38 @@ class _CreateApiKeyDialogState extends ConsumerState<_CreateApiKeyDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Tạo API key'),
-    content: SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_error != null) AppAlert(message: _error!, isError: true),
-          AdminField(controller: _name, label: 'Tên khóa'),
-          AdminField(
-            controller: _expires,
-            label: 'Hạn dùng (ngày)',
-            hint: '1 – 365, mặc định 90',
-            keyboardType: TextInputType.number,
-          ),
-          AdminField(
-            controller: _maxRequests,
-            label: 'Hạn mức request',
-            hint: '0 = không giới hạn',
-            keyboardType: TextInputType.number,
-          ),
-          Text(
-            'Mỗi người dùng tối đa 5 khóa còn hiệu lực.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
-      ),
+  Widget build(BuildContext context) => AppDialog(
+    title: 'Tạo API key',
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_error != null) AppAlert(message: _error!, isError: true),
+        AdminField(controller: _name, label: 'Tên khóa'),
+        AdminField(
+          controller: _expires,
+          label: 'Hạn dùng (ngày)',
+          hint: '1 – 365, mặc định 90',
+          keyboardType: TextInputType.number,
+        ),
+        AdminField(
+          controller: _maxRequests,
+          label: 'Hạn mức request',
+          hint: '0 = không giới hạn',
+          keyboardType: TextInputType.number,
+        ),
+        Text(
+          'Mỗi người dùng tối đa 5 khóa còn hiệu lực.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ],
     ),
     actions: [
-      TextButton(
+      AppSecondaryButton(
+        label: 'Huỷ',
         onPressed: _busy ? null : () => Navigator.pop(context),
-        child: const Text('Huỷ'),
       ),
+      const SizedBox(width: 10),
       AppPrimaryButton(
         label: 'Tạo khóa',
         busy: _busy,

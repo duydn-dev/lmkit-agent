@@ -263,13 +263,7 @@ Khi cần sửa code FE/BE, thay vì chạy toàn bộ trong container:
 # 1. Chỉ dựng hạ tầng:
 docker compose up -d
 
-# 2. Backend (terminal 1) — .env KHÔNG được dotnet run tự đọc; set env trước:
-$env:ConnectionStrings__PostgreSql="Server=localhost;Port=5432;Database=LmKitAgent;Username=postgres;Password=<POSTGRES_PASSWORD>;"
-$env:ConnectionStrings__Redis="localhost:6379,password=<REDIS_PASSWORD>"
-$env:VectorStore__BaseUrl="http://localhost:6334"
-$env:JwtSettings__SecretKey="<JWT_SECRET_KEY>"
-$env:Database__ApplyMigrations="true"
-$env:WebSearch__Searx__BaseUrl="http://localhost:8888"   # tùy chọn: bật web search ở chế độ dev
+# 2. Backend (terminal 1):
 dotnet run --project LmKitOmniApi        # API: http://localhost:5032
 
 # 3. Frontend (terminal 2):
@@ -278,7 +272,27 @@ npm ci
 npm run dev                              # UI: http://localhost:5173 (proxy /api về 5032)
 ```
 
-`http://localhost:5173` có sẵn trong CORS allowlist của `appsettings.json`. Chỉ compose mới set `WebSearch__Searx__BaseUrl`, nên chạy `dotnet run` trần thì web search báo "not configured" cho tới khi bạn tự set biến đó.
+`http://localhost:5173` có sẵn trong CORS allowlist của `appsettings.json`.
+
+Ở chế độ Development, `dotnet run` đọc sẵn kết nối/jwt/bootstrap từ `LmKitOmniApi/appsettings.Development.json` — file này bị `.gitignore` chặn (khoá máy-local). Copy giá trị từ `.env` vào file đó nếu chưa có:
+
+```jsonc
+{
+  "ConnectionStrings": {
+    "PostgreSql": "Server=localhost;Port=5432;Database=LmKitAgent;Username=postgres;Password=<POSTGRES_PASSWORD>;",
+    "Redis": "localhost:6379,password=<REDIS_PASSWORD>"
+  },
+  "JwtSettings": { "SecretKey": "<JWT_SECRET_KEY>" },
+  "Database": { "ApplyMigrations": true },
+  "BootstrapAdmin": {
+    "Enabled": true,
+    "Email": "<BOOTSTRAP_ADMIN_EMAIL>",
+    "Password": "<BOOTSTRAP_ADMIN_PASSWORD>"
+  }
+}
+```
+
+Web search dev dùng `WebSearch__Searx__BaseUrl` (mặc định đã trỏ `http://localhost:8888` trong `appsettings.json`); nếu cần ghi đè thì set biến môi trường như cũ trước `dotnet run`.
 
 ## Kiểm thử
 

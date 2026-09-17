@@ -382,10 +382,10 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
         builder: (context, _) => Text(_pageTitles[_tabs.index]),
       ),
       actions: [
-        IconButton(
+        AppIconButton(
+          icon: Icons.refresh,
           tooltip: 'Làm mới',
           onPressed: _loadAll,
-          icon: const Icon(Icons.refresh),
         ),
       ],
       bottom: TabBar(
@@ -404,15 +404,13 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
     body: Column(
       children: [
         if (_error != null)
-          MaterialBanner(
-            content: Text(_error!),
-            backgroundColor: Theme.of(context).colorScheme.errorContainer,
-            actions: [
-              TextButton(
-                onPressed: () => setState(() => _error = null),
-                child: const Text('Đóng'),
-              ),
-            ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: AppAlert(
+              message: _error!,
+              isError: true,
+              onRetry: () => setState(() => _error = null),
+            ),
           ),
         Expanded(
           child: RefreshIndicator(
@@ -453,11 +451,7 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
           ),
         ),
         if (add != null)
-          IconButton(
-            tooltip: 'Thêm mới',
-            onPressed: add,
-            icon: const Icon(Icons.add),
-          ),
+          AppIconButton(icon: Icons.add, tooltip: 'Thêm mới', onPressed: add),
       ],
     ),
   );
@@ -485,44 +479,36 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
               'Tạo agent riêng để ghim persona, công cụ và tài liệu cho từng nghiệp vụ.',
         ),
       for (final agent in _agents)
-        AppCard(
-          padding: EdgeInsets.zero,
-          child: ListTile(
-            leading: CircleAvatar(
-              child: Text(agent.icon?.isNotEmpty == true ? agent.icon! : '🤖'),
-            ),
-            title: Text(agent.name),
-            subtitle: Text(
-              '${agent.description ?? agent.personaPrompt ?? 'Không có mô tả.'}\n'
-              '${agent.allowedTools == null ? 'Công cụ mặc định' : '${agent.allowedTools!.length} công cụ'}'
-              '${agent.knowledgeDocumentIds.isEmpty ? '' : ' · ${agent.knowledgeDocumentIds.length} tài liệu ghim'}'
-              '${agent.isSharedWithTenant ? ' · chia sẻ tenant' : ''}',
-            ),
-            isThreeLine: true,
-            onTap: agent.isOwner ? () => _openAgentForm(existing: agent) : null,
-            trailing: agent.isOwner
-                ? PopupMenuButton<String>(
-                    tooltip: 'Tuỳ chọn',
-                    onSelected: (value) => switch (value) {
-                      'chat' => _chatWithAgent(agent),
-                      'edit' => _openAgentForm(existing: agent),
-                      _ => _deleteAgent(agent),
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
-                        value: 'chat',
-                        child: Text('Chat với agent'),
-                      ),
-                      PopupMenuItem(value: 'edit', child: Text('Sửa')),
-                      PopupMenuItem(value: 'delete', child: Text('Xoá')),
-                    ],
-                  )
-                : IconButton(
-                    tooltip: 'Chat với agent',
-                    onPressed: () => _chatWithAgent(agent),
-                    icon: const Icon(Icons.chat_bubble_outline),
-                  ),
+        AppTile(
+          prefix: CircleAvatar(
+            child: Text(agent.icon?.isNotEmpty == true ? agent.icon! : '🤖'),
           ),
+          title: Text(agent.name),
+          subtitle: Text(
+            '${agent.description ?? agent.personaPrompt ?? 'Không có mô tả.'}\n'
+            '${agent.allowedTools == null ? 'Công cụ mặc định' : '${agent.allowedTools!.length} công cụ'}'
+            '${agent.knowledgeDocumentIds.isEmpty ? '' : ' · ${agent.knowledgeDocumentIds.length} tài liệu ghim'}'
+            '${agent.isSharedWithTenant ? ' · chia sẻ tenant' : ''}',
+          ),
+          onTap: agent.isOwner ? () => _openAgentForm(existing: agent) : null,
+          suffix: agent.isOwner
+              ? AppMenuButton(
+                  tooltip: 'Tuỳ chọn',
+                  items: [
+                    AppMenuItem('Chat với agent', () => _chatWithAgent(agent)),
+                    AppMenuItem('Sửa', () => _openAgentForm(existing: agent)),
+                    AppMenuItem(
+                      'Xoá',
+                      () => _deleteAgent(agent),
+                      destructive: true,
+                    ),
+                  ],
+                )
+              : AppIconButton(
+                  tooltip: 'Chat với agent',
+                  onPressed: () => _chatWithAgent(agent),
+                  icon: Icons.chat_bubble_outline,
+                ),
         ),
     ],
   );
@@ -543,30 +529,28 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
               'Lịch tự động chạy một prompt theo giờ hoặc theo ngày bạn chọn.',
         ),
       for (final task in _schedules)
-        Card(
-          child: ListTile(
-            title: Text(task.name),
-            subtitle: Text(
-              '${task.scheduleKind} • ${task.prompt}',
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-            ),
-            isThreeLine: true,
-            leading: Icon(
-              task.enabled ? Icons.schedule : Icons.pause_circle_outline,
-              color: task.enabled ? AppTheme.success : AppTheme.textMuted,
-            ),
-            trailing: PopupMenuButton<String>(
-              onSelected: (value) async {
-                if (value == 'toggle') await _repo.toggleSchedule(task.id);
-                if (value == 'delete') await _repo.deleteSchedule(task.id);
+        AppTile(
+          title: Text(task.name),
+          subtitle: Text(
+            '${task.scheduleKind} • ${task.prompt}',
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+          prefix: Icon(
+            task.enabled ? Icons.schedule : Icons.pause_circle_outline,
+            color: task.enabled ? AppTheme.success : AppTheme.textMuted,
+          ),
+          suffix: AppMenuButton(
+            items: [
+              AppMenuItem('Bật / tắt', () async {
+                await _repo.toggleSchedule(task.id);
                 _loadAll();
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'toggle', child: Text('Bật / tắt')),
-                PopupMenuItem(value: 'delete', child: Text('Xóa')),
-              ],
-            ),
+              }),
+              AppMenuItem('Xóa', () async {
+                await _repo.deleteSchedule(task.id);
+                _loadAll();
+              }, destructive: true),
+            ],
           ),
         ),
     ],
@@ -581,37 +565,36 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            TextField(
+            // Ô nhập và ô chọn của hệ thiết kế (Forui), không dùng widget
+            // Material: cùng thang chữ, cùng viền với phần còn lại của app.
+            AppTextField(
               controller: _runGoal,
-              minLines: 2,
+              label: 'Mục tiêu cho agent',
+              hint: 'Ví dụ: Tổng hợp hợp đồng tháng 9 và liệt kê rủi ro.',
               maxLines: 4,
               enabled: !_startingRun,
-              decoration: const InputDecoration(
-                labelText: 'Mục tiêu cho agent',
-                hintText: 'Ví dụ: Tổng hợp hợp đồng tháng 9 và liệt kê rủi ro.',
-              ),
             ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String?>(
-              initialValue: _runAgentId,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Custom agent (không bắt buộc)',
-              ),
-              items: [
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('Agent mặc định'),
-                ),
-                for (final agent in _agents)
-                  DropdownMenuItem<String?>(
-                    value: agent.id,
-                    child: Text(agent.name),
-                  ),
-              ],
-              onChanged: _startingRun
-                  ? null
-                  : (value) => setState(() => _runAgentId = value),
+            AppSelectTile<String?>(
+              label: 'Custom agent (không bắt buộc)',
+              icon: Icons.smart_toy_outlined,
+              value: _runAgentId,
+              items: [null, for (final agent in _agents) agent.id],
+              labelOf: (id) => id == null
+                  ? 'Agent mặc định'
+                  : _agents
+                        .firstWhere(
+                          (agent) => agent.id == id,
+                          orElse: () => CustomAgentModel(
+                            id: id,
+                            name: 'Agent đã xoá',
+                          ),
+                        )
+                        .name,
+              subtitleOf: (id) => id == null
+                  ? 'Dùng trợ lý mặc định của đơn vị.'
+                  : 'Chạy đúng persona và công cụ của agent này.',
+              enabled: !_startingRun,
+              onChanged: (value) => setState(() => _runAgentId = value),
             ),
             const SizedBox(height: 8),
             Row(
@@ -626,20 +609,22 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
                 ),
                 if (_startingRun) ...[
                   const SizedBox(width: 8),
-                  IconButton(
+                  AppIconButton(
+                    icon: Icons.stop,
                     tooltip: 'Dừng theo dõi',
                     onPressed: () => _runCancel?.cancel(),
-                    icon: const Icon(Icons.stop),
                   ),
                 ],
               ],
             ),
             if (_runOutput.isNotEmpty)
-              Card(
-                margin: const EdgeInsets.only(top: 12),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: FormattedMessage(text: _runOutput),
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: AppCard(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: FormattedMessage(text: _runOutput),
+                  ),
                 ),
               ),
           ],
@@ -652,25 +637,22 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
           hint: 'Tác vụ tự hành chạy theo mục tiêu và ghi lại từng bước ở đây.',
         ),
       for (final run in _runs)
-        AppCard(
-          padding: EdgeInsets.zero,
-          child: ListTile(
-            title: Text(run.goal, maxLines: 2, overflow: TextOverflow.ellipsis),
-            subtitle: Text('${run.status} • ${run.stepCount} bước'),
-            onTap: () => _openRun(run),
-            trailing:
-                run.status.toLowerCase() == 'running' ||
-                    run.status.toLowerCase() == 'pending'
-                ? IconButton(
-                    tooltip: 'Dừng tác vụ đang chạy',
-                    icon: const Icon(Icons.stop_circle_outlined),
-                    onPressed: () async {
-                      await _repo.cancelAgentRun(run.id);
-                      _loadAll();
-                    },
-                  )
-                : null,
-          ),
+        AppTile(
+          title: Text(run.goal, maxLines: 2, overflow: TextOverflow.ellipsis),
+          subtitle: Text('${run.status} • ${run.stepCount} bước'),
+          onTap: () => _openRun(run),
+          suffix:
+              run.status.toLowerCase() == 'running' ||
+                  run.status.toLowerCase() == 'pending'
+              ? AppIconButton(
+                  tooltip: 'Dừng tác vụ đang chạy',
+                  onPressed: () async {
+                    await _repo.cancelAgentRun(run.id);
+                    _loadAll();
+                  },
+                  icon: Icons.stop_circle_outlined,
+                )
+              : null,
         ),
     ],
   );
@@ -682,15 +664,12 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
       const SizedBox(height: 6),
       const Text('Tìm kiếm nhiều nguồn và tổng hợp báo cáo.'),
       const SizedBox(height: 16),
-      TextField(
+      AppTextField(
         controller: _researchQuery,
-        minLines: 3,
+        label: 'Chủ đề nghiên cứu',
+        hint: 'Nhập câu hỏi cần nghiên cứu...',
         maxLines: 6,
         enabled: !_researching,
-        decoration: const InputDecoration(
-          labelText: 'Chủ đề nghiên cứu',
-          hintText: 'Nhập câu hỏi cần nghiên cứu...',
-        ),
       ),
       const SizedBox(height: 12),
       Row(
@@ -706,19 +685,21 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
             ),
           ),
           if (_researching)
-            IconButton(
+            AppIconButton(
+              icon: Icons.stop,
               tooltip: 'Dừng nghiên cứu',
               onPressed: () => _researchCancel?.cancel(),
-              icon: const Icon(Icons.stop),
             ),
         ],
       ),
       if (_research.isNotEmpty)
-        Card(
-          margin: const EdgeInsets.only(top: 16),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: FormattedMessage(text: _research),
+        Padding(
+          padding: const EdgeInsets.only(top: 16),
+          child: AppCard(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: FormattedMessage(text: _research),
+            ),
           ),
         ),
     ],
@@ -745,7 +726,7 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
               'Khi agent cần bạn cho phép chạy hành động tiếp theo, mục sẽ hiện ở đây.',
         ),
       for (final item in _approvals)
-        Card(
+        AppCard(
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -768,9 +749,9 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
                   spacing: 8,
                   runSpacing: 4,
                   children: [
-                    TextButton(
+                    AppDestructiveButton(
+                      label: 'Từ chối',
                       onPressed: () => _decide(item['id'].toString(), false),
-                      child: const Text('Từ chối'),
                     ),
                     AppPrimaryButton(
                       label: 'Phê duyệt',
@@ -785,8 +766,8 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
         ),
       _header('Thông báo', 'Cập nhật từ tài liệu và tác vụ tự động.', null),
       for (final item in _notifications)
-        ListTile(
-          leading: Icon(
+        AppTile(
+          prefix: Icon(
             item['isRead'] == true
                 ? Icons.notifications_none
                 : Icons.notifications_active,
@@ -807,54 +788,59 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
     final name = TextEditingController(),
         prompt = TextEditingController(),
         interval = TextEditingController(text: '60');
-    final result = await showDialog<(String, String, String, int?)>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Tạo lịch tự động'),
-        content: SingleChildScrollView(
-          child: Column(
-            children: [
-              TextField(
-                controller: name,
-                decoration: const InputDecoration(labelText: 'Tên'),
-              ),
-              TextField(
-                controller: prompt,
-                maxLines: 4,
-                decoration: const InputDecoration(labelText: 'Prompt'),
-              ),
-              DropdownButtonFormField<String>(
-                initialValue: 'interval',
-                isExpanded: true,
-                items: const [
-                  DropdownMenuItem(
-                    value: 'interval',
-                    child: Text('Theo khoảng thời gian'),
-                  ),
-                  DropdownMenuItem(value: 'once', child: Text('Chạy một lần')),
-                ],
-                onChanged: (_) {},
-                decoration: const InputDecoration(labelText: 'Loại lịch'),
-              ),
-              TextField(
-                controller: interval,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Khoảng phút'),
-              ),
-            ],
-          ),
+    // Loại lịch người dùng chọn; trước đây ô chọn bị bỏ qua và luôn gửi
+    // `interval`, nên chọn "Chạy một lần" xong vẫn tạo lịch theo khoảng thời gian.
+    var kind = 'interval';
+    // Lưu ý: nội dung hộp thoại **không được** dùng widget cần tổ tiên
+    // `Material` (`TextField`, `DropdownButtonFormField`…). `FDialog` của Forui
+    // không có `Material`, nên những widget đó ném lỗi "No Material widget
+    // found" và cả form trắng xoá — dùng widget của hệ thiết kế ở đây.
+    final result = await showAppDialog<(String, String, String, int?)>(
+      context,
+      builder: (dialogContext) => AppDialog(
+        title: 'Tạo lịch tự động',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AppTextField(
+              controller: name,
+              label: 'Tên',
+              autofocus: true,
+            ),
+            AppTextField(controller: prompt, label: 'Prompt', maxLines: 4),
+            AppSelectTile<String>(
+              label: 'Loại lịch',
+              icon: Icons.event_repeat,
+              value: kind,
+              items: const ['interval', 'once'],
+              labelOf: (value) => value == 'interval'
+                  ? 'Theo khoảng thời gian'
+                  : 'Chạy một lần',
+              subtitleOf: (value) => value == 'interval'
+                  ? 'Chạy lại sau mỗi số phút bên dưới.'
+                  : 'Chỉ chạy một lần ở lần kích hoạt kế tiếp.',
+              onChanged: (value) => kind = value,
+            ),
+            AppTextField(
+              controller: interval,
+              label: 'Khoảng phút',
+              hint: 'Dùng khi chạy theo khoảng thời gian',
+              keyboardType: TextInputType.number,
+            ),
+          ],
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Huỷ'),
+          AppSecondaryButton(
+            label: 'Huỷ',
+            onPressed: () => Navigator.pop(dialogContext),
           ),
+          const SizedBox(width: 10),
           AppPrimaryButton(
             label: 'Tạo',
-            onPressed: () => Navigator.pop(context, (
+            onPressed: () => Navigator.pop(dialogContext, (
               name.text,
               prompt.text,
-              'interval',
+              kind,
               int.tryParse(interval.text),
             )),
             expand: false,

@@ -68,10 +68,10 @@ class _SharedChatScreenState extends ConsumerState<SharedChatScreen> {
       appBar: AppTopBar(
         title: const Text('Đoạn chat được chia sẻ'),
         actions: [
-          IconButton(
+          AppIconButton(
+            icon: Icons.refresh,
             tooltip: 'Tải lại',
             onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh),
           ),
         ],
       ),

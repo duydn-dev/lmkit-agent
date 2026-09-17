@@ -88,10 +88,10 @@ class _RunDetailScreenState extends ConsumerState<RunDetailScreen> {
       appBar: AppTopBar(
         title: const Text('Chi tiết Agent Run'),
         actions: [
-          IconButton(
+          AppIconButton(
+            icon: Icons.refresh,
             tooltip: 'Làm mới',
             onPressed: _load,
-            icon: const Icon(Icons.refresh),
           ),
         ],
       ),

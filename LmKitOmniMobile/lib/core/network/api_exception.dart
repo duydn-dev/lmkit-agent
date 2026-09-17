@@ -69,8 +69,10 @@ class ApiException implements Exception {
       409 => 'Dữ liệu đã thay đổi ở nơi khác. Vui lòng tải lại.',
       413 => 'Tệp gửi lên quá lớn.',
       429 => 'Quá nhiều yêu cầu. Vui lòng chờ một lát rồi thử lại.',
-      500 || 502 || 503 || 504 =>
-        'Máy chủ đang gặp sự cố. Vui lòng thử lại sau.',
+      500 ||
+      502 ||
+      503 ||
+      504 => 'Máy chủ đang gặp sự cố. Vui lòng thử lại sau.',
       _ => 'Không thể kết nối đến máy chủ.',
     };
   }

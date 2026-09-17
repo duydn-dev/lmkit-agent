@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:forui/forui.dart';
 
 import '../../app/theme.dart';
 import '../../app/ui/app_controls.dart';
@@ -56,7 +57,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final loading = auth.isLoading;
 
     return Scaffold(
-      backgroundColor: AppTheme.surface,
+      // Không đặt `backgroundColor` để nền trống đồng của app hiện ra sau thẻ
+      // đăng nhập (giống web); mọi Scaffold khác cũng vậy — xem `AppTheme`.
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -69,7 +71,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   // Khối nhận diện: Quốc huy + tên đơn vị, giống hệt web.
                   SvgPicture.asset(
                     'assets/images/quochuy.svg',
-                    height: 88,
+                    height: 64,
                     semanticsLabel: 'Quốc huy Việt Nam',
                   ),
                   const SizedBox(height: 16),
@@ -93,20 +95,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  Container(
+                  // Thẻ đăng nhập theo design system: viền phẳng bo 12, nền
+                  // trắng — không bóng riêng (FCard của Forui không dùng bóng,
+                  // đúng như mọi thẻ khác trong app).
+                  AppCard(
                     padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: AppTheme.border),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x14111827),
-                          blurRadius: 18,
-                          offset: Offset(0, 6),
-                        ),
-                      ],
-                    ),
                     child: Form(
                       key: _formKey,
                       child: Column(
@@ -123,34 +116,48 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             const SizedBox(height: 4),
                           ],
                           if (error != null) AppErrorBanner(message: error),
-                          TextFormField(
-                            controller: _email,
+                          FTextFormField(
+                            control: FTextFieldControl.managed(
+                              controller: _email,
+                            ),
                             keyboardType: TextInputType.emailAddress,
                             textInputAction: TextInputAction.next,
                             autofillHints: const [
                               AutofillHints.username,
                               AutofillHints.email,
                             ],
-                            decoration: const InputDecoration(
-                              labelText: 'Tên tài khoản',
-                              prefixIcon: Icon(Icons.person_outline, size: 20),
-                            ),
+                            label: const Text('Tên tài khoản'),
+                            prefixBuilder: (context, style, variants) =>
+                                FTextField.prefixIconBuilder(
+                                  context,
+                                  style,
+                                  variants,
+                                  const Icon(Icons.person_outline, size: 20),
+                                ),
                             validator: (value) =>
                                 value == null || value.trim().isEmpty
                                 ? 'Vui lòng nhập tên tài khoản.'
                                 : null,
                           ),
                           const SizedBox(height: 16),
-                          TextFormField(
-                            controller: _password,
-                            obscureText: true,
+                          FTextFormField.password(
+                            control: FTextFieldControl.managed(
+                              controller: _password,
+                            ),
                             textInputAction: TextInputAction.done,
                             autofillHints: const [AutofillHints.password],
-                            onFieldSubmitted: (_) => _submit(),
-                            decoration: const InputDecoration(
-                              labelText: 'Mật khẩu',
-                              prefixIcon: Icon(Icons.lock_outline, size: 20),
-                            ),
+                            label: const Text('Mật khẩu'),
+                            // Cùng vai trò với icon người ở ô tên tài khoản: cho
+                            // người dùng một điểm neo thị giác, và icon không bị
+                            // nhảy khi ô hiện thông báo lỗi.
+                            prefixBuilder: (context, style, obscure, variants) =>
+                                FTextField.prefixIconBuilder(
+                                  context,
+                                  style,
+                                  variants,
+                                  const Icon(Icons.lock_outline, size: 20),
+                                ),
+                            onSubmit: (_) => _submit(),
                             validator: (value) => value == null || value.isEmpty
                                 ? 'Vui lòng nhập mật khẩu.'
                                 : null,
@@ -169,11 +176,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  // Máy chủ chỉ **hiển thị**. API URL là giá trị build-time
-                  // (`--dart-define-from-file=env/<flavor>.json`): app không có
-                  // đường nào đổi nó lúc chạy, nên một lần bấm nhầm cũng không
-                  // để lại URL sai trên thiết bị.
-                  _ServerRow(label: ref.watch(appConfigProvider).apiBaseUrl),
+                  // API URL là giá trị build-time
+                  // (`--dart-define-from-file=env/<flavor>.json`) và không hiển
+                  // thị ở đây nữa: người dùng cuối không cần thấy địa chỉ máy chủ.
                   TextButton.icon(
                     onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
@@ -183,6 +188,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     icon: const Icon(Icons.link, size: 18),
                     label: const Text('Xem đoạn chat được chia sẻ'),
                   ),
+                  const SizedBox(height: 4),
+                  // Cùng dòng ghi chú với màn "Danh sách chức năng": đây là môi
+                  // trường thử nghiệm, không phải bản vận hành chính thức.
+                  Text(
+                    'Hệ thống thử nghiệm',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppTheme.textMuted,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -191,32 +206,4 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       ),
     );
   }
-}
-
-/// Dòng hiển thị máy chủ đang cấu hình (chỉ đọc).
-///
-/// Cố ý không phải nút: người dùng cần biết app đang nói chuyện với máy chủ nào
-/// khi báo lỗi cho bộ phận hỗ trợ, nhưng không cần — và không nên — đổi được nó.
-class _ServerRow extends StatelessWidget {
-  const _ServerRow({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisAlignment: MainAxisAlignment.center,
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      const Icon(Icons.dns_outlined, size: 16, color: AppTheme.textMuted),
-      const SizedBox(width: 6),
-      Flexible(
-        child: Text(
-          'Máy chủ: $label',
-          overflow: TextOverflow.ellipsis,
-          maxLines: 1,
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-      ),
-    ],
-  );
 }

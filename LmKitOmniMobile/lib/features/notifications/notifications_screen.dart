@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -81,6 +83,25 @@ class NotificationsController extends AsyncNotifier<List<NotificationModel>> {
     await ref.read(studioRepositoryProvider).markAllNotificationsRead();
     await reload();
   }
+
+  /// Nhịp nền làm mới badge, cùng nhịp 60 giây như web.
+  ///
+  /// Web chỉ gọi `LIST(unreadOnly)` cho badge vì nó đếm riêng; app lấy luôn
+  /// danh sách đầy đủ để badge và màn Thông báo đọc chung một provider — một
+  /// nguồn sự thật, đổi lại mỗi nhịp là một request danh sách (thông báo của
+  /// một người dùng vốn chỉ vài dòng).
+  ///
+  /// Khác [reload]: không bật vòng xoay, không làm mất danh sách đang xem, và
+  /// **im lặng khi lỗi** — đây là việc chạy nền, không được phép làm phiền người
+  /// dùng bằng thông báo lỗi mạng.
+  Future<void> poll() async {
+    try {
+      final rows = await ref.read(studioRepositoryProvider).notifications();
+      state = AsyncData(rows.map(NotificationModel.fromJson).toList());
+    } catch (_) {
+      // Giữ nguyên dữ liệu cũ: lần poll sau sẽ thử lại.
+    }
+  }
 }
 
 final notificationsProvider =
@@ -89,18 +110,45 @@ final notificationsProvider =
     );
 
 /// Số thông báo chưa đọc, dùng cho badge trên AppBar.
+///
+/// Badge **dẫn xuất từ danh sách** thay vì đếm riêng: nhờ vậy đọc một thông báo
+/// là badge tự giảm, không có đường nào để chuông nói một đằng còn danh sách nói
+/// một nẻo.
 final unreadNotificationCountProvider = Provider<int>((ref) {
   final items = ref.watch(notificationsProvider).asData?.value;
   if (items == null) return 0;
   return items.where((item) => !item.isRead).length;
 });
 
+/// Khoảng nghỉ giữa hai lần làm mới badge, khớp `NOTIFICATION_POLL_MS` của web.
+const notificationPollInterval = Duration(seconds: 60);
+
+/// Nhịp làm mới badge chạy nền, chỉ sống khi có chuông trên màn.
+///
+/// Bỏ qua khi app không ở tiền cảnh: thông báo của người dùng không cần được
+/// đếm trong lúc họ không nhìn, và mỗi nhịp là một vòng mạng thật.
+final notificationPollProvider = Provider<void>((ref) {
+  final timer = Timer.periodic(notificationPollInterval, (_) {
+    // `null` là lúc binding chưa nhận thông báo vòng đời nào — vẫn đang chạy
+    // bình thường, nên chỉ bỏ nhịp khi biết chắc app không ở tiền cảnh.
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) return;
+    unawaited(ref.read(notificationsProvider.notifier).poll());
+  });
+  ref.onDispose(timer.cancel);
+});
+
 /// Nút chuông kèm badge số chưa đọc (tương ứng chuông trên `AppLayout` desktop).
+///
+/// Đặt trong `actions` của [AppTopBar] là đủ — mọi màn có header đều thấy chuông
+/// ở cùng một vị trí, giống thanh header dùng chung của web.
 class NotificationBell extends ConsumerWidget {
   const NotificationBell({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Mở nhịp polling: chỉ màn nào thật sự hiển thị chuông mới chạy.
+    ref.watch(notificationPollProvider);
     final unread = ref.watch(unreadNotificationCountProvider);
     return IconButton(
       tooltip: unread == 0 ? 'Thông báo' : '$unread thông báo chưa đọc',
@@ -108,13 +156,16 @@ class NotificationBell extends ConsumerWidget {
         MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
       ),
       icon: Stack(
+        // Badge nằm trong lòng ô 48dp của nút (icon 24dp còn 12dp mỗi bên) nên
+        // không bị nút bên cạnh che, mà cũng không cần tràn ra ngoài — nhưng vẫn
+        // phải tắt cắt, vì badge được vẽ ra ngoài khung của chính icon.
         clipBehavior: Clip.none,
         children: [
           Icon(unread > 0 ? Icons.notifications : Icons.notifications_none),
           if (unread > 0)
             Positioned(
-              right: -4,
-              top: -4,
+              right: -10,
+              top: -6,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                 constraints: const BoxConstraints(minWidth: 16),
@@ -151,13 +202,16 @@ class NotificationsScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppTopBar(
         title: const Text('Thông báo'),
+        // Không gắn thêm chuông: đang ở ngay màn này rồi.
+        showNotificationBell: false,
         actions: [
-          IconButton(
+          AppIconButton(
+            icon: Icons.refresh,
             tooltip: 'Làm mới',
             onPressed: controller.reload,
-            icon: const Icon(Icons.refresh),
           ),
-          IconButton(
+          AppIconButton(
+            icon: Icons.done_all,
             tooltip: 'Đánh dấu tất cả đã đọc',
             onPressed: unread == 0
                 ? null
@@ -175,7 +229,6 @@ class NotificationsScreen extends ConsumerWidget {
                       }
                     }
                   },
-            icon: const Icon(Icons.done_all),
           ),
         ],
       ),
@@ -212,8 +265,8 @@ class NotificationsScreen extends ConsumerWidget {
                   separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (context, index) {
                     final item = items[index];
-                    return ListTile(
-                      leading: Icon(
+                    return AppTile(
+                      prefix: Icon(
                         item.isRead
                             ? Icons.notifications_none
                             : Icons.notifications_active,
@@ -232,7 +285,6 @@ class NotificationsScreen extends ConsumerWidget {
                             ? _relative(item.createdAt)
                             : '${item.body}\n${_relative(item.createdAt)}',
                       ),
-                      isThreeLine: item.body.isNotEmpty,
                       onTap: item.isRead
                           ? null
                           : () async {

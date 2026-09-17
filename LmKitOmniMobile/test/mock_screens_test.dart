@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart';
 import 'package:lmkit_omni_mobile/app/app.dart';
 import 'package:lmkit_omni_mobile/app/theme.dart';
+import 'package:lmkit_omni_mobile/app/ui/app_controls.dart';
 import 'package:lmkit_omni_mobile/app/ui/tenant_logo.dart';
 import 'package:lmkit_omni_mobile/core/auth/auth_models.dart';
 import 'package:lmkit_omni_mobile/core/auth/auth_provider.dart';
@@ -516,6 +517,131 @@ void main() {
       }
     });
 
+    /// Hộp thoại Forui (`FDialog`) **không có tổ tiên `Material`**, nên widget nào
+    /// cần `Material` (`TextField`, `DropdownButtonFormField`…) đặt trong đó sẽ
+    /// ném "No Material widget found" và cả hộp thoại trắng xoá — đúng lỗi đã gặp
+    /// ở hộp thoại "Tạo lịch tự động" của AI Studio.
+    ///
+    /// Test này mở hộp thoại đó và kiểm hai điều: dựng lên không ném ngoại lệ, và
+    /// các ô nhập là của hệ thiết kế (Forui) chứ không phải Material.
+    testWidgets('hộp thoại tạo lịch tự động: dựng được trong hộp thoại Forui', (
+      tester,
+    ) async {
+      await _pumpScreen(
+        tester,
+        const StudioScreen(initialTab: 1),
+        screenKey: 'studio-schedule-dialog',
+      );
+
+      // Nút "thêm mới" ở tiêu đề tab Lịch — nút icon của hệ thiết kế đặt
+      // `semanticsLabel` chứ không phải `Tooltip` của Material, nên tìm theo icon.
+      await tester.tap(find.byIcon(Icons.add).first);
+      await _drain(tester, rounds: 6);
+
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'hộp thoại "Tạo lịch tự động" ném lỗi khi dựng',
+      );
+      expect(find.text('Tạo lịch tự động'), findsOneWidget);
+      expect(
+        find.byType(FTextField),
+        findsNWidgets(3),
+        reason: 'ba ô nhập phải là ô của hệ thiết kế (Forui), không phải Material',
+      );
+      expect(find.text('Loại lịch'), findsOneWidget);
+
+      // Ô chọn loại lịch: mở được và giá trị vừa chọn hiện lại trong hộp thoại
+      // (trước đây ô này bị bỏ qua, luôn gửi `interval` khi tạo lịch).
+      await tester.tap(find.text('Loại lịch'));
+      await _drain(tester, rounds: 6);
+      await tester.tap(find.text('Chạy một lần'));
+      await _drain(tester, rounds: 6);
+      expect(tester.takeException(), isNull);
+      expect(
+        find.text('Chạy một lần'),
+        findsWidgets,
+        reason: 'chọn "Chạy một lần" xong hộp thoại không cập nhật',
+      );
+    });
+
+    /// Cùng một lớp lỗi với hộp thoại trên, nhưng quét **mọi hộp thoại form**:
+    /// hộp thoại Forui không có tổ tiên `Material`, nên chỉ cần sót lại một
+    /// `DropdownButtonFormField` hoặc `TextField` của Material là cả hộp thoại
+    /// trắng xoá khi mở. Mỗi màn được mở thật trong chế độ dữ liệu mẫu.
+    ///
+    /// Mỗi hộp thoại một `testWidgets` riêng: pump nhiều màn trong cùng một test
+    /// sẽ sinh lỗi harness (GlobalKey trùng, build sai scope) chứ không phải lỗi
+    /// của app.
+    final formDialogs = <String, (Widget Function(), IconData)>{
+      'AI Studio — Lịch': (() => const StudioScreen(initialTab: 1), Icons.add),
+      'Users': (() => const UsersScreen(), Icons.person_add_alt),
+      'MCP Servers': (() => const McpServersScreen(), Icons.add),
+      'Database Connections': (
+        () => const DatabaseConnectionsScreen(),
+        Icons.add,
+      ),
+      'Projects': (() => const ProjectsScreen(), Icons.add),
+    };
+
+    for (final entry in formDialogs.entries) {
+      testWidgets('hộp thoại form của "${entry.key}" mở được', (tester) async {
+        await _pumpScreen(
+          tester,
+          entry.value.$1(),
+          screenKey: 'form-dialog-${entry.key}',
+        );
+
+        expect(tester.takeException(), isNull, reason: 'màn nền đã có lỗi');
+
+        await tester.tap(find.byIcon(entry.value.$2).first);
+        await _drain(tester, rounds: 6);
+
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: 'hộp thoại form của "${entry.key}" ném lỗi khi dựng',
+        );
+        expect(find.byType(AppDialog), findsOneWidget);
+        // Hộp thoại form nào ở đây cũng có ô nhập, và phải là ô của hệ thiết kế
+        // (Forui) — quay lại dùng `TextField`/`DropdownButtonFormField` của
+        // Material là hộp thoại trắng xoá như đã gặp, và dòng `takeException` ở
+        // trên sẽ bắt được.
+        expect(
+          find.descendant(
+            of: find.byType(AppDialog),
+            matching: find.byType(FTextField),
+          ),
+          findsWidgets,
+          reason: 'hộp thoại "${entry.key}" không có ô nhập của hệ thiết kế',
+        );
+      });
+    }
+
+    /// Form agent của AI Studio nằm trong **sheet Forui** (`showAppSheet`) chứ
+    /// không phải hộp thoại — cũng cùng lớp lỗi "không tra được `Material`" nên
+    /// phải kiểm riêng.
+    testWidgets('form agent (sheet) mở được, không còn ô nhập Material', (
+      tester,
+    ) async {
+      await _pumpScreen(
+        tester,
+        const StudioScreen(),
+        screenKey: 'agent-form-sheet',
+      );
+
+      await tester.tap(find.byIcon(Icons.add).first);
+      await _drain(tester, rounds: 6);
+
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'form agent ném lỗi khi dựng',
+      );
+      expect(find.text('Tên'), findsOneWidget);
+      expect(find.byType(FTextField), findsWidgets);
+    });
+
     testWidgets('composer: nút gửi bật khi có chữ, gửi là có câu trả lời mẫu', (
       tester,
     ) async {
@@ -667,7 +793,10 @@ void main() {
         screenKey: 'tenants-logo-dialog',
       );
 
-      await tester.tap(find.byType(PopupMenuButton<String>).first);
+      // Menu dòng của màn quản trị là `AppMenuButton` của hệ thiết kế (Forui),
+      // không còn `PopupMenuButton<String>` của Material nữa. Nút này gắn nhãn
+      // qua `semanticsLabel` chứ không phải `Tooltip`, nên tìm theo icon.
+      await tester.tap(find.byIcon(Icons.more_vert).first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Sửa (tên, logo)'));
       await tester.pumpAndSettle();

@@ -286,8 +286,9 @@ void main() {
   testWidgets('AppAlert dùng đúng thang chữ cho tiêu đề và nội dung', (
     tester,
   ) async {
-    // Trước đây thông báo một dòng bị Forui vẽ bằng cỡ chữ tiêu đề (16/500),
-    // nên cùng một lỗi lại to hơn ở màn quản trị so với màn đăng nhập (14/400).
+    // Trước đây thông báo một dòng bị Forui vẽ bằng cỡ chữ tiêu đề, nên cùng
+    // một lỗi lại to hơn ở màn quản trị so với màn đăng nhập. Cả hai dòng giờ
+    // nằm trên cỡ chuẩn 14; tiêu đề chỉ khác độ đậm (w600) và màu.
     await tester.pumpWidget(
       _wrapApp(
         const Column(
@@ -308,13 +309,51 @@ void main() {
       weight: FontWeight.w400,
     ));
     expect(_measured(tester, 'Không tải được'), (
-      size: 16.0,
+      size: 14.0,
       weight: FontWeight.w600,
     ));
     expect(_measured(tester, 'Thử lại sau ít phút.'), (
       size: 14.0,
       weight: FontWeight.w400,
     ));
+  });
+
+  testWidgets('AppMenuButton thật sự mở được menu và trả về mục đã chọn', (
+    tester,
+  ) async {
+    // Lỗi đã xảy ra: nút ba chấm là `child` của `FPopoverMenu` với `onPress`
+    // rổng, nên nó nuốt cú nhấn và **không menu nào trong app mở được** (phiên
+    // chat, tenant, agent, lịch, MCP…). Test này bấm thật vào nút.
+    final picked = <String>[];
+
+    await tester.pumpWidget(
+      _wrapApp(
+        Center(
+          child: AppMenuButton(
+            tooltip: 'Tuỳ chọn',
+            items: [
+              AppMenuItem('Sửa', () => picked.add('sua')),
+              AppMenuItem('Xoá', () => picked.add('xoa'), destructive: true),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Sửa'), findsNothing);
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sửa'), findsOneWidget);
+    expect(find.text('Xoá'), findsOneWidget);
+
+    await tester.tap(find.text('Xoá'));
+    await tester.pumpAndSettle();
+
+    expect(picked, ['xoa']);
+    expect(find.text('Xoá'), findsNothing, reason: 'chọn xong menu phải đóng lại');
   });
 }
 

@@ -68,9 +68,7 @@ class _CustomInstructionsScreenState
           .read(workspaceRepositoryProvider)
           .saveInstructions(aboutUser: _about.text, responseStyle: _style.text);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Đã lưu hướng dẫn tùy chỉnh.')),
-        );
+        showAppSnack(context, 'Đã lưu hướng dẫn tùy chỉnh.');
       }
     } catch (error) {
       if (mounted) {
@@ -95,8 +93,7 @@ class _CustomInstructionsScreenState
             padding: const EdgeInsets.all(16),
             children: [
               if (_error != null)
-                Card(
-                  color: Theme.of(context).colorScheme.errorContainer,
+                AppCard(
                   child: Padding(
                     padding: const EdgeInsets.all(12),
                     child: Text(_error!),
@@ -106,24 +103,20 @@ class _CustomInstructionsScreenState
                 'Những hướng dẫn này được thêm vào system prompt của các đoạn chat.',
               ),
               const SizedBox(height: 20),
-              TextField(
+              // Ô nhập của hệ thiết kế (Forui). Giới hạn độ dài do [_save] chặn
+              // trước khi gọi API; trước đây `maxLength` của Material vừa hiện
+              // bộ đếm ký tự vừa tự cắt chữ — không cần bộ đếm đó nữa.
+              AppTextField(
                 controller: _about,
+                label: 'Trợ lý nên biết gì về bạn?',
+                hint: 'Ví dụ: Tôi là kỹ sư phần mềm ở Hà Nội...',
                 maxLines: 6,
-                maxLength: maxLength,
-                decoration: const InputDecoration(
-                  labelText: 'Trợ lý nên biết gì về bạn?',
-                  hintText: 'Ví dụ: Tôi là kỹ sư phần mềm ở Hà Nội...',
-                ),
               ),
-              const SizedBox(height: 16),
-              TextField(
+              AppTextField(
                 controller: _style,
+                label: 'Bạn muốn trợ lý phản hồi như thế nào?',
+                hint: 'Ví dụ: Trả lời ngắn gọn, luôn dùng tiếng Việt...',
                 maxLines: 6,
-                maxLength: maxLength,
-                decoration: const InputDecoration(
-                  labelText: 'Bạn muốn trợ lý phản hồi như thế nào?',
-                  hintText: 'Ví dụ: Trả lời ngắn gọn, luôn dùng tiếng Việt...',
-                ),
               ),
               const SizedBox(height: 20),
               SizedBox(

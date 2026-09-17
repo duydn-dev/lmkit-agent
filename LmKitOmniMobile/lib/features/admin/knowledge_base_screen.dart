@@ -83,7 +83,7 @@ class _KnowledgeBaseScreenState extends ConsumerState<KnowledgeBaseScreen> {
       padding: const EdgeInsets.all(16),
       children: [
         if (_busy) const LinearProgressIndicator(),
-        Card(
+        AppCard(
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -125,7 +125,7 @@ class _KnowledgeBaseScreenState extends ConsumerState<KnowledgeBaseScreen> {
           ),
         ),
         const SizedBox(height: 16),
-        Card(
+        AppCard(
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -137,22 +137,17 @@ class _KnowledgeBaseScreenState extends ConsumerState<KnowledgeBaseScreen> {
                 ),
                 const SizedBox(height: 12),
                 AdminField(controller: _query, label: 'Câu truy vấn'),
-                Row(
-                  children: [
-                    const Text('Số đoạn trả về: '),
-                    Expanded(
-                      child: Slider(
-                        value: _topK.toDouble(),
-                        min: 1,
-                        max: 10,
-                        divisions: 9,
-                        label: '$_topK',
-                        onChanged: (value) =>
-                            setState(() => _topK = value.round()),
-                      ),
-                    ),
-                    Text('$_topK'),
-                  ],
+                // `AppSelectTile` thay cho `Slider` của Material: thanh trượt
+                // Material mang sẵn màu/độ dày của Material nên lệch hẳn với
+                // phần còn lại, mà thang 1–10 thì chọn trong danh sách còn rõ
+                // giá trị đang chọn hơn.
+                AppSelectTile<int>(
+                  label: 'Số đoạn trả về',
+                  icon: Icons.format_list_numbered,
+                  value: _topK,
+                  items: [for (var i = 1; i <= 10; i++) i],
+                  labelOf: (value) => '$value đoạn',
+                  onChanged: (value) => setState(() => _topK = value),
                 ),
                 Align(
                   alignment: Alignment.centerRight,

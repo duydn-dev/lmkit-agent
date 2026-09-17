@@ -49,28 +49,26 @@ class _ChatSessionDrawerState extends ConsumerState<ChatSessionDrawer> {
 
   Future<void> _rename(ChatSessionModel session) async {
     final controller = TextEditingController(text: session.title ?? '');
-    final title = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Đổi tên đoạn chat'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 100,
-          decoration: const InputDecoration(labelText: 'Tiêu đề'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Huỷ'),
-          ),
-          AppPrimaryButton(
-            label: 'Lưu',
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            expand: false,
-          ),
-        ],
+    final title = await showAppDialog<String>(
+      context,
+      title: 'Đổi tên đoạn chat',
+      content: AppTextField(
+        controller: controller,
+        autofocus: true,
+        label: 'Tiêu đề',
       ),
+      actions: [
+        AppSecondaryButton(
+          label: 'Huỷ',
+          onPressed: () => Navigator.pop(context),
+        ),
+        const SizedBox(width: 10),
+        AppPrimaryButton(
+          label: 'Lưu',
+          onPressed: () => Navigator.pop(context, controller.text.trim()),
+          expand: false,
+        ),
+      ],
     );
     controller.dispose();
     if (title == null || title.isEmpty) return;
@@ -85,23 +83,11 @@ class _ChatSessionDrawerState extends ConsumerState<ChatSessionDrawer> {
   }
 
   Future<void> _delete(ChatSessionModel session) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Xoá đoạn chat'),
-        content: const Text('Toàn bộ tin nhắn trong đoạn chat này sẽ bị xoá.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Huỷ'),
-          ),
-          AppPrimaryButton(
-            label: 'Xoá',
-            onPressed: () => Navigator.pop(context, true),
-            expand: false,
-          ),
-        ],
-      ),
+    final confirmed = await confirmAppAction(
+      context,
+      title: 'Xoá đoạn chat',
+      message: 'Toàn bộ tin nhắn trong đoạn chat này sẽ bị xoá.',
+      confirmLabel: 'Xoá',
     );
     if (confirmed != true) return;
 
@@ -177,38 +163,27 @@ class _ChatSessionDrawerState extends ConsumerState<ChatSessionDrawer> {
                   Expanded(
                     child: Text(
                       'Lịch sử chat',
-                      style: Theme.of(context).textTheme.titleMedium,
+                      // 14 đậm: cùng thang với tiêu đề phiên bên dưới, để tiêu đề
+                      // ngăn kéo không chiếm hơn nửa bề ngang màn 320dp.
+                      style: Theme.of(context).textTheme.titleSmall,
                     ),
                   ),
-                  IconButton(
+                  AppIconButton(
+                    icon: Icons.add_comment_outlined,
                     tooltip: 'Chat mới',
                     onPressed: widget.onNewChat,
-                    icon: const Icon(Icons.add_comment_outlined),
                   ),
                 ],
               ),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: TextField(
+              child: AppTextField(
                 controller: _search,
+                label: 'Tìm đoạn chat',
+                hint: 'Theo tiêu đề hoặc nội dung',
+                icon: Icons.search,
                 onChanged: _onQueryChanged,
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: 'Tìm theo tiêu đề hoặc nội dung',
-                  prefixIcon: const Icon(Icons.search, size: 20),
-                  suffixIcon: _query.isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: 'Xoá từ khoá',
-                          onPressed: () {
-                            _search.clear();
-                            setState(() => _query = '');
-                          },
-                          icon: const Icon(Icons.close, size: 18),
-                        ),
-                  border: const OutlineInputBorder(),
-                ),
               ),
             ),
             if (_error != null)
@@ -249,31 +224,34 @@ class _ChatSessionDrawerState extends ConsumerState<ChatSessionDrawer> {
                         itemCount: items.length,
                         itemBuilder: (context, index) {
                           final session = items[index];
-                          return ListTile(
-                            selected: session.id == widget.currentSessionId,
-                            leading: const Icon(Icons.chat_bubble_outline),
+                          return AppTile(
+                            // `FTile` mặc định lấy tiêu đề ở `typography.body.sm`
+                            // (16 khi bật `touch`) và phụ đề 12 — tiêu đề 16 làm
+                            // danh sách phiên nặng hơn hẳn phần còn lại của ngăn
+                            // kéo. Ép về đúng thang chữ của app (14/12) bằng
+                            // style tường minh trên `Text`.
+                            prefix: const Icon(Icons.chat_bubble_outline),
                             title: Text(
                               session.title?.trim().isNotEmpty == true
                                   ? session.title!
                                   : 'Đoạn chat mới',
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodyMedium,
                             ),
-                            subtitle: Text(_formatDate(session.createdAt)),
+                            subtitle: Text(
+                              _formatDate(session.createdAt),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
                             onTap: () => widget.onSelect(session),
-                            trailing: PopupMenuButton<String>(
+                            suffix: AppMenuButton(
                               tooltip: 'Tuỳ chọn',
-                              onSelected: (value) => value == 'rename'
-                                  ? _rename(session)
-                                  : _delete(session),
-                              itemBuilder: (context) => const [
-                                PopupMenuItem(
-                                  value: 'rename',
-                                  child: Text('Đổi tên'),
-                                ),
-                                PopupMenuItem(
-                                  value: 'delete',
-                                  child: Text('Xoá'),
+                              items: [
+                                AppMenuItem('Đổi tên', () => _rename(session)),
+                                AppMenuItem(
+                                  'Xoá',
+                                  () => _delete(session),
+                                  destructive: true,
                                 ),
                               ],
                             ),

@@ -256,6 +256,15 @@ interface NavGroup { title: string; items: NavItem[]; adminOnly?: boolean }
 // LoRA…) theo yêu cầu vận hành; tiêu đề nhóm giữ tiếng Việt hành chính.
 const navGroups: NavGroup[] = [
   {
+    // Dashboard đứng ĐẦU sidebar theo yêu cầu: trang đích khi mở app, không
+    // phải mục cuối cùng nằm dưới fold. Vẫn chỉ hiện cho admin (route /admin).
+    title: 'Tổng quan',
+    adminOnly: true,
+    items: [
+      { to: '/admin', icon: 'pi pi-th-large', label: 'Dashboard' }
+    ]
+  },
+  {
     title: 'Không gian làm việc',
     items: [
       { to: '/chat', icon: 'pi pi-sparkles', label: 'AI Chat' },
@@ -288,7 +297,6 @@ const navGroups: NavGroup[] = [
     title: 'Quản trị',
     adminOnly: true,
     items: [
-      { to: '/admin', icon: 'pi pi-th-large', label: 'Dashboard' },
       { to: '/admin/users', icon: 'pi pi-users', label: 'User Management' },
       { to: '/admin/tenants', icon: 'pi pi-building', label: 'Tenant Management' },
       { to: '/admin/databases', icon: 'pi pi-database', label: 'Database Connections' },
