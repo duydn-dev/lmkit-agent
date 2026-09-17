@@ -108,8 +108,13 @@ public static class ScheduledTaskRules
         task.DayOfWeek = kind == ScheduleCalculator.WeeklyKind ? request.DayOfWeek : null;
         // "once": thời điểm chạy là chính giá trị người dùng đặt (đã validate ở trên);
         // các kind lặp lại mới cần tính lần kế tiếp.
+        // BUG đã đo được: `DateTime.SpecifyKind(value, Utc)` chỉ ĐỔI NHÃN Kind mà KHÔNG
+        // đổi giờ — client gửi "12:11+07:00" (= 05:11 UTC) bị lưu thành 12:11 UTC, lịch
+        // chờ thêm 7 tiếng mới chạy. `.ToUniversalTime()` mới là phép chuyển đúng: giá trị
+        // có offset → quy về đúng mốc UTC; giá trị Kind=Unspecified (client cắt offset)
+        // giữ nguyên giờ đồng hồ như người dùng nhập và coi là UTC.
         task.NextRunUtc = kind == ScheduleCalculator.OnceKind
-            ? DateTime.SpecifyKind(request.RunAtUtc!.Value, DateTimeKind.Utc)
+            ? request.RunAtUtc!.Value.ToUniversalTime()
             : ScheduleCalculator.ComputeNextRun(task, nowUtc);
     }
 
