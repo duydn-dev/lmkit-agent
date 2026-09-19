@@ -90,8 +90,9 @@ public sealed class OfficeAuthoringServiceTests
         Assert.DoesNotContain("\\", file.Name);
         Assert.DoesNotContain("<", file.Name);
         Assert.EndsWith(".docx", file.Name);
-        // Tên LƯU do server sinh (guid) — không chịu ảnh hưởng tên client đặt.
-        Assert.Matches("^[0-9a-f]{32}\\.docx$", file.Id);
+        // Tên LƯU do server sinh: giữ stem đã làm sạch (ngữ nghĩa trên đĩa) + GUID
+        // server thêm vào — tên client không được dùng nguyên si làm đường dẫn.
+        Assert.Matches("^evil__-[0-9a-f]{32}\\.docx$", file.Id);
     }
 
     [Fact]

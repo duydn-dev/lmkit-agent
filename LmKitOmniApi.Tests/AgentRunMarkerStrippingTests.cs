@@ -115,4 +115,54 @@ public class AgentRunMarkerStrippingTests
     {
         Assert.Equal(string.Empty, AgentRunMarkers.StripMarkers("[THINKING]: đang xử lý…"));
     }
+
+    /// <summary>
+    /// Scheduled/agent-mode runs have no live stream consumer — the worker drains the
+    /// channel — so the [FILE:] descriptors must be recoverable BEFORE stripping, or a run
+    /// that produced a file loses all record of it (the download becomes unreachable from
+    /// every UI). Extract-then-strip is the contract: extraction does not keep the marker
+    /// in Result, and stripping does not eat the extracted payload.
+    /// </summary>
+    [Fact]
+    public void ProducedFilePayloads_AreExtracted_BeforeTheMarkerIsStripped()
+    {
+        var descriptor = "{\"id\":\"f1\",\"name\":\"ket-qua.json\",\"contentType\":\"application/json\",\"size\":42}";
+        var raw = $"[FILE:{descriptor}]\n{Answer}";
+
+        var payloads = AgentRunMarkers.ExtractProducedFilePayloads(raw);
+        var stripped = AgentRunMarkers.StripMarkers(raw);
+
+        var payload = Assert.Single(payloads);
+        Assert.Contains("\"id\":\"f1\"", payload, StringComparison.Ordinal);
+        Assert.Equal(Answer, stripped);
+    }
+
+    [Fact]
+    public void ProducedFilePayloads_WithoutAnyFileMarker_IsEmpty()
+    {
+        Assert.Empty(AgentRunMarkers.ExtractProducedFilePayloads($"[STEP:{{}}]{Answer}"));
+    }
+
+    /// <summary>
+    /// Same extract-then-strip contract as files, for web sources: the [WEB_SEARCH]:
+    /// URLs must be recoverable before stripping (scheduled runs have no stream    /// consumer), the URLs are split on '|', deduped in order, and stripping still
+    /// removes the marker line so Result stays clean prose.
+    /// </summary>
+    [Fact]
+    public void WebSourceUrls_AreExtracted_BeforeTheMarkerIsStripped()
+    {
+        var raw = $"[WEB_SEARCH]:https://a.example/x|https://b.example/y|https://a.example/x\n{Answer}";
+
+        var urls = AgentRunMarkers.ExtractWebSourceUrls(raw);
+        var stripped = AgentRunMarkers.StripMarkers(raw);
+
+        Assert.Equal(new[] { "https://a.example/x", "https://b.example/y" }, urls);
+        Assert.Equal(Answer, stripped);
+    }
+
+    [Fact]
+    public void WebSourceUrls_WithoutAnySearchMarker_IsEmpty()
+    {
+        Assert.Empty(AgentRunMarkers.ExtractWebSourceUrls($"[STEP:{{}}]{Answer}"));
+    }
 }

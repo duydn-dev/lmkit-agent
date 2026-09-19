@@ -36,7 +36,8 @@ public class ListNotificationsQueryHandler : IRequestHandler<ListNotificationsQu
                 Title = notification.Title,
                 Body = notification.Body,
                 IsRead = notification.IsRead,
-                CreatedAt = notification.CreatedAtUtc
+                CreatedAt = notification.CreatedAtUtc,
+                AgentRunId = notification.AgentRunId
             })
             .ToListAsync(cancellationToken);
     }

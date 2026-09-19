@@ -161,7 +161,7 @@ public sealed class OfficeAuthoringService
         if (error is not null) return (error, null);
 
         var safeName = SanitizeFileName(spec!.FileName, ".docx", "tai-lieu.docx");
-        var (storedName, path) = ReserveStoredFile(tenantId, userId, ".docx");
+        var (storedName, path) = ReserveStoredFile(tenantId, userId, ".docx", safeName);
 
         if (UseAspose)
         {
@@ -205,7 +205,7 @@ public sealed class OfficeAuthoringService
         if (error is not null) return (error, null);
 
         var safeName = SanitizeFileName(spec!.FileName, ".pdf", "tai-lieu.pdf");
-        var (storedName, path) = ReserveStoredFile(tenantId, userId, ".pdf");
+        var (storedName, path) = ReserveStoredFile(tenantId, userId, ".pdf", safeName);
         var licensed = AsposeLicensing.EnsureApplied(_licensePath, _logger);
 
         try
@@ -233,7 +233,7 @@ public sealed class OfficeAuthoringService
         if (error is not null) return (error, null);
 
         var safeName = SanitizeFileName(spec!.FileName, ".xlsx", "bang-tinh.xlsx");
-        var (storedName, path) = ReserveStoredFile(tenantId, userId, ".xlsx");
+        var (storedName, path) = ReserveStoredFile(tenantId, userId, ".xlsx", safeName);
 
         if (UseAspose)
         {
@@ -991,12 +991,13 @@ public sealed class OfficeAuthoringService
 
     // ── chung ───────────────────────────────────────────────────────────
 
-    /// <summary>Đặt chỗ tệp trong kho upload cô lập của người dùng — tên lưu do server sinh.</summary>
-    private (string StoredName, string Path) ReserveStoredFile(Guid tenantId, Guid userId, string extension)
+    /// <summary>Đặt chỗ tệp trong kho upload cô lập của người dùng — tên lưu do server sinh,
+    /// giữ stem tên người dùng chọn + GUID khó đoán (xem BuildStoredFileName).</summary>
+    private (string StoredName, string Path) ReserveStoredFile(Guid tenantId, Guid userId, string extension, string displayName)
     {
         var uploadDir = _resources.GetUploadDirectory(tenantId, userId);
         Directory.CreateDirectory(uploadDir);
-        var storedName = $"{Guid.NewGuid():N}{extension}";
+        var storedName = UserResourceAccessService.BuildStoredFileName(displayName, extension);
         return (storedName, Path.Combine(uploadDir, storedName));
     }
 

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LmKitOmniApi.Application.AgentRuns.Queries;
 using LmKitOmniApi.Infrastructure.Data;
 using MediatR;
@@ -37,8 +38,56 @@ public sealed class GetAgentRunQueryHandler : IRequestHandler<GetAgentRunQuery, 
                         Observation = step.Observation,
                         CreatedAtUtc = step.CreatedAtUtc
                     })
-                    .ToList()
+                    .ToList(),
+                ProducedFiles = ParseProducedFiles(run.ProducedFilesJson),
+                WebSources = ParseWebSources(run.WebSourcesJson)
             })
             .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    /// <summary>Deserializes the persisted [FILE:] descriptors; malformed/legacy JSON
+    /// degrades to an empty list — never a failed request.</summary>
+    private static List<ProducedFileDto> ParseProducedFiles(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return [];
+            return doc.RootElement.EnumerateArray()
+                .Where(element => element.ValueKind == JsonValueKind.Object)
+                .Select(element => new ProducedFileDto
+                {
+                    Id = element.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String
+                        ? id.GetString() ?? string.Empty : string.Empty,
+                    Name = element.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String
+                        ? name.GetString() ?? string.Empty : string.Empty,
+                    ContentType = element.TryGetProperty("contentType", out var contentType) && contentType.ValueKind == JsonValueKind.String
+                        ? contentType.GetString() ?? string.Empty : string.Empty,
+                    Size = element.TryGetProperty("size", out var size) && size.TryGetInt64(out var value)
+                        ? value : 0
+                })
+                .Where(file => file.Id.Length > 0)
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>Deserializes the persisted [WEB_SEARCH] URLs; malformed/legacy JSON
+    /// degrades to an empty list — never a failed request.</summary>
+    private static List<string> ParseWebSources(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 }

@@ -1,3 +1,5 @@
+import '../chat/chat_models.dart' show ProducedFileModel;
+
 class CustomAgentModel {
   const CustomAgentModel({
     required this.id,
@@ -208,6 +210,8 @@ class AgentRunDetailModel {
     this.createdAtUtc,
     this.completedAtUtc,
     this.steps = const [],
+    this.producedFiles = const [],
+    this.webSources = const [],
   });
 
   final String id;
@@ -218,6 +222,14 @@ class AgentRunDetailModel {
   final DateTime? createdAtUtc;
   final DateTime? completedAtUtc;
   final List<AgentRunStepModel> steps;
+
+  /// File do tool của run tạo ra (run_python, soạn thảo Office…) — persisted trên
+  /// run row nên run lịch sử/scheduled vẫn tải được, không chỉ run đang stream live.
+  final List<ProducedFileModel> producedFiles;
+
+  /// Trang web run đã tra cứu ([WEB_SEARCH], persisted cho scheduled run) — hiển thị
+  /// chip "Đã đọc N trang web" và drawer nguồn y như câu trả lời chat live.
+  final List<String> webSources;
 
   bool get isRunning =>
       status.toLowerCase() == 'running' || status.toLowerCase() == 'pending';
@@ -238,6 +250,13 @@ class AgentRunDetailModel {
         steps: (json['steps'] as List<dynamic>? ?? const [])
             .whereType<Map<String, dynamic>>()
             .map(AgentRunStepModel.fromJson)
+            .toList(),
+        producedFiles: (json['producedFiles'] as List<dynamic>? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(ProducedFileModel.fromJson)
+            .toList(),
+        webSources: (json['webSources'] as List<dynamic>? ?? const [])
+            .whereType<String>()
             .toList(),
       );
 }

@@ -185,8 +185,9 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
     /// Copies files the script produced under <paramref name="scratchDir"/> (the
     /// mounted /work, minus main.py) into the caller's isolated upload root, applying
     /// count / per-file / total-size caps. Returns descriptors keyed by a
-    /// server-generated on-disk name (never the script-chosen name) so the download
-    /// endpoint path is unguessable and traversal-safe. Best-effort: a single
+    /// server-generated on-disk name that KEEPS the script-chosen stem plus an
+    /// unguessable GUID (see <see cref="UserResourceAccessService.BuildStoredFileName"/>)
+    /// so the download endpoint stays traversal-safe. Best-effort: a single
     /// unreadable/oversized file is skipped, never fatal to the run.
     /// </summary>
     private async Task<IReadOnlyList<ProducedFile>> CollectProducedFilesAsync(
@@ -241,7 +242,9 @@ public sealed class PythonContainerExecutor : IPythonCodeExecutor
 
             var originalName = Path.GetFileName(sourcePath);
             var extension = Path.GetExtension(originalName).ToLowerInvariant();
-            var storedName = $"{Guid.NewGuid():N}{extension}";
+            // Tên đĩa giữ stem gốc (timeout.txt vẫn đọc được là timeout-…) + GUID để
+            // id tải xuống vẫn khó đoán — format chung ở BuildStoredFileName.
+            var storedName = UserResourceAccessService.BuildStoredFileName(originalName, extension);
             var destinationPath = Path.Combine(uploadDir, storedName);
 
             try

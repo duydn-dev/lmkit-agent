@@ -32,6 +32,8 @@ class WatermarkBackground extends StatelessWidget {
     // hoạ tiết luôn lớn hơn cả hai chiều màn hình nên trống đồng tràn kín, chỉ
     // phần giữa hiện ra. Ảnh vuông nên width = height = cạnh này.
     final side = math.max(size.height, size.width) * 1.3;
+    // Vùng dành riêng cho thanh trạng thái của hệ điều hành.
+    final statusBar = MediaQuery.paddingOf(context).top;
 
     return ColoredBox(
       // Màu nền thật của app nằm ở ĐÂY, không phải ở Scaffold: mọi Scaffold
@@ -63,6 +65,20 @@ class WatermarkBackground extends StatelessWidget {
               excludeFromSemantics: true,
             ),
           ),
+          // Dải dành riêng cho thanh trạng thái: **cùng màu nền nhưng không có
+          // hoạ tiết**. App vẽ tràn ra sau thanh trạng thái (edge-to-edge), nên
+          // nếu để nguyên thì đồng hồ, sóng và pin nằm chồng lên các đường vòng
+          // của trống đồng — icon vẫn ở đó nhưng chìm vào hoạ tiết, nhìn như bị
+          // mất. Chặn hoạ tiết ở đúng chiều cao thanh trạng thái là đủ: hai lớp
+          // cùng màu `surface` nên không có đường ranh nào lộ ra.
+          if (statusBar > 0)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: statusBar,
+              child: const ColoredBox(color: AppTheme.surface),
+            ),
           child,
         ],
       ),

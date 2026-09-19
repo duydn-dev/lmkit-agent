@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:forui/forui.dart';
 
@@ -27,9 +28,24 @@ class LmKitOmniApp extends ConsumerWidget {
       // Watermark trống đồng nằm ở tầng app: mọi màn (chat, đăng nhập, các
       // trang đẩy sang…) dùng chung một nền, không phải bọc lại từng Scaffold.
       // Scaffold phải trong suốt — xem `AppTheme.material`.
-      builder: (context, child) => FTheme(
-        data: forui,
-        child: WatermarkBackground(child: child ?? const SizedBox.shrink()),
+      // Kiểu thanh hệ thống mặc định của app: **icon tối trên nền sáng**.
+      //
+      // `AppBar` tự đăng ký một `AnnotatedRegion` cùng loại (icon trắng trên
+      // chrome navy), nên các màn có header vẫn giữ icon trắng như trước; lớp
+      // này chỉ áp cho những màn **không** có header — trước hết là màn đăng
+      // nhập. Thiếu nó, kiểu thanh trạng thái là thứ "di truyền" từ màn trước:
+      // đăng xuất từ một màn header navy thì đồng hồ và sóng vẫn là icon trắng,
+      // trên nền trắng của màn đăng nhập chúng biến mất hẳn.
+      builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.dark.copyWith(
+          statusBarColor: Colors.transparent,
+          systemNavigationBarColor: Colors.transparent,
+          systemNavigationBarIconBrightness: Brightness.dark,
+        ),
+        child: FTheme(
+          data: forui,
+          child: WatermarkBackground(child: child ?? const SizedBox.shrink()),
+        ),
       ),
       home: auth.when(
         loading: () => const _BootScreen(),

@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using LmKitOmniApi.Application.AgentRuns.Commands;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Domain.Entities;
@@ -146,6 +147,19 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
 
         var result = AgentRunMarkers.StripMarkers(rawContent);
         run.Result = string.IsNullOrWhiteSpace(result) ? null : result;
+        // Persist file descriptors BEFORE stripping: the live stream is ephemeral, so
+        // for scheduled runs (drained by the worker, no client attached) these are the
+        // only record of the run's downloadable outputs. Empty → null (no dead column data).
+        var filePayloads = AgentRunMarkers.ExtractProducedFilePayloads(rawContent);
+        run.ProducedFilesJson = filePayloads.Count == 0
+            ? null
+            : "[" + string.Join(",", filePayloads.Select(payload => payload.Trim())) + "]";
+        // Same rationale for web sources: scheduled runs never had a stream consumer,
+        // so the "Đã đọc N trang web" citations must be persisted from the raw content.
+        var webSources = AgentRunMarkers.ExtractWebSourceUrls(rawContent);
+        run.WebSourcesJson = webSources.Count == 0
+            ? null
+            : "[" + string.Join(",", webSources.Select(url => JsonSerializer.Serialize(url))) + "]";
         // AwaitingApproval is the one non-terminal outcome: CompletedAtUtc stays null
         // until the human resolves the gating approval, at which point
         // AgentRunApprovalReconciler either hands the run back to the ReAct loop

@@ -127,6 +127,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               AutofillHints.email,
                             ],
                             label: const Text('Tên tài khoản'),
+                            // Web (`LoginView.vue`) có cả nhãn *và* placeholder
+                            // cùng nội dung: nhãn đứng trên, chữ mờ nằm trong ô
+                            // để ô trống vẫn biết mình dùng làm gì.
+                            hint: 'Tên tài khoản',
                             prefixBuilder: (context, style, variants) =>
                                 FTextField.prefixIconBuilder(
                                   context,
@@ -147,6 +151,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             textInputAction: TextInputAction.done,
                             autofillHints: const [AutofillHints.password],
                             label: const Text('Mật khẩu'),
+                            hint: 'Mật khẩu',
                             // Cùng vai trò với icon người ở ô tên tài khoản: cho
                             // người dùng một điểm neo thị giác, và icon không bị
                             // nhảy khi ô hiện thông báo lỗi.

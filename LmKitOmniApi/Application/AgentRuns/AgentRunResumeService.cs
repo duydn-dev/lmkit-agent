@@ -1,5 +1,6 @@
 using LmKitOmniApi.Services;
 using System.Text;
+using System.Text.Json;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.AI;
@@ -345,6 +346,12 @@ public sealed class AgentRunResumeService
         }
 
         var answer = AgentRunMarkers.StripMarkers(content.ToString());
+        // File descriptors of THIS pass, merged into the run's persisted set (a resumed
+        // pass can produce new files; earlier ones must survive).
+        var passFilePayloads = AgentRunMarkers.ExtractProducedFilePayloads(content.ToString());
+        // Web sources of THIS pass, same rationale: a resumed pass can search the web
+        // again and its citations must survive into the run's history view.
+        var passWebSources = AgentRunMarkers.ExtractWebSourceUrls(content.ToString());
 
         if ((cancelled || capacityRefused) && !gated)
         {
@@ -359,7 +366,8 @@ public sealed class AgentRunResumeService
                 : sink;
             await FinishAsync(runId, token, AgentRunStatuses.Running, progress,
                 appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer,
-                error: null, requeue: true);
+                error: null, requeue: true, producedFilePayloads: passFilePayloads,
+                webSources: passWebSources);
             return capacityRefused;
         }
 
@@ -370,19 +378,22 @@ public sealed class AgentRunResumeService
             // (session + AwaitingApproval) and the agent-run page (last marker step) find
             // it. Approving again queues another continuation, budget permitting.
             await FinishAsync(runId, token, AgentRunStatuses.AwaitingApproval, sink,
-                appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer, error: null);
+                appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer, error: null,
+                producedFilePayloads: passFilePayloads, webSources: passWebSources);
             return false;
         }
 
         if (!completed)
         {
             await FinishAsync(runId, token, AgentRunStatuses.Failed, sink,
-                appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer, error: failure);
+                appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer, error: failure,
+                producedFilePayloads: passFilePayloads, webSources: passWebSources);
             return false;
         }
 
         await FinishAsync(runId, token, AgentRunStatuses.Completed, sink,
-            appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer, error: null);
+            appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer, error: null,
+            producedFilePayloads: passFilePayloads, webSources: passWebSources);
         return false;
     }
 
@@ -431,7 +442,9 @@ public sealed class AgentRunResumeService
         IReadOnlyList<AgentRunStepData> steps,
         string? appendToResult,
         string? error,
-        bool requeue = false)
+        bool requeue = false,
+        IReadOnlyList<string>? producedFilePayloads = null,
+        IReadOnlyList<string>? webSources = null)
     {
         var ct = CancellationToken.None;
 
@@ -472,6 +485,43 @@ public sealed class AgentRunResumeService
         run.Status = status;
         if (appendToResult is not null) run.Result = Compose(run.Result, appendToResult);
         if (error is not null) run.Error = Truncate(error, MaxErrorChars);
+        if (producedFilePayloads is { Count: > 0 })
+        {
+            // Merge, dedupe by descriptor id, cap to a sane count (each descriptor is a
+            // short JSON object; the cap bounds a pathological tool loop).
+            var existing = string.IsNullOrWhiteSpace(run.ProducedFilesJson)
+                ? []
+                : ParseJsonArray(run.ProducedFilesJson!);
+            var merged = new List<string>(existing);
+            var seenIds = new HashSet<string>(existing.Select(DescriptorId), StringComparer.Ordinal);
+            foreach (var payload in producedFilePayloads)
+            {
+                if (merged.Count >= MaxProducedFiles) break;
+                var id = DescriptorId(payload);
+                if (id.Length > 0 && !seenIds.Add(id)) continue;
+                merged.Add(payload);
+            }
+            run.ProducedFilesJson = merged.Count == 0 ? null
+                : "[" + string.Join(",", merged) + "]";
+        }
+        if (webSources is { Count: > 0 })
+        {
+            // Merge, dedupe by URL, cap at the marker's own bound (12) — bounds a
+            // pathological multi-search pass the same way files are bounded.
+            const int maxWebSources = 12;
+            var existingSources = string.IsNullOrWhiteSpace(run.WebSourcesJson)
+                ? []
+                : ParseJsonStringArray(run.WebSourcesJson!);
+            var mergedSources = new List<string>(existingSources);
+            foreach (var url in webSources)
+            {
+                if (mergedSources.Count >= maxWebSources) break;
+                if (mergedSources.Contains(url, StringComparer.Ordinal)) continue;
+                mergedSources.Add(url);
+            }
+            run.WebSourcesJson = mergedSources.Count == 0 ? null
+                : "[" + string.Join(",", mergedSources.Select(url => JsonSerializer.Serialize(url))) + "]";
+        }
         // Running (a re-queued pass) and AwaitingApproval (a second gate) are the two
         // non-terminal outcomes; everything else is final.
         run.CompletedAtUtc =
@@ -517,6 +567,61 @@ public sealed class AgentRunResumeService
 
     private static string StepCapNote(int stepCount) =>
         $"Lần chạy đã đạt giới hạn {stepCount} bước công cụ, nên dừng tại đây thay vì tiếp tục.";
+
+    private const int MaxProducedFiles = 50;
+
+    /// <summary>Parses the persisted descriptor array; malformed JSON yields whatever
+    /// fragments parse — the merge path never throws on legacy/garbage data.</summary>
+    private static List<string> ParseJsonArray(string json)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array)
+                return [];
+            return doc.RootElement.EnumerateArray()
+                .Select(element => element.GetRawText())
+                .ToList();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>Parses a persisted JSON array of strings (web source URLs); malformed
+    /// JSON yields an empty list — the merge path never throws on legacy data.</summary>
+    private static List<string> ParseJsonStringArray(string json)
+    {
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? [];
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>The descriptor's "id" field, or '' when absent/malformed (then the raw
+    /// payload is kept as-is by the caller — a duplicate-looking id-less payload is
+    /// better lost than a real file).</summary>
+    private static string DescriptorId(string payload)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payload);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("id", out var id)
+                && id.ValueKind == System.Text.Json.JsonValueKind.String
+                ? id.GetString() ?? string.Empty
+                : string.Empty;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return string.Empty;
+        }
+    }
 
     private static string Compose(string? existing, string addition)
         => string.IsNullOrWhiteSpace(existing) ? addition : existing + "\n\n" + addition;

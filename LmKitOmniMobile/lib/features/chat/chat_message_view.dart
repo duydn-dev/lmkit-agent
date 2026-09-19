@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/theme.dart';
 import '../../app/ui/tenant_logo.dart';
@@ -11,6 +10,7 @@ import '../studio/studio_provider.dart';
 import 'chat_models.dart';
 import 'chat_provider.dart';
 import 'generative_ui.dart';
+import '../studio/web_sources_sheet.dart';
 import 'message_format.dart';
 import '../../app/ui/app_controls.dart';
 
@@ -408,52 +408,14 @@ class _CitationList extends StatelessWidget {
   final List<String> urls;
 
   @override
-  Widget build(BuildContext context) => Wrap(
-    spacing: 6,
-    runSpacing: 6,
-    children: [
-      for (final (index, url) in urls.indexed)
-        // Web: `px-3 py-1.5 rounded-xl bg-blue-50 border-blue-100 text-blue-700`.
-        // Dùng `Material`+`InkWell` để vệt chạm vẽ trên chính nền chip.
-        Material(
-          color: AppTheme.infoSurface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppTheme.radius),
-            side: const BorderSide(color: AppTheme.infoBorder),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: () =>
-                launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
-            // Trình đọc màn hình cần biết đây là liên kết mở ra ngoài và URL thật
-            // là gì — web có `title` tương ứng cho từng chip nguồn.
-            child: Semantics(
-              button: true,
-              link: true,
-              label: 'Mở nguồn ${index + 1}: $url',
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.link, size: 16, color: AppTheme.infoText),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Nguồn ${index + 1}',
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: AppTheme.infoText,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-    ],
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.centerLeft,
+    // Web tổ chức nguồn dạng "Đã đọc N trang web" → drawer phải liệt kê từng
+    // trang kèm favicon, tap một dòng là mở trình duyệt ngoài.
+    child: WebSourcesChip(
+      title: 'Nguồn tham khảo',
+      sources: [for (final url in urls) (url: url, title: '')],
+    ),
   );
 }
 

@@ -288,7 +288,8 @@ public class ScheduledTaskWorker : BackgroundService
                 UserId = task.UserId,
                 Type = ResultNotificationType,
                 Title = task.Name,
-                Body = "Lịch tự động đã chạy đến bước cần phê duyệt. Vào màn Phê duyệt tác vụ để xem xét — phiên sẽ tự chạy tiếp sau khi bạn quyết định."
+                Body = "Lịch tự động đã chạy đến bước cần phê duyệt. Vào màn Phê duyệt tác vụ để xem xét — phiên sẽ tự chạy tiếp sau khi bạn quyết định.",
+                AgentRunId = run.Id
             };
             return (AwaitingApprovalStatus, null, pending);
         }
@@ -298,13 +299,22 @@ public class ScheduledTaskWorker : BackgroundService
             var body = string.IsNullOrWhiteSpace(run.Result)
                 ? "(Agent không trả về nội dung.)"
                 : Truncate(run.Result.Trim(), MaxNotificationBodyLength);
+            // Notification cắt 4000 ký tự và không chứa file — luôn chỉ về nơi kết quả
+            // ĐẦY ĐỦ (result nguyên văn + tệp đính kèm) đang sống: chi tiết run ở màn
+            // Agent Runs. Không hint thì người dùng chỉ thấy phần đầu của một kết quả dài.
+            var hint = run.Result is { Length: > 0 } || run.ProducedFilesJson is not null
+                ? "\n\n— Kết quả đầy đủ và tệp đính kèm: màn Agent Runs, mở chi tiết lần chạy này."
+                : string.Empty;
             var notification = new Notification
             {
                 TenantId = task.TenantId,
                 UserId = task.UserId,
                 Type = ResultNotificationType,
                 Title = task.Name,
-                Body = body
+                Body = body + hint,
+                // Deep link: clients open the run's full detail (complete result +
+                // files + web sources) straight from the notification.
+                AgentRunId = run.Id
             };
             return (SucceededStatus, null, notification);
         }

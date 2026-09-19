@@ -555,7 +555,9 @@ public class PythonContainerExecutorTests
             var file = Assert.Single(result.Files);
             Assert.Equal("chart.png", file.Name);              // original name preserved for display
             Assert.NotEqual("chart.png", file.Id);             // stored under a server-generated name
+            Assert.StartsWith("chart-", file.Id);              // stem giữ lại để nhận diện trên đĩa
             Assert.EndsWith(".png", file.Id);                  // extension retained for content typing
+            Assert.Matches("^chart-[0-9a-f]{32}\\.png$", file.Id); // + GUID server sinh
             Assert.Equal("image/png", file.ContentType);
             Assert.Equal(pngBytes.Length, file.SizeBytes);
 

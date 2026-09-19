@@ -43,8 +43,13 @@ public static class ScheduleCalculator
             IntervalKind => ComputeInterval(task, nowUtc),
             DailyKind => ComputeDaily(task, nowUtc),
             WeeklyKind => ComputeWeekly(task, nowUtc),
+            // "once" KHÔNG có lần kế tiếp để tính: mốc chạy là NextRunUtc người dùng
+            // đặt lúc tạo, sau khi bắn lịch tự tắt (ScheduledTaskRules.AdvanceAfterRun).
+            // Giữ mốc hiện có để bật/tắt không đá lệch giờ hẹn; mốc default (dữ liệu
+            // hỏng) → rơi vào nhánh ném lỗi bên dưới như các kind lạ.
+            OnceKind when task.NextRunUtc != default => task.NextRunUtc,
             var kind => throw new InvalidOperationException(
-                $"Unknown schedule kind '{kind}'. Supported kinds: interval, daily, weekly.")
+                $"Unknown schedule kind '{kind}'. Supported kinds: interval, daily, weekly, once.")
         };
     }
 

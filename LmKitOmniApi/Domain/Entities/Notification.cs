@@ -33,6 +33,15 @@ public sealed class Notification
 
     public bool IsRead { get; set; }
 
+    /// <summary>
+    /// The agent run this notification reports on, when one exists (scheduled agent-mode
+    /// tasks). Lets clients deep-link from the notification into the run's full detail —
+    /// the complete result plus produced files and web sources live there, while the
+    /// notification body is only a 4000-char excerpt. Owner-scoped reads: a foreign or
+    /// fabricated id just 404s on the run endpoint.
+    /// </summary>
+    public Guid? AgentRunId { get; set; }
+
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 
     public Tenant? Tenant { get; set; }

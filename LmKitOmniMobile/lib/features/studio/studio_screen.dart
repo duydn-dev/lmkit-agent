@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:forui/forui.dart';
 
 import '../../app/theme.dart';
 
@@ -314,6 +315,48 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
     }
   }
 
+  /// Bật/tắt lịch: cập nhật lạc quan để công tắc phản hồi tức thì; lỗi mạng
+  /// hay lỗi validate (vd vượt giới hạn số lịch bật) thì trả trạng thái cũ và
+  /// báo đúng lý do cho người dùng.
+  Future<void> _toggleSchedule(ScheduledTaskModel task, {required bool enable}) async {
+    if (task.enabled == enable) return;
+    setState(() {
+      _schedules = [
+        for (final item in _schedules)
+          if (item.id == task.id)
+            ScheduledTaskModel(
+              id: item.id,
+              name: item.name,
+              prompt: item.prompt,
+              scheduleKind: item.scheduleKind,
+              enabled: enable,
+              nextRunUtc: item.nextRunUtc,
+              runMode: item.runMode,
+              intervalMinutes: item.intervalMinutes,
+              timeOfDayMinutes: item.timeOfDayMinutes,
+              dayOfWeek: item.dayOfWeek,
+              lastStatus: item.lastStatus,
+              lastError: item.lastError,
+            )
+          else
+            item,
+      ];
+    });
+    try {
+      await _repo.toggleSchedule(task.id);
+      await _loadAll();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _schedules = [
+          for (final item in _schedules)
+            if (item.id == task.id) task else item,
+        ];
+        _error = _message(error);
+      });
+    }
+  }
+
   Future<void> _runResearch() async {
     final query = _researchQuery.text.trim();
     if (query.isEmpty || _researching) return;
@@ -531,30 +574,106 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
       for (final task in _schedules)
         AppTile(
           title: Text(task.name),
-          subtitle: Text(
-            '${task.scheduleKind} • ${task.prompt}',
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Loại lịch mô tả bằng tiếng Việt — người dùng đọc là hiểu.
+              Text(
+                _scheduleKindLabel(task),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              Text(
+                task.prompt,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              // Mốc hẹn kế tiếp / kết quả lần cuối — biết lịch còn sống hay đã
+              // ngừng mà không cần bấm vào.
+              Text(
+                task.enabled && task.nextRunUtc != null
+                    ? 'Lần chạy kế: ${_fmtNextRun(task.nextRunUtc!)}'
+                    : task.lastStatus == null
+                        ? 'Chưa chạy lần nào'
+                        : 'Lần cuối: ${_lastStatusLabel(task.lastStatus!)}${task.lastError == null ? '' : ' — ${task.lastError}'}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppTheme.textMuted,
+                ),
+              ),
+            ],
           ),
           prefix: Icon(
             task.enabled ? Icons.schedule : Icons.pause_circle_outline,
             color: task.enabled ? AppTheme.success : AppTheme.textMuted,
           ),
-          suffix: AppMenuButton(
-            items: [
-              AppMenuItem('Bật / tắt', () async {
-                await _repo.toggleSchedule(task.id);
-                _loadAll();
-              }),
-              AppMenuItem('Xóa', () async {
-                await _repo.deleteSchedule(task.id);
-                _loadAll();
-              }, destructive: true),
+          // Công tắc gọn trong hàng: FSwitch trực tiếp (AppSwitchTile là
+          // FTile.raw lồng FTile — làm vỡ layout, mất tiêu đề — đã gặp thật).
+          suffix: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                task.enabled ? 'Đang chạy' : 'Đã tắt',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: task.enabled ? AppTheme.success : AppTheme.textMuted,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 8),
+              FSwitch(
+                value: task.enabled,
+                onChange: (value) => _toggleSchedule(task, enable: value),
+              ),
             ],
           ),
         ),
     ],
   );
+
+  /// Mô tả loại lịch bằng tiếng Việt, kèm chi tiết (khoảng cách / giờ hẹn /
+  /// ngày trong tuần) — chỉ nhìn tile là biết lịch hoạt động thế nào.
+  String _scheduleKindLabel(ScheduledTaskModel task) {
+    const days = [
+      'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ nhật',
+    ];
+    String hhmm(int minutes) =>
+        '${(minutes ~/ 60).toString().padLeft(2, '0')}:${(minutes % 60).toString().padLeft(2, '0')}';
+    return switch (task.scheduleKind) {
+      'interval' when task.intervalMinutes != null =>
+        'Lặp mỗi ${task.intervalMinutes} phút',
+      'daily' when task.timeOfDayMinutes != null =>
+        'Hằng ngày lúc ${hhmm(task.timeOfDayMinutes!)}',
+      'weekly' when task.timeOfDayMinutes != null =>
+        'Hàng tuần: ${task.dayOfWeek != null && task.dayOfWeek! >= 1 && task.dayOfWeek! <= 7 ? days[task.dayOfWeek! - 1] : '?'} lúc ${hhmm(task.timeOfDayMinutes!)}',
+      'once' => 'Chạy một lần',
+      _ => task.scheduleKind,
+    };
+  }
+
+  /// Mốc hẹn kế tiếp dạng thân thiện (giờ địa phương), ví dụ "14:05 ngày 19/09".
+  String _fmtNextRun(DateTime utc) {
+    final local = utc.toLocal();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(local.year, local.month, local.day);
+    final diffDays = day.difference(today).inDays;
+    final hhmm =
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    if (diffDays == 0) return 'hôm nay $hhmm';
+    if (diffDays == 1) return 'ngày mai $hhmm';
+    return '$hhmm ngày ${local.day}/${local.month}';
+  }
+
+  /// Nhãn kết quả lần chạy gần nhất cho tile lịch.
+  String _lastStatusLabel(String status) => switch (status) {
+    'Succeeded' => 'thành công',
+    'Failed' => 'thất bại',
+    'Running' => 'đang chạy',
+    'AwaitingApproval' => 'chờ duyệt',
+    _ => status,
+  };
 
   Widget _runsTab() => ListView(
     padding: const EdgeInsets.only(bottom: 24),

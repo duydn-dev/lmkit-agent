@@ -12,8 +12,9 @@ public sealed class ListNotificationsQuery : IRequest<List<NotificationDto>>
 
 /// <summary>
 /// Wire DTO for GET <c>/api/notifications</c>. Serialized camelCase:
-/// <c>{ id, type, title, body, isRead, createdAt }</c> — <c>createdAt</c> maps from
-/// <c>Notification.CreatedAtUtc</c>. The legacy Document* columns are deliberately not exposed.
+/// <c>{ id, type, title, body, isRead, createdAt, agentRunId }</c> — <c>createdAt</c> maps
+/// from <c>Notification.CreatedAtUtc</c>. The legacy Document* columns are deliberately
+/// not exposed.
 /// </summary>
 public sealed class NotificationDto
 {
@@ -23,4 +24,8 @@ public sealed class NotificationDto
     public string Body { get; init; } = string.Empty;
     public bool IsRead { get; init; }
     public DateTime CreatedAt { get; init; }
+
+    /// <summary>Run this notification reports on (scheduled agent tasks); null for
+    /// notifications without a run. Clients deep-link into the run detail.</summary>
+    public Guid? AgentRunId { get; init; }
 }

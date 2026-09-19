@@ -2,7 +2,7 @@
     <!-- Voice input: ghi âm trong Chat rồi gửi lên /api/speech/transcribe-upload. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
-        android:label="lmkit_omni_mobile"
+        android:label="CILA AI"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

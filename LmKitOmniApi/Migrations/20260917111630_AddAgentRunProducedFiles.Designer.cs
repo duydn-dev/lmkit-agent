@@ -3,6 +3,7 @@ using System;
 using LmKitOmniApi.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace LmKitOmniApi.Migrations
 {
     [DbContext(typeof(HermesDbContext))]
-    partial class HermesDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260917111630_AddAgentRunProducedFiles")]
+    partial class AddAgentRunProducedFiles
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -126,9 +129,6 @@ namespace LmKitOmniApi.Migrations
 
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
-
-                    b.Property<string>("WebSourcesJson")
-                        .HasColumnType("text");
 
                     b.HasKey("Id");
 
@@ -764,9 +764,6 @@ namespace LmKitOmniApi.Migrations
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("AgentRunId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("Body")

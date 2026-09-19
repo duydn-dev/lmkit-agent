@@ -36,6 +36,25 @@ public sealed class AgentRun
     /// <summary>The synthesized final answer, once completed.</summary>
     public string? Result { get; set; }
 
+    /// <summary>
+    /// JSON array of file descriptors the run's tools produced — the same
+    /// <c>[FILE:{…}]</c> payloads the live stream emits, persisted so HISTORY views can
+    /// render downloads/preview: a scheduled/agent-mode run that fetches an API or
+    /// builds a chart must keep its files attached to the run, not only inside the
+    /// ephemeral SSE stream. Shape: [{"id","name","contentType","size"}]; id resolves
+    /// via GET /api/files/{id} inside the owner's upload root.
+    /// </summary>
+    public string? ProducedFilesJson { get; set; }
+
+    /// <summary>
+    /// JSON array of web source URLs the run consulted ([WEB_SEARCH] marker payloads,
+    /// split on '|'), persisted for the same reason as <see cref="ProducedFilesJson"/>:
+    /// a scheduled run has no live stream consumer, so this is the only record the UI
+    /// can show a "Đã đọc N trang web" chip with a source drawer. Capped by the
+    /// orchestrator's MaxWebReferenceCount (12) — the marker already enforces it.
+    /// </summary>
+    public string? WebSourcesJson { get; set; }
+
     /// <summary>A short, user-safe error summary when the run failed.</summary>
     [MaxLength(2000)]
     public string? Error { get; set; }

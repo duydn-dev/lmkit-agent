@@ -636,13 +636,15 @@ public sealed class AgentActionDispatcher
     }
 
     /// <summary>Writes a derived document into the caller's isolated upload root under a
-    /// server-generated name and registers it on the file sink for a [FILE:] download.</summary>
+    /// server-generated name that keeps the friendly stem plus an unguessable GUID, and
+    /// registers it on the file sink for a [FILE:] download.</summary>
     private string PersistProducedFile(
         Guid tenantId, Guid? userId, byte[] data, string friendlyName, string contentType,
         IList<LmKitOmniApi.Infrastructure.AI.Security.ProducedFile>? fileSink)
     {
         var ext = System.IO.Path.GetExtension(friendlyName);
-        var storedName = $"{Guid.NewGuid():N}{ext}";
+        // Tên đĩa giữ stem thân thiện (filled-…, redacted-…) + GUID khó đoán.
+        var storedName = LmKitOmniApi.Infrastructure.AI.Security.UserResourceAccessService.BuildStoredFileName(friendlyName, ext);
         var dir = _resources.GetUploadDirectory(tenantId, userId ?? Guid.Empty);
         System.IO.Directory.CreateDirectory(dir);
         System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir, storedName), data);

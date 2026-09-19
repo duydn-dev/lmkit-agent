@@ -8,6 +8,7 @@ import '../../app/theme.dart';
 import '../../app/ui/app_controls.dart';
 import '../../core/network/api_exception.dart';
 import '../studio/studio_provider.dart';
+import 'notification_detail_sheet.dart';
 
 /// Thông báo trong app (khớp `NotificationDto`): tài liệu đã xử lý xong, tác vụ
 /// tự động chạy xong, agent chờ phê duyệt…
@@ -18,6 +19,7 @@ class NotificationModel {
     this.body = '',
     this.isRead = false,
     this.createdAt,
+    this.agentRunId,
   });
 
   final String id;
@@ -25,6 +27,10 @@ class NotificationModel {
   final String body;
   final bool isRead;
   final DateTime? createdAt;
+
+  /// Id lần chạy agent sinh ra thông báo này (nếu có) — để mở thẳng chi tiết
+  /// run (timeline + nguồn + file) từ màn thông báo.
+  final String? agentRunId;
 
   factory NotificationModel.fromJson(Map<String, dynamic> json) =>
       NotificationModel(
@@ -35,6 +41,7 @@ class NotificationModel {
         createdAt: json['createdAt'] is String
             ? DateTime.tryParse(json['createdAt'] as String)
             : null,
+        agentRunId: json['agentRunId']?.toString(),
       );
 }
 
@@ -63,6 +70,7 @@ class NotificationsController extends AsyncNotifier<List<NotificationModel>> {
                 body: item.body,
                 isRead: true,
                 createdAt: item.createdAt,
+                agentRunId: item.agentRunId,
               )
             : item,
     ]);
@@ -285,28 +293,38 @@ class NotificationsScreen extends ConsumerWidget {
                             ? _relative(item.createdAt)
                             : '${item.body}\n${_relative(item.createdAt)}',
                       ),
-                      onTap: item.isRead
-                          ? null
-                          : () async {
-                              try {
-                                await controller.markRead(item);
-                              } catch (error) {
-                                if (context.mounted) {
-                                  showAppSnack(
-                                    context,
-                                    error is ApiException
-                                        ? error.message
-                                        : error.toString(),
-                                  );
-                                }
-                              }
-                            },
+                      onTap: () => _openDetail(context, controller, item),
                     );
                   },
                 ),
         ),
       ),
     );
+  }
+
+  /// Tap thông báo: mở modal chi tiết (kết quả đầy đủ + file + nguồn web).
+  /// Thông báo chưa đọc được đánh dấu đã đọc song song, không chờ modal.
+  Future<void> _openDetail(
+    BuildContext context,
+    NotificationsController controller,
+    NotificationModel item,
+  ) async {
+    final future = controller.markRead(item).catchError((Object error) {
+      if (context.mounted) {
+        showAppSnack(
+          context,
+          error is ApiException ? error.message : error.toString(),
+        );
+      }
+    });
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => NotificationDetailSheet(item: item),
+    );
+    unawaited(future);
   }
 
   static String _relative(DateTime? value) {

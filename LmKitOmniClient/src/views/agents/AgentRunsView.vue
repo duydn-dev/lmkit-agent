@@ -250,6 +250,38 @@
                 <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1.5">Kết quả</h3>
                 <div class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800">{{ detail.result }}</div>
               </div>
+
+              <!-- Produced files persisted on the run row: a scheduled run has no live
+                   stream, so history detail is where its file outputs surface. -->
+              <div v-if="detail.producedFiles && detail.producedFiles.length > 0">
+                <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1.5">Tệp kết quả</h3>
+                <div class="flex flex-wrap gap-2">
+                  <template v-for="file in detail.producedFiles" :key="file.id">
+                    <a
+                      v-if="file.contentType.startsWith('image/')"
+                      :href="fileUrl(file.id)"
+                      :download="file.name"
+                      target="_blank"
+                      rel="noopener"
+                      :aria-label="`Tải ảnh ${file.name}`"
+                      class="block rounded-lg overflow-hidden focus-visible:ring-2 focus-visible:ring-blue-500"
+                    >
+                      <img :src="fileUrl(file.id)" :alt="file.name" class="max-w-xs max-h-64 rounded-lg border border-gray-200 object-contain" />
+                    </a>
+                    <a
+                      v-else
+                      :href="fileUrl(file.id)"
+                      :download="file.name"
+                      :aria-label="`Tải tệp ${file.name}`"
+                      class="min-h-11 flex items-center gap-2 px-3 py-1.5 rounded-xl border border-gray-200 bg-white text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors focus-visible:ring-2 focus-visible:ring-blue-500"
+                    >
+                      <i class="pi pi-file text-base text-gray-500" aria-hidden="true"></i>
+                      <span class="max-w-[160px] truncate font-medium">{{ file.name }}</span>
+                      <span class="text-xs text-gray-400">{{ formatFileSize(file.size) }}</span>
+                    </a>
+                  </template>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -502,6 +534,8 @@ interface AgentRunDetail {
   createdAtUtc: string;
   completedAtUtc: string | null;
   steps: RunStep[];
+  /** Persisted [FILE:] descriptors — a scheduled run's only link to its file outputs. */
+  producedFiles: ProducedFile[];
 }
 
 const MAX_GOAL = 4000;

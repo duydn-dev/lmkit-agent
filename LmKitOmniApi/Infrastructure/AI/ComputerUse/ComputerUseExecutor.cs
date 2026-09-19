@@ -350,7 +350,9 @@ public sealed class ComputerUseExecutor : IComputerUseExecutor
 
             var extension = Path.GetExtension(safeName);
             if (string.IsNullOrEmpty(extension)) extension = ".png";
-            var storedName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}";
+            // Tên đĩa giữ stem gốc + GUID (BuildStoredFileName) — screenshot vẫn nhận
+            // diện được trên đĩa mà id tải xuống vẫn khó đoán.
+            var storedName = UserResourceAccessService.BuildStoredFileName(safeName, extension.ToLowerInvariant());
             var destinationPath = Path.Combine(uploadDir, storedName);
 
             await using (var source = File.OpenRead(sourcePath))

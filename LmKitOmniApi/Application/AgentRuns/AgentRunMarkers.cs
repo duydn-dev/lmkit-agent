@@ -56,4 +56,45 @@ internal static class AgentRunMarkers
     /// <summary>Removes every status/step marker, leaving the model's prose.</summary>
     public static string StripMarkers(string rawContent) =>
         BracketMarkerRegex.Replace(LineMarkerRegex.Replace(rawContent, string.Empty), string.Empty).Trim();
+
+    /// <summary>
+    /// Extracts the JSON payload of every <c>[FILE:{…}]</c> marker BEFORE the content is
+    /// stripped. Scheduled/agent-mode runs have no live stream consumer — the worker just
+    /// drains the channel — so these descriptors are the ONLY record that the run produced
+    /// downloadable files (a chart, an API response saved as a file). They are persisted on
+    /// the run row (ProducedFilesJson) so the history view can render them; the marker
+    /// itself is still stripped from Result, which stays clean prose.
+    /// </summary>
+    public static List<string> ExtractProducedFilePayloads(string rawContent)
+    {
+        var payloads = new List<string>();
+        if (string.IsNullOrEmpty(rawContent)) return payloads;
+        foreach (Match match in Regex.Matches(rawContent, @"\[FILE:(.+?)\]"))
+            payloads.Add(match.Groups[1].Value);
+        return payloads;
+    }
+
+    /// <summary>
+    /// Extracts the web source URLs carried by <c>[WEB_SEARCH]:url|url…</c> line markers
+    /// BEFORE the content is stripped, split on '|' (the orchestrator joins with '|' —
+    /// see FormatWebSearchMarker; URLs cannot contain '|' because ExtractWebReferences
+    /// only keeps http/https). Scheduled/agent-mode runs have no live stream consumer,
+    /// so without this the run's "Đã đọc N trang web" sources would exist only in the
+    /// ephemeral SSE stream. Dedupes in emission order; the marker already caps at 12.
+    /// </summary>
+    public static List<string> ExtractWebSourceUrls(string rawContent)
+    {
+        var urls = new List<string>();
+        if (string.IsNullOrEmpty(rawContent)) return urls;
+        foreach (Match match in Regex.Matches(rawContent, @"\[WEB_SEARCH\]:([^\n\r]+)"))
+        {
+            foreach (var url in match.Groups[1].Value.Split('|'))
+            {
+                var candidate = url.Trim();
+                if (candidate.Length == 0 || urls.Contains(candidate, StringComparer.Ordinal)) continue;
+                urls.Add(candidate);
+            }
+        }
+        return urls;
+    }
 }
