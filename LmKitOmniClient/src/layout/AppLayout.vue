@@ -46,25 +46,35 @@
       </nav>
 
       <!-- User Profile -->
+      <!-- The account link and the logout control are SIBLINGS. Nesting the logout <button>
+           inside the account <button> is invalid HTML and axe reports it as
+           nested-interactive: the inner control is ambiguous for keyboard/screen-reader
+           users (the whole surface already claims to be one button). -->
       <div class="p-3 border-t border-gray-100">
-        <button type="button" class="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer group" @click="openSettings" :aria-expanded="false">
-          <Avatar
-            :image="authStore.currentUser?.avatarUrl || undefined"
-            :label="userInitials"
-            shape="circle"
-            :aria-label="`Ảnh đại diện của ${userName}`"
-            class="!w-8 !h-8 flex-shrink-0 !bg-blue-50 !text-[var(--color-gov-blue-dark)] !font-bold" />
-          <div class="min-w-0 flex-1 text-left">
-            <div class="text-xs font-semibold text-slate-800 truncate">{{ userName }}</div>
-            <div class="text-[10px] text-slate-500 truncate">{{ userRole }}</div>
-          </div>
+        <div class="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-gray-50 transition-colors group">
+          <button
+            type="button"
+            class="min-w-0 flex-1 flex items-center gap-2.5 text-left cursor-pointer"
+            :aria-label="`Tài khoản ${userName}`"
+            @click="openSettings">
+            <Avatar
+              :image="authStore.currentUser?.avatarUrl || undefined"
+              :label="userInitials"
+              shape="circle"
+              :aria-label="`Ảnh đại diện của ${userName}`"
+              class="!w-8 !h-8 flex-shrink-0 !bg-blue-50 !text-[var(--color-gov-blue-dark)] !font-bold" />
+            <div class="min-w-0 flex-1 text-left">
+              <div class="text-xs font-semibold text-slate-800 truncate">{{ userName }}</div>
+              <div class="text-[10px] text-slate-500 truncate">{{ userRole }}</div>
+            </div>
+          </button>
           <div class="flex items-center gap-1">
             <i v-if="isAdmin" class="pi pi-cog text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-gray-600 text-xs" aria-hidden="true"></i>
-            <button type="button" @click.stop="logout" class="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer" aria-label="Đăng xuất">
-              <i class="pi pi-sign-out text-xs"></i>
+            <button type="button" @click="logout" class="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer" aria-label="Đăng xuất">
+              <i class="pi pi-sign-out text-xs" aria-hidden="true"></i>
             </button>
           </div>
-        </button>
+        </div>
       </div>
     </aside>
 

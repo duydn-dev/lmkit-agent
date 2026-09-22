@@ -128,7 +128,9 @@ export const ApiFactory = {
     BASE: '/api/database-connections',
     BY_ID: (id: string) => `/api/database-connections/${id}`,
     TEST: (id: string) => `/api/database-connections/${id}/test`,
-    REINDEX: (id: string) => `/api/database-connections/${id}/reindex`
+    REINDEX: (id: string) => `/api/database-connections/${id}/reindex`,
+    // Schema diagram (bảng/cột/khoá + quan hệ FK) — nguồn dữ liệu cho ER diagram.
+    SCHEMA: (id: string) => `/api/database-connections/${id}/schema`
   },
   // Public widget (key/token flow) + tenant-admin management.
   WIDGET: {

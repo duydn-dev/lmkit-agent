@@ -401,3 +401,216 @@ class McpOAuthStatusModel {
         expiresAtUtc: _date(json['expiresAtUtc']),
       );
 }
+
+/// Một cột của bảng trong sơ đồ schema.
+///
+/// `isPrimaryKey`/`isForeignKey` do **backend** xác định (nó đối chiếu danh sách
+/// khoá ngoại của bảng), client không tự đoán từ tên cột.
+class SchemaColumnModel {
+  const SchemaColumnModel({
+    required this.name,
+    this.dataType = '',
+    this.isNullable = true,
+    this.isPrimaryKey = false,
+    this.isForeignKey = false,
+  });
+
+  final String name;
+  final String dataType;
+  final bool isNullable;
+  final bool isPrimaryKey;
+  final bool isForeignKey;
+
+  /// Nhãn khoá hiển thị trên thẻ bảng — cột vừa là khoá chính vừa là khoá ngoại
+  /// là chuyện thường (bảng nối), nên phải hiện được cả hai.
+  String get keyLabel =>
+      [if (isPrimaryKey) 'PK', if (isForeignKey) 'FK'].join(', ');
+
+  factory SchemaColumnModel.fromJson(Map<String, dynamic> json) =>
+      SchemaColumnModel(
+        name: json['name'] as String? ?? '',
+        dataType: json['dataType'] as String? ?? '',
+        isNullable: json['isNullable'] as bool? ?? true,
+        isPrimaryKey: json['isPrimaryKey'] as bool? ?? false,
+        isForeignKey: json['isForeignKey'] as bool? ?? false,
+      );
+}
+
+/// Một khoá ngoại đã được backend tách thành (cột → bảng.cột).
+///
+/// `isResolved == false` nghĩa là chuỗi introspection không tách được (khoá tổ
+/// hợp, thiếu thông tin) — vẫn giữ [raw] để hiển thị thay vì bỏ im lặng.
+class SchemaForeignKeyModel {
+  const SchemaForeignKeyModel({
+    this.column = '',
+    this.referencedTable = '',
+    this.referencedColumn = '',
+    this.raw = '',
+    this.isResolved = false,
+  });
+
+  final String column;
+  final String referencedTable;
+  final String referencedColumn;
+  final String raw;
+  final bool isResolved;
+
+  factory SchemaForeignKeyModel.fromJson(Map<String, dynamic> json) =>
+      SchemaForeignKeyModel(
+        column: json['column'] as String? ?? '',
+        referencedTable: json['referencedTable'] as String? ?? '',
+        referencedColumn: json['referencedColumn'] as String? ?? '',
+        raw: json['raw'] as String? ?? '',
+        isResolved: json['isResolved'] as bool? ?? false,
+      );
+}
+
+/// Một bảng (entity) của sơ đồ.
+class SchemaTableModel {
+  const SchemaTableModel({
+    required this.name,
+    required this.qualifiedName,
+    this.schema = '',
+    this.columns = const [],
+    this.foreignKeys = const [],
+  });
+
+  final String schema;
+  final String name;
+
+  /// Tên đầy đủ đúng như backend hiển thị (`public.users`, hoặc `users` khi
+  /// engine không có schema có nghĩa — SQLite `main` đã được lược bỏ).
+  final String qualifiedName;
+
+  final List<SchemaColumnModel> columns;
+  final List<SchemaForeignKeyModel> foreignKeys;
+
+  factory SchemaTableModel.fromJson(Map<String, dynamic> json) =>
+      SchemaTableModel(
+        schema: json['schema'] as String? ?? '',
+        name: json['name'] as String? ?? '',
+        qualifiedName:
+            json['qualifiedName'] as String? ?? json['name']?.toString() ?? '',
+        columns: _list(json['columns'], SchemaColumnModel.fromJson),
+        foreignKeys: _list(json['foreignKeys'], SchemaForeignKeyModel.fromJson),
+      );
+}
+
+/// Một cạnh của sơ đồ: bảng con (đang giữ khoá ngoại) trỏ tới bảng cha.
+class SchemaRelationModel {
+  const SchemaRelationModel({
+    required this.fromTable,
+    required this.fromColumn,
+    required this.toTable,
+    this.toColumn = '',
+    this.targetIncluded = false,
+  });
+
+  final String fromTable;
+  final String fromColumn;
+  final String toTable;
+  final String toColumn;
+
+  /// Bảng cha có nằm trong sơ đồ hay không. `false` = **không được vẽ** (trỏ ra
+  /// ngoài phần đã cắt) nhưng vẫn phải liệt kê cho người dùng thấy.
+  final bool targetIncluded;
+
+  /// Nhãn cạnh, ví dụ `customer_id → id`.
+  String get label => toColumn.isEmpty ? fromColumn : '$fromColumn → $toColumn';
+
+  factory SchemaRelationModel.fromJson(Map<String, dynamic> json) =>
+      SchemaRelationModel(
+        fromTable: json['fromTable'] as String? ?? '',
+        fromColumn: json['fromColumn'] as String? ?? '',
+        toTable: json['toTable'] as String? ?? '',
+        toColumn: json['toColumn'] as String? ?? '',
+        targetIncluded: json['targetIncluded'] as bool? ?? false,
+      );
+}
+
+/// Sơ đồ schema của một kết nối CSDL ngoài — nguồn dựng hình cho màn
+/// `DatabaseDiagramScreen`.
+class DatabaseSchemaModel {
+  const DatabaseSchemaModel({
+    this.connectionId = '',
+    this.name = '',
+    this.provider = '',
+    this.isActive = true,
+    this.isIndexed = false,
+    this.indexStatus = '',
+    this.lastIndexedAtUtc,
+    this.tableCount = 0,
+    this.totalTableCount = 0,
+    this.truncated = false,
+    this.tables = const [],
+    this.relations = const [],
+  });
+
+  final String connectionId;
+  final String name;
+  final String provider;
+  final bool isActive;
+  final bool isIndexed;
+  final String indexStatus;
+  final DateTime? lastIndexedAtUtc;
+
+  /// Số bảng thực sự có trong sơ đồ (đã áp trần hiển thị của backend).
+  final int tableCount;
+
+  /// Số bảng introspection trả về, trước khi áp trần.
+  final int totalTableCount;
+
+  /// `true` khi sơ đồ bị cắt bớt — màn hình phải nói rõ, không im lặng.
+  final bool truncated;
+
+  final List<SchemaTableModel> tables;
+  final List<SchemaRelationModel> relations;
+
+  /// Các cạnh không vẽ được vì bảng cha nằm ngoài sơ đồ.
+  List<SchemaRelationModel> get externalReferences =>
+      relations.where((relation) => !relation.targetIncluded).toList();
+
+  /// Khoá ngoại backend không tách được thành cạnh.
+  List<SchemaForeignKeyModel> get unresolvedForeignKeys => [
+    for (final table in tables)
+      ...table.foreignKeys.where((fk) => !fk.isResolved),
+  ];
+
+  /// Cạnh vẽ được: cả hai đầu đều có thẻ trong sơ đồ.
+  List<SchemaRelationModel> get drawableRelations {
+    final ids = tables.map((table) => table.qualifiedName).toSet();
+    return relations
+        .where(
+          (relation) =>
+              relation.targetIncluded &&
+              ids.contains(relation.fromTable) &&
+              ids.contains(relation.toTable),
+        )
+        .toList();
+  }
+
+  factory DatabaseSchemaModel.fromJson(Map<String, dynamic> json) =>
+      DatabaseSchemaModel(
+        connectionId: json['connectionId']?.toString() ?? '',
+        name: json['name'] as String? ?? '',
+        provider: json['provider'] as String? ?? '',
+        isActive: json['isActive'] as bool? ?? true,
+        isIndexed: json['isIndexed'] as bool? ?? false,
+        indexStatus: json['indexStatus'] as String? ?? '',
+        lastIndexedAtUtc: _date(json['lastIndexedAtUtc']),
+        tableCount: (json['tableCount'] as num?)?.toInt() ?? 0,
+        totalTableCount: (json['totalTableCount'] as num?)?.toInt() ?? 0,
+        truncated: json['truncated'] as bool? ?? false,
+        tables: _list(json['tables'], SchemaTableModel.fromJson),
+        relations: _list(json['relations'], SchemaRelationModel.fromJson),
+      );
+}
+
+/// Danh sách model từ một mảng JSON (bỏ qua phần tử không phải object).
+List<T> _list<T>(Object? value, T Function(Map<String, dynamic>) build) {
+  if (value is! List) return const [];
+  return [
+    for (final item in value)
+      if (item is Map) build(Map<String, dynamic>.from(item)),
+  ];
+}

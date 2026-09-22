@@ -69,25 +69,73 @@ public sealed class MongoDatabaseService
         var names = await (await database.ListCollectionNamesAsync(cancellationToken: cts.Token)).ToListAsync(cts.Token);
         if (names.Count == 0) return $"[CSDL: {connectionName}] Database chưa có collection nào.";
 
+        var samples = await SampleCollectionsAsync(database, names.Take(40), cts.Token);
+
         var sb = new StringBuilder();
         sb.Append("SCHEMA_CONTEXT_FOR MongoDB: ").AppendLine(connectionName);
-        foreach (var name in names.Take(40))
+        foreach (var sample in samples)
         {
-            var collection = database.GetCollection<BsonDocument>(name);
-            var sample = await collection.Find(new BsonDocument()).Limit(25).ToListAsync(cts.Token);
-            var fields = new SortedDictionary<string, string>(StringComparer.Ordinal);
-            foreach (var doc in sample)
-                foreach (var element in doc.Elements)
-                    fields.TryAdd(element.Name, element.Value.BsonType.ToString());
-
-            sb.Append("Collection: ").Append(name).Append(" (~").Append(sample.Count).AppendLine(" doc mẫu)");
-            foreach (var field in fields) sb.Append("  - ").Append(field.Key).Append(' ').AppendLine(field.Value);
+            sb.Append("Collection: ").Append(sample.Name).Append(" (~").Append(sample.SampledDocuments).AppendLine(" doc mẫu)");
+            foreach (var field in sample.Fields) sb.Append("  - ").Append(field.Key).Append(' ').AppendLine(field.Value);
         }
         sb.AppendLine();
         sb.AppendLine("Hãy gọi run_database_query với MỘT lệnh JSON CHỈ-ĐỌC, ví dụ:");
         sb.AppendLine("{\"collection\":\"<tên>\",\"op\":\"find\",\"filter\":{...},\"limit\":50}");
         sb.AppendLine("hoặc {\"collection\":\"<tên>\",\"op\":\"aggregate\",\"pipeline\":[...]}. Ghi dữ liệu (update/delete/insert) phải được người dùng phê duyệt.");
         return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Collections + sampled field types as diagram tables (no FKs — Mongo has none). The
+    /// Mongo counterpart of <see cref="IExternalDatabaseProvider.IntrospectAsync"/>, so the
+    /// schema diagram works for a schemaless connection instead of coming back empty.
+    /// Throws <see cref="DatabaseOperationRefusedException"/> when egress blocks the host.
+    /// </summary>
+    public async Task<IReadOnlyList<DbTableInfo>> GetCollectionsSchemaAsync(
+        string connectionString, int maxCollections, CancellationToken ct)
+    {
+        var egress = await VetAsync(connectionString, ct);
+        if (egress is not null) throw new DatabaseOperationRefusedException(egress);
+
+        var (_, database) = Connect(connectionString);
+        using var cts = LinkedTimeout(ct);
+
+        var names = await (await database.ListCollectionNamesAsync(cancellationToken: cts.Token)).ToListAsync(cts.Token);
+        var samples = await SampleCollectionsAsync(database, names.OrderBy(n => n, StringComparer.Ordinal).Take(maxCollections), cts.Token);
+
+        return samples
+            .Select(sample => new DbTableInfo(
+                Schema: string.Empty,
+                Name: sample.Name,
+                Columns: sample.Fields
+                    .Select(field => new DbColumnInfo(
+                        field.Key,
+                        field.Value,
+                        IsNullable: true,
+                        IsPrimaryKey: string.Equals(field.Key, "_id", StringComparison.Ordinal)))
+                    .ToList(),
+                ForeignKeys: Array.Empty<string>()))
+            .ToList();
+    }
+
+    /// <summary>One collection's sampled field set — shared by the agent's schema context and the diagram.</summary>
+    private sealed record MongoCollectionSample(string Name, int SampledDocuments, SortedDictionary<string, string> Fields);
+
+    private static async Task<List<MongoCollectionSample>> SampleCollectionsAsync(
+        IMongoDatabase database, IEnumerable<string> names, CancellationToken ct)
+    {
+        var samples = new List<MongoCollectionSample>();
+        foreach (var name in names)
+        {
+            var collection = database.GetCollection<BsonDocument>(name);
+            var sample = await collection.Find(new BsonDocument()).Limit(25).ToListAsync(ct);
+            var fields = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            foreach (var doc in sample)
+                foreach (var element in doc.Elements)
+                    fields.TryAdd(element.Name, element.Value.BsonType.ToString());
+            samples.Add(new MongoCollectionSample(name, sample.Count, fields));
+        }
+        return samples;
     }
 
     public async Task<string> RunReadAsync(string connectionName, string connectionString, string commandJson, CancellationToken ct)

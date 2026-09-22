@@ -416,6 +416,7 @@ void main() {
     await admin.saveDatabaseConnection(name: 'n', provider: 'PostgreSQL');
     await admin.deleteDatabaseConnection('db-demo-0002');
     await admin.reindexDatabaseConnection('db-demo-0001');
+    await admin.databaseSchema('db-demo-0001');
     await admin.loraAdapters();
     await admin.updateLoraAdapter(id: 'lora-demo-0001', name: 'n');
     await admin.deleteLoraAdapter('lora-demo-0002');

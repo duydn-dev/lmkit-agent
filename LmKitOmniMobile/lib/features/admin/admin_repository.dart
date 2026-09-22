@@ -210,6 +210,18 @@ class AdminRepository {
   Future<void> reindexDatabaseConnection(String id) =>
       _client.post('/api/database-connections/$id/reindex').then((_) {});
 
+  /// Sơ đồ schema (bảng/cột/khoá + quan hệ khoá ngoại) của một kết nối.
+  ///
+  /// Backend đọc sống bằng đúng phép introspection dựng chỉ mục schema, nên xem
+  /// được cả khi kết nối chưa đánh chỉ mục. Chuỗi kết nối không bao giờ trả về.
+  Future<DatabaseSchemaModel> databaseSchema(String id) async {
+    final response = await _client.get('/api/database-connections/$id/schema');
+    final data = response.data;
+    return DatabaseSchemaModel.fromJson(
+      data is Map ? Map<String, dynamic>.from(data) : const {},
+    );
+  }
+
   // ------------------------------------------------------------ LoRA adapter
 
   /// Ném `ApiException` 501 khi tính năng LoRA bị tắt trên server — màn hình

@@ -5,6 +5,7 @@ import 'admin_models.dart';
 import 'admin_provider.dart';
 import 'admin_repository.dart';
 import 'admin_widgets.dart';
+import 'database_diagram_screen.dart';
 import '../../app/ui/app_controls.dart';
 
 /// Giá trị phải khớp enum `DbProvider` của backend.
@@ -176,6 +177,17 @@ class DatabaseConnectionsScreen extends ConsumerWidget {
                 AppMenuButton(
                   tooltip: 'Tuỳ chọn',
                   items: [
+                    AppMenuItem(
+                      'Xem sơ đồ schema',
+                      () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => DatabaseDiagramScreen(
+                            connectionId: connection.id,
+                            connectionName: connection.name,
+                          ),
+                        ),
+                      ),
+                    ),
                     AppMenuItem(
                       'Sửa',
                       () => openDialog(context, connection, reload),

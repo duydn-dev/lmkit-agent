@@ -81,6 +81,34 @@ password/OTP. Safety marker viết tắt (`pin`, `otp`, `cvv`, `cvc`, `ssn`, `pw
 khớp theo biên chữ cái — "Pinterest"/"spinner" không còn kết thúc session, còn "PIN", "Mã PIN",
 "CVV2", "pin_code" thì vẫn.
 
+## Sơ đồ schema của CSDL đã kết nối
+
+`GET /api/database-connections/{id}/schema` (Admin, tenant-scoped) trả về **đồ thị schema**
+của một kết nối ngoài để client vẽ ER diagram: `tables[]` (bảng → cột, mỗi cột có
+`isPrimaryKey`/`isForeignKey`) và `relations[]` (cạnh `fromTable.fromColumn → toTable.toColumn`).
+Chuỗi kết nối **không bao giờ** nằm trong phản hồi.
+
+- **Đọc sống, đi đúng đường an toàn**: handler gọi `ExternalDatabaseService.IntrospectAsync`
+  — cùng phép introspection mà `SchemaIndexingService` dùng để dựng chỉ mục — nên vẫn qua
+  egress vet + timeout, và xem được cả khi kết nối **chưa** đánh chỉ mục (phản hồi có
+  `isIndexed`/`lastIndexedAtUtc` để client nói rõ). Không tạo thêm đường đọc nào mới.
+- **Khoá ngoại được tách thành cạnh ở backend**, không đẩy chuỗi `"customer_id → customers.id"`
+  cho từng client tự parse: `SchemaDiagramBuilder` cắt theo dấu `.` **cuối cùng** (đích có thể
+  là `public.users.id`), giữ nguyên `raw` và đặt `isResolved: false` cho khoá tổ hợp/thiếu thông
+  tin — cạnh không vẽ được thì **hiện ra** chứ không biến mất.
+- **Trần hiển thị 40 bảng** (`SchemaDiagramBuilder.DefaultMaxTables`): sơ đồ hơn thế không đọc
+  được nữa. Bảng được sắp theo tên **trước** khi cắt (cùng kết nối luôn ra cùng sơ đồ), và
+  `truncated` + `tableCount`/`totalTableCount` nói rõ phần bị cắt. Cạnh trỏ tới bảng ngoài phần
+  đó có `targetIncluded: false` — client không được vẽ (Mermaid sẽ tự tạo entity rỗng) nhưng phải
+  liệt kê.
+- **MongoDB** không có `IntrospectAsync`: `MongoDatabaseService.GetCollectionsSchemaAsync` lấy
+  mẫu 25 document mỗi collection thành "bảng" (cột là các field, `_id` là khoá chính) và không
+  có quan hệ — sơ đồ không vì thế mà rỗng.
+- **Client**: web dựng mã Mermaid `erDiagram` từ dữ liệu này (`src/utils/schemaDiagram.ts`, có
+  test kiểm chính `mermaid.parse` chấp nhận mã sinh ra) rồi mermaid.js render trong dialog (thư
+  viện ~1MB nạp **lazy**, chỉ khi mở sơ đồ); mobile vẽ bằng Flutter (`InteractiveViewer` +
+  `CustomPaint`) vì không chạy được mermaid.
+
 ## RAG và tài liệu
 
 | Khả năng | Hiện trạng |

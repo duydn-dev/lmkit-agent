@@ -98,6 +98,7 @@
         <Column header="Thao tác" :style="{ width: '190px' }">
           <template #body="{ data }">
             <div class="flex items-center gap-1">
+              <Button icon="pi pi-sitemap" text rounded severity="secondary" aria-label="Xem sơ đồ schema" v-tooltip.top="'Xem sơ đồ schema'" @click="openDiagram(data)" />
               <Button icon="pi pi-bolt" text rounded severity="secondary" :loading="testingId === data.id" aria-label="Kiểm tra kết nối" v-tooltip.top="'Kiểm tra kết nối'" @click="testConnection(data)" />
               <Button icon="pi pi-sync" text rounded severity="secondary" :loading="reindexingId === data.id" aria-label="Lập chỉ mục lại" v-tooltip.top="'Lập chỉ mục lại'" @click="reindexConnection(data)" />
               <Button icon="pi pi-pencil" text rounded severity="secondary" aria-label="Sửa kết nối" @click="openEdit(data)" />
@@ -175,18 +176,94 @@
           <Button :label="editingId ? 'Lưu thay đổi' : 'Thêm kết nối'" icon="pi pi-check" :loading="saving" @click="save" />
         </template>
       </Dialog>
+
+      <!-- Sơ đồ schema: bảng/cột/khoá vẽ từ chính phép introspection dựng chỉ mục -->
+      <Dialog
+        v-model:visible="diagramVisible"
+        modal
+        :header="`Sơ đồ CSDL — ${diagram?.name ?? ''}`"
+        class="w-[70rem] max-w-[96vw]">
+        <div v-if="diagramLoading" class="flex items-center justify-center gap-2 py-12 text-sm text-gray-500">
+          <i class="pi pi-spin pi-spinner" aria-hidden="true"></i> Đang đọc schema từ CSDL…
+        </div>
+
+        <div v-else-if="diagramError" role="alert" class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {{ diagramError }}
+        </div>
+
+        <div v-else-if="diagram" class="grid gap-3">
+          <!-- Bối cảnh: kết nối nào, bao nhiêu bảng/quan hệ, đã index hay chưa -->
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5 text-xs text-gray-600">
+            <span class="flex items-center gap-1.5">
+              <i class="pi pi-database text-gray-400" aria-hidden="true"></i>
+              <Tag :value="providerLabel(diagram.provider)" severity="info" />
+            </span>
+            <span><strong class="text-gray-900">{{ diagram.tableCount }}</strong> bảng</span>
+            <span><strong class="text-gray-900">{{ diagram.relations.length }}</strong> quan hệ khoá ngoại</span>
+            <span class="flex items-center gap-1.5">
+              <Tag :value="indexStatusLabel(diagram.indexStatus)" :severity="diagram.isIndexed ? 'success' : 'warn'" />
+              <span v-if="diagram.lastIndexedAtUtc">lập chỉ mục {{ relativeTime(diagram.lastIndexedAtUtc) }}</span>
+            </span>
+          </div>
+
+          <ul v-if="diagramNotesList.length > 0" class="grid gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+            <li v-for="note in diagramNotesList" :key="note" class="flex items-start gap-2">
+              <i class="pi pi-info-circle mt-0.5" aria-hidden="true"></i>
+              <span>{{ note }}</span>
+            </li>
+          </ul>
+
+          <div class="rounded-lg border border-gray-200 bg-white p-3">
+            <MermaidDiagram v-if="diagramSource" :source="diagramSource" :aria-label="`Sơ đồ quan hệ của ${diagram.name}`" />
+            <p v-else class="p-6 text-center text-sm text-gray-500">Không có bảng nào để vẽ sơ đồ.</p>
+          </div>
+
+          <!-- Quan hệ trỏ ra ngoài sơ đồ: phải liệt kê, không được biến mất khỏi màn hình -->
+          <details v-if="diagramExternal.length > 0" class="rounded-lg border border-gray-200 bg-white px-4 py-3 text-xs text-gray-600">
+            <summary class="cursor-pointer font-medium text-gray-700">
+              {{ diagramExternal.length }} khoá ngoại trỏ tới bảng không nằm trong sơ đồ
+            </summary>
+            <ul class="mt-2 grid gap-1">
+              <li v-for="(rel, index) in diagramExternal" :key="index" class="font-mono text-[11px] text-gray-500">
+                {{ rel.fromTable }}.{{ rel.fromColumn }} → {{ rel.toTable }}{{ rel.toColumn ? `.${rel.toColumn}` : '' }}
+              </li>
+            </ul>
+          </details>
+
+          <div v-if="diagramSource">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <Button
+                :label="showDiagramSource ? 'Ẩn mã Mermaid' : 'Xem mã Mermaid'"
+                icon="pi pi-code"
+                text
+                severity="secondary"
+                size="small"
+                @click="showDiagramSource = !showDiagramSource" />
+              <Button label="Sao chép mã sơ đồ" icon="pi pi-copy" text severity="secondary" size="small" @click="copyDiagramSource" />
+            </div>
+            <pre v-if="showDiagramSource" class="mt-2 max-h-72 overflow-auto rounded-lg border border-gray-200 bg-gray-50 p-3 text-[11px] leading-relaxed text-gray-700">{{ diagramSource }}</pre>
+          </div>
+        </div>
+
+        <template #footer>
+          <Button label="Đóng" severity="secondary" outlined @click="diagramVisible = false" />
+          <Button label="Tải lại" icon="pi pi-refresh" :loading="diagramLoading" @click="diagramConnection && openDiagram(diagramConnection)" />
+        </template>
+      </Dialog>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
 import { useServerPage } from '@/composables/useServerPage';
+import MermaidDiagram from '@/components/database/MermaidDiagram.vue';
+import { buildErDiagram, diagramNotes, externalReferences, type SchemaDiagram } from '@/utils/schemaDiagram';
 
 interface DatabaseConnection {
   id: string;
@@ -435,6 +512,50 @@ const performDelete = async (conn: DatabaseConnection) => {
     toast.add({ severity: 'error', summary: 'Không thể xóa', detail: errorMessage(cause, 'Không thể xóa kết nối cơ sở dữ liệu.'), life: 6000 });
   } finally {
     deletingId.value = null;
+  }
+};
+
+// --- Sơ đồ schema ----------------------------------------------------------
+// Đọc sống qua /schema: đúng phép introspection mà chỉ mục schema dùng, đi qua egress
+// + read-only như mọi thao tác CSDL khác. Mermaid chỉ được tải khi thực sự mở sơ đồ.
+const diagramVisible = ref(false);
+const diagramLoading = ref(false);
+const diagramError = ref('');
+const diagram = ref<SchemaDiagram | null>(null);
+const diagramConnection = ref<DatabaseConnection | null>(null);
+const showDiagramSource = ref(false);
+
+const diagramSource = computed(() => (diagram.value ? buildErDiagram(diagram.value) : ''));
+const diagramNotesList = computed(() => (diagram.value ? diagramNotes(diagram.value) : []));
+const diagramExternal = computed(() => (diagram.value ? externalReferences(diagram.value) : []));
+
+const openDiagram = async (conn: DatabaseConnection) => {
+  diagramConnection.value = conn;
+  diagramVisible.value = true;
+  diagramError.value = '';
+  diagram.value = null;
+  showDiagramSource.value = false;
+  diagramLoading.value = true;
+  try {
+    const response = await http.get(ApiFactory.DATABASE_CONNECTIONS.SCHEMA(conn.id));
+    if (!response.ok) {
+      diagramError.value = await readApiError(response, 'Không đọc được schema của kết nối');
+      return;
+    }
+    diagram.value = (await response.json()) as SchemaDiagram;
+  } catch (cause) {
+    diagramError.value = errorMessage(cause, 'Không đọc được schema của kết nối.');
+  } finally {
+    diagramLoading.value = false;
+  }
+};
+
+const copyDiagramSource = async () => {
+  try {
+    await navigator.clipboard.writeText(diagramSource.value);
+    toast.add({ severity: 'success', summary: 'Đã sao chép mã sơ đồ', life: 2500 });
+  } catch {
+    toast.add({ severity: 'error', summary: 'Không sao chép được', detail: 'Hãy mở mã sơ đồ và sao chép thủ công.', life: 4000 });
   }
 };
 

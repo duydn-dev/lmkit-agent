@@ -186,6 +186,17 @@ class MockHttpAdapter implements HttpClientAdapter {
           return _json(MockFixtures.auditFacets);
       }
 
+      // Sơ đồ schema của một kết nối CSDL (màn `DatabaseDiagramScreen`).
+      final schemaConnectionId = _group(
+        r'^/api/database-connections/([^/]+)/schema$',
+        path,
+      );
+      if (schemaConnectionId != null) {
+        return _json(
+          MockFixtures.databaseSchema(connectionId: schemaConnectionId),
+        );
+      }
+
       final messageSessionId = _group(
         r'^/api/chat/sessions/([^/]+)/messages$',
         path,

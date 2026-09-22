@@ -12,6 +12,7 @@ import 'package:lmkit_omni_mobile/features/admin/admin_widgets.dart';
 import 'package:lmkit_omni_mobile/features/admin/api_keys_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/audit_log_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/database_connections_screen.dart';
+import 'package:lmkit_omni_mobile/features/admin/database_diagram_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/knowledge_base_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/lora_adapters_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/mcp_servers_screen.dart';
@@ -67,6 +68,12 @@ final _screens = <String, Widget Function()>{
   'MCP Servers': () => const McpServersScreen(),
   'Cơ sở kiến thức': () => const KnowledgeBaseScreen(),
   'Database Connections': () => const DatabaseConnectionsScreen(),
+  // Trạng thái lỗi của màn sơ đồ cũng phải gọn ở khổ hẹp: không có máy chủ trong
+  // test nên màn này hiện `AppAlert` kèm nút thử lại.
+  'Sơ đồ CSDL': () => const DatabaseDiagramScreen(
+    connectionId: 'db-demo-0001',
+    connectionName: 'CSDL nghiệp vụ quan trắc',
+  ),
   'LoRA Adapters': () => const LoraAdaptersScreen(),
   'Widget Settings': () => const WidgetSettingsScreen(),
   'Nhật ký kiểm toán': () => const AuditLogScreen(),

@@ -1017,6 +1017,146 @@ Chi tiết từng trạm nằm trong tệp đính kèm bên dưới.''';
     },
   ];
 
+  /// Sơ đồ schema của một kết nối — dữ liệu cho màn `DatabaseDiagramScreen`.
+  ///
+  /// Có đủ ba tình huống mà giao diện phải xử lý: bảng nhiều cột, một cạnh vẽ
+  /// được, và một cạnh trỏ ra ngoài sơ đồ (`targetIncluded: false`).
+  static Map<String, dynamic> databaseSchema({
+    String connectionId = 'db-demo-0001',
+  }) => {
+    'connectionId': connectionId,
+    'name': 'CSDL nghiệp vụ quan trắc',
+    'provider': 'Postgres',
+    'isActive': true,
+    'isIndexed': true,
+    'indexStatus': 'Completed',
+    'lastIndexedAtUtc': _ago(const Duration(hours: 8)),
+    'tableCount': 3,
+    'totalTableCount': 3,
+    'truncated': false,
+    'tables': [
+      {
+        'schema': 'public',
+        'name': 'stations',
+        'qualifiedName': 'public.stations',
+        'columns': [
+          {
+            'name': 'id',
+            'dataType': 'integer',
+            'isNullable': false,
+            'isPrimaryKey': true,
+            'isForeignKey': false,
+          },
+          {
+            'name': 'code',
+            'dataType': 'character varying',
+            'isNullable': false,
+            'isPrimaryKey': false,
+            'isForeignKey': false,
+          },
+          {
+            'name': 'name',
+            'dataType': 'character varying',
+            'isNullable': true,
+            'isPrimaryKey': false,
+            'isForeignKey': false,
+          },
+        ],
+        'foreignKeys': const <String>[],
+      },
+      {
+        'schema': 'public',
+        'name': 'measurements',
+        'qualifiedName': 'public.measurements',
+        'columns': [
+          {
+            'name': 'id',
+            'dataType': 'bigint',
+            'isNullable': false,
+            'isPrimaryKey': true,
+            'isForeignKey': false,
+          },
+          {
+            'name': 'station_id',
+            'dataType': 'integer',
+            'isNullable': false,
+            'isPrimaryKey': false,
+            'isForeignKey': true,
+          },
+          {
+            'name': 'measured_at',
+            'dataType': 'timestamp without time zone',
+            'isNullable': false,
+            'isPrimaryKey': false,
+            'isForeignKey': false,
+          },
+          {
+            'name': 'value',
+            'dataType': 'numeric',
+            'isNullable': true,
+            'isPrimaryKey': false,
+            'isForeignKey': false,
+          },
+        ],
+        'foreignKeys': [
+          {
+            'column': 'station_id',
+            'referencedTable': 'public.stations',
+            'referencedColumn': 'id',
+            'raw': 'station_id → public.stations.id',
+            'isResolved': true,
+          },
+        ],
+      },
+      {
+        'schema': 'public',
+        'name': 'thresholds',
+        'qualifiedName': 'public.thresholds',
+        'columns': [
+          {
+            'name': 'id',
+            'dataType': 'integer',
+            'isNullable': false,
+            'isPrimaryKey': true,
+            'isForeignKey': false,
+          },
+          {
+            'name': 'parameter_id',
+            'dataType': 'integer',
+            'isNullable': false,
+            'isPrimaryKey': false,
+            'isForeignKey': true,
+          },
+        ],
+        'foreignKeys': [
+          {
+            'column': 'parameter_id',
+            'referencedTable': 'public.parameters',
+            'referencedColumn': 'id',
+            'raw': 'parameter_id → public.parameters.id',
+            'isResolved': true,
+          },
+        ],
+      },
+    ],
+    'relations': [
+      {
+        'fromTable': 'public.measurements',
+        'fromColumn': 'station_id',
+        'toTable': 'public.stations',
+        'toColumn': 'id',
+        'targetIncluded': true,
+      },
+      {
+        'fromTable': 'public.thresholds',
+        'fromColumn': 'parameter_id',
+        'toTable': 'public.parameters',
+        'toColumn': 'id',
+        'targetIncluded': false,
+      },
+    ],
+  };
+
   static Map<String, dynamic> databaseConnectionsPage() => {
     'items': _databaseConnections,
     'page': 1,

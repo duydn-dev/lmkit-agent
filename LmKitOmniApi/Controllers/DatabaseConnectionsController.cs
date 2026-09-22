@@ -79,6 +79,20 @@ public sealed class DatabaseConnectionsController : ApiControllerBase
         return result.Success ? Ok(new { success = true }) : BadRequest(new { success = false, message = result.Error });
     }
 
+    /// <summary>
+    /// Schema diagram (bảng/cột/khoá + quan hệ FK) của một kết nối — nguồn dữ liệu cho
+    /// client vẽ ER diagram. Chuỗi kết nối không bao giờ được trả về.
+    /// </summary>
+    [HttpGet("{id:guid}/schema")]
+    public async Task<IActionResult> Schema(Guid id, CancellationToken ct)
+    {
+        if (!TryGetTenantId(out var tenantId)) return Unauthorized();
+        var result = await _mediator.Send(new GetDatabaseSchemaQuery { Id = id, TenantId = tenantId }, ct);
+        if (result.Success) return Ok(result.Schema);
+        if (result.NotFound) return NotFound(new { message = result.Error });
+        return BadRequest(new { message = result.Error });
+    }
+
     [HttpPost("{id:guid}/reindex")]
     public async Task<IActionResult> Reindex(Guid id, CancellationToken ct)
     {

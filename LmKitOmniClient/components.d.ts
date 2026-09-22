@@ -26,6 +26,7 @@ declare module 'vue' {
     InputIcon: typeof import('primevue/inputicon')['default']
     InputNumber: typeof import('primevue/inputnumber')['default']
     InputText: typeof import('primevue/inputtext')['default']
+    MermaidDiagram: typeof import('./src/components/database/MermaidDiagram.vue')['default']
     MultiSelect: typeof import('primevue/multiselect')['default']
     Paginator: typeof import('primevue/paginator')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

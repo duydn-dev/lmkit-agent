@@ -22,6 +22,7 @@ import 'package:lmkit_omni_mobile/features/admin/admin_hub_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/api_keys_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/audit_log_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/database_connections_screen.dart';
+import 'package:lmkit_omni_mobile/features/admin/database_diagram_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/knowledge_base_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/lora_adapters_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/mcp_servers_screen.dart';
@@ -90,6 +91,10 @@ final _screens = <String, Widget Function()>{
   'MCP Servers': () => const McpServersScreen(),
   'Cơ sở kiến thức': () => const KnowledgeBaseScreen(),
   'Database Connections': () => const DatabaseConnectionsScreen(),
+  'Sơ đồ CSDL': () => const DatabaseDiagramScreen(
+    connectionId: 'db-demo-0001',
+    connectionName: 'CSDL nghiệp vụ quan trắc',
+  ),
   'LoRA Adapters': () => const LoraAdaptersScreen(),
   'Widget Settings': () => const WidgetSettingsScreen(),
   'Nhật ký kiểm toán': () => const AuditLogScreen(),
@@ -489,6 +494,13 @@ void main() {
       'Database Connections': (
         DatabaseConnectionsScreen(),
         'CSDL nghiệp vụ quan trắc',
+      ),
+      'Sơ đồ CSDL': (
+        DatabaseDiagramScreen(
+          connectionId: 'db-demo-0001',
+          connectionName: 'CSDL nghiệp vụ quan trắc',
+        ),
+        'public.measurements',
       ),
       'AI Studio — Agents': (StudioScreen(), 'Chuyên gia pháp chế'),
       'AI Studio — Lịch': (

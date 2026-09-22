@@ -125,6 +125,89 @@ public sealed class DatabaseConnectionsApiTests : IClassFixture<LmKitApiFactory>
     }
 
     [Fact]
+    public async Task Schema_ReturnsTablesColumnsAndRelations_WithoutLeakingTheSecret()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"lmkit-diagram-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={dbPath};Pooling=False";
+        using (var connection = new SqliteConnection(connectionString))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+                CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id), total REAL);
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        try
+        {
+            var client = await OwnerClientAsync();
+            var create = await client.PostAsJsonAsync("/api/database-connections", new
+            {
+                name = $"diagram-{Guid.NewGuid():N}",
+                provider = "Sqlite",
+                connectionString,
+                isActive = true
+            });
+            var id = (await create.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+            var response = await client.GetAsync($"/api/database-connections/{id}/schema");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var raw = await response.Content.ReadAsStringAsync();
+            Assert.DoesNotContain("Data Source", raw);
+
+            var body = JsonSerializer.Deserialize<JsonElement>(raw);
+            Assert.Equal(2, body.GetProperty("tableCount").GetInt32());
+            Assert.False(body.GetProperty("truncated").GetBoolean());
+
+            var tables = body.GetProperty("tables").EnumerateArray().ToArray();
+            var orders = tables.Single(t => t.GetProperty("name").GetString() == "orders");
+            var customerId = orders.GetProperty("columns").EnumerateArray()
+                .Single(c => c.GetProperty("name").GetString() == "customer_id");
+            Assert.True(customerId.GetProperty("isForeignKey").GetBoolean());
+            Assert.True(orders.GetProperty("columns").EnumerateArray()
+                .Single(c => c.GetProperty("name").GetString() == "id")
+                .GetProperty("isPrimaryKey").GetBoolean());
+
+            // The FK is an EDGE, not just text: a client can draw it without parsing.
+            var relation = Assert.Single(body.GetProperty("relations").EnumerateArray().ToArray());
+            Assert.Equal("orders", relation.GetProperty("fromTable").GetString());
+            Assert.Equal("customer_id", relation.GetProperty("fromColumn").GetString());
+            Assert.Equal("customers", relation.GetProperty("toTable").GetString());
+            Assert.Equal("id", relation.GetProperty("toColumn").GetString());
+            Assert.True(relation.GetProperty("targetIncluded").GetBoolean());
+        }
+        finally
+        {
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task Schema_RefusesAnInternalPostgresTarget_AndHidesUnknownIds()
+    {
+        var client = await OwnerClientAsync();
+
+        var create = await client.PostAsJsonAsync("/api/database-connections", new
+        {
+            name = $"internal-diagram-{Guid.NewGuid():N}",
+            provider = "Postgres",
+            connectionString = "Host=127.0.0.1;Port=5432;Database=app;Username=u;Password=p",
+            isActive = true
+        });
+        var id = (await create.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+        // The diagram reads the schema live, so it must pass the SAME egress guard as a query.
+        var refused = await client.GetAsync($"/api/database-connections/{id}/schema");
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        Assert.Contains("nội bộ", (await refused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("message").GetString());
+
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await client.GetAsync($"/api/database-connections/{Guid.NewGuid()}/schema")).StatusCode);
+    }
+
+    [Fact]
     public async Task Reindex_QueuesTheConnection_AndIsTenantScoped()
     {
         var client = await OwnerClientAsync();

@@ -170,7 +170,8 @@ test('anonymous user is redirected and sees the API login error', async ({ page 
   await page.goto('/');
   await expect(page).toHaveURL(/\/login$/);
   await expectNoWcagViolations(page);
-  await page.getByLabel('Email / Tài khoản').fill('wrong@example.test');
+  // The login field is labelled "Tên tài khoản" (bootstrap users log in by username).
+  await page.getByLabel('Tên tài khoản').fill('wrong@example.test');
   await page.getByLabel('Mật khẩu').fill('invalid-password');
   await page.getByRole('button', { name: 'Đăng Nhập' }).click();
 
@@ -300,6 +301,105 @@ test('admin can open the database-connections management screen', async ({ page 
   await page.goto('/admin/databases');
   await expect(page.getByRole('heading', { name: 'Database Connections' })).toBeVisible();
   await expect(page.getByText('Chưa có kết nối cơ sở dữ liệu nào.')).toBeVisible();
+  await expectNoWcagViolations(page);
+  expect(browserErrors).toEqual([]);
+});
+
+// One connection WITH a schema — the shared mock returns an empty list, so this test
+// overrides just the two routes it needs (Playwright runs the last matching handler first).
+const diagramConnection = {
+  id: 'c0ffee00-1111-2222-3333-444444444444',
+  tenantId: null,
+  tenantName: null,
+  name: 'kho-bao-cao',
+  provider: 'Sqlite',
+  isActive: true,
+  allowWrites: false,
+  isIndexed: true,
+  indexStatus: 'Completed',
+  lastIndexError: null,
+  lastIndexedAtUtc: '2026-09-01T02:00:00Z',
+  createdAtUtc: '2026-09-01T00:00:00Z',
+  updatedAtUtc: '2026-09-01T02:00:00Z'
+};
+
+const diagramSchema = {
+  connectionId: diagramConnection.id,
+  name: diagramConnection.name,
+  provider: 'Sqlite',
+  isActive: true,
+  isIndexed: true,
+  indexStatus: 'Completed',
+  lastIndexedAtUtc: '2026-09-01T02:00:00Z',
+  tableCount: 2,
+  totalTableCount: 2,
+  truncated: false,
+  tables: [
+    {
+      schema: 'main',
+      name: 'customers',
+      qualifiedName: 'customers',
+      columns: [
+        { name: 'id', dataType: 'INTEGER', isNullable: false, isPrimaryKey: true, isForeignKey: false },
+        { name: 'name', dataType: 'TEXT', isNullable: false, isPrimaryKey: false, isForeignKey: false }
+      ],
+      foreignKeys: []
+    },
+    {
+      schema: 'main',
+      name: 'orders',
+      qualifiedName: 'orders',
+      columns: [
+        { name: 'id', dataType: 'INTEGER', isNullable: false, isPrimaryKey: true, isForeignKey: false },
+        { name: 'customer_id', dataType: 'INTEGER', isNullable: false, isPrimaryKey: false, isForeignKey: true }
+      ],
+      foreignKeys: [
+        {
+          column: 'customer_id',
+          referencedTable: 'customers',
+          referencedColumn: 'id',
+          raw: 'customer_id → customers.id',
+          isResolved: true
+        }
+      ]
+    }
+  ],
+  relations: [
+    {
+      fromTable: 'orders',
+      fromColumn: 'customer_id',
+      toTable: 'customers',
+      toColumn: 'id',
+      targetIncluded: true
+    }
+  ]
+};
+
+test('admin can open the schema diagram of an indexed database connection', async ({ page }) => {
+  const browserErrors = await mockAuthenticatedApi(page);
+  await page.route(/\/api\/database-connections(\?.*)?$/, (route) =>
+    route.request().method() === 'GET' ? json(route, paged([diagramConnection])) : route.fallback()
+  );
+  await page.route(/\/api\/database-connections\/[^/]+\/schema$/, (route) => json(route, diagramSchema));
+
+  await page.goto('/admin/databases');
+  await page.getByRole('button', { name: 'Xem sơ đồ schema' }).click();
+
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('Sơ đồ CSDL — kho-bao-cao')).toBeVisible();
+  await expect(dialog.getByText('2 bảng')).toBeVisible();
+  await expect(dialog.getByText('1 quan hệ khoá ngoại')).toBeVisible();
+
+  // The point of the feature: Mermaid really drew the entities and the FK edge in the browser.
+  const diagram = dialog.locator('[role="img"] svg');
+  await expect(diagram).toBeVisible();
+  await expect(diagram).toContainText('orders');
+  await expect(diagram).toContainText('customers');
+  await expect(diagram).toContainText('customer_id → id');
+  // The Mermaid source is available for review/export.
+  await dialog.getByRole('button', { name: 'Xem mã Mermaid' }).click();
+  await expect(dialog.locator('pre')).toContainText('erDiagram');
+
   await expectNoWcagViolations(page);
   expect(browserErrors).toEqual([]);
 });
