@@ -12,9 +12,6 @@ public class UpdateRoleRequest
 
 public class UpdateUserRoleCommand : IRequest<UpdateUserRoleResult>
 {
-    /// <summary>Set by the controller from claims — never from the request body.</summary>
-    public Guid TenantId { get; set; }
-
     /// <summary>The authenticated admin performing the change (for the self-demote guard).</summary>
     public Guid ActorUserId { get; set; }
 

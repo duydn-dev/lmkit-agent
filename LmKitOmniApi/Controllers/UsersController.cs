@@ -21,13 +21,16 @@ public class UsersController : ApiControllerBase
 
     [HttpGet]
     public async Task<IActionResult> GetUsers(
-        [FromQuery] int? page, [FromQuery] int? pageSize, [FromQuery] string? search, CancellationToken cancellationToken)
+        [FromQuery] int? page, [FromQuery] int? pageSize, [FromQuery] string? search,
+        [FromQuery] Guid? tenantId, CancellationToken cancellationToken)
     {
-        if (!TryGetIdentity(out var tenantId, out _)) return Unauthorized();
+        if (!TryGetIdentity(out _, out _)) return Unauthorized();
 
         var (p, size) = Application.Common.Paging.Normalize(page, pageSize);
         var users = await _mediator.Send(new GetUsersQuery
         {
+            // Admin-only endpoint: mặc định liệt kê user của MỌI tenant (full quyền
+            // hệ thống); ?tenantId=… lọc theo một tenant khi UI cần.
             TenantId = tenantId,
             Page = p,
             PageSize = size,
@@ -44,6 +47,9 @@ public class UsersController : ApiControllerBase
         var result = await _mediator.Send(new CreateUserCommand
         {
             TenantId = tenantId,
+            // Admin có thể gán user mới vào tenant bất kỳ (quản lý đa tenant);
+            // bỏ trống → vào tenant của admin.
+            TargetTenantId = request.TenantId,
             Email = request.Email,
             Password = request.Password,
             FullName = request.FullName,
@@ -63,7 +69,6 @@ public class UsersController : ApiControllerBase
 
         var result = await _mediator.Send(new UpdateUserRoleCommand
         {
-            TenantId = tenantId,
             ActorUserId = actorId,
             TargetUserId = id,
             Role = request.Role
@@ -84,7 +89,6 @@ public class UsersController : ApiControllerBase
 
         var result = await _mediator.Send(new ToggleUserStatusCommand
         {
-            TenantId = tenantId,
             ActorUserId = actorId,
             TargetUserId = id
         }, cancellationToken);

@@ -53,6 +53,11 @@
           </template>
         </Column>
         <Column field="fullName" header="Họ và Tên" style="min-width: 11rem" />
+        <Column field="tenantName" header="Tenant" style="min-width: 12rem">
+          <template #body="{ data }">
+            <span class="text-sm text-gray-600">{{ data.tenantName || '—' }}</span>
+          </template>
+        </Column>
         <Column field="role" header="Quyền" style="min-width: 7rem">
           <template #body="{ data }">
             <Tag :value="data.role" :severity="data.role === 'Admin' ? 'danger' : 'info'" />
@@ -94,11 +99,26 @@
           <div v-if="!isEditing" class="grid gap-1">
             <label for="user-password" class="text-sm font-medium text-gray-700">Mật khẩu <span class="text-red-500">*</span></label>
             <InputText id="user-password" v-model="userForm.password" type="password" required autocomplete="new-password" class="w-full" />
-            <p class="text-xs text-gray-500">Tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và số.</p>
+            <p class="text-xs text-gray-500">Tối thiểu 12 ký tự, gồm chữ hoa, chữ thường và số.</p>
           </div>
           <div class="grid gap-1">
             <label for="user-fullname" class="text-sm font-medium text-gray-700">Họ và Tên <span v-if="!isEditing" class="text-red-500">*</span></label>
             <InputText id="user-fullname" v-model.trim="userForm.fullName" :required="!isEditing" :disabled="isEditing" class="w-full" />
+          </div>
+          <div v-if="!isEditing" class="grid gap-1">
+            <label for="user-tenant" class="text-sm font-medium text-gray-700">Tenant</label>
+            <Select
+              v-model="userForm.tenantId"
+              :options="tenantOptions"
+              optionLabel="name"
+              optionValue="id"
+              inputId="user-tenant"
+              placeholder="Chọn tenant cho tài khoản"
+              class="w-full"
+              filter
+              filterPlaceholder="Tìm tenant…"
+            />
+            <p class="text-xs text-gray-500">Bỏ chọn → user vào tenant mặc định của bạn.</p>
           </div>
           <div class="grid gap-1">
             <label for="user-role" class="text-sm font-medium text-gray-700">Quyền hạn</label>
@@ -132,7 +152,11 @@ interface User {
   createdAt: string;
   failedLoginAttempts: number;
   lockoutEnd?: string | null;
+  tenantId?: string;
+  tenantName?: string;
 }
+
+interface TenantOption { id: string; name: string }
 
 const confirm = useConfirm();
 const toast = useToast();
@@ -157,18 +181,25 @@ const userDialog = ref(false);
 const isEditing = ref(false);
 const saving = ref(false);
 const formError = ref('');
-const userForm = ref({ id: '', email: '', password: '', fullName: '', role: 'Member' });
+const tenantOptions = ref<TenantOption[]>([]);
+const userForm = ref({ id: '', email: '', password: '', fullName: '', role: 'Member', tenantId: '' as string });
 
 const openNewDialog = () => {
   isEditing.value = false;
-  userForm.value = { id: '', email: '', password: '', fullName: '', role: 'Member' };
+  userForm.value = { id: '', email: '', password: '', fullName: '', role: 'Member', tenantId: '' };
   formError.value = '';
   userDialog.value = true;
+  // Danh sách tenant để gán user mới (admin đa tenant). Lười tải 1 lần/phiên.
+  if (tenantOptions.value.length === 0) {
+    void http.get('/api/tenants/options').then(async (res) => {
+      if (res.ok) tenantOptions.value = await res.json();
+    });
+  }
 };
 
 const editUser = (user: User) => {
   isEditing.value = true;
-  userForm.value = { id: user.id, email: user.email, password: '', fullName: user.fullName, role: user.role };
+  userForm.value = { id: user.id, email: user.email, password: '', fullName: user.fullName, role: user.role, tenantId: user.tenantId ?? '' };
   formError.value = '';
   userDialog.value = true;
 };
@@ -189,7 +220,11 @@ const saveUser = async () => {
         formError.value = 'Vui lòng nhập đủ email, mật khẩu và họ tên.';
         return;
       }
-      const res = await http.post('/api/users', userForm.value);
+      const res = await http.post('/api/users', {
+        ...userForm.value,
+        // Rỗng → API tự gán vào tenant của admin.
+        tenantId: userForm.value.tenantId || undefined
+      });
       if (!res.ok) {
         formError.value = await readApiError(res, 'Không thể tạo người dùng');
         return;

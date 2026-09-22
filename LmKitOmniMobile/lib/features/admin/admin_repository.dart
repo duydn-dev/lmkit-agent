@@ -363,6 +363,7 @@ class AdminRepository {
     required String password,
     required String fullName,
     String role = 'Member',
+    String? tenantId,
   }) async {
     final response = await _client.post(
       '/api/users',
@@ -371,6 +372,8 @@ class AdminRepository {
         'password': password,
         'fullName': fullName.trim(),
         'role': role,
+        // Admin đa tenant: gán user vào tenant bất kỳ; null → tenant của admin.
+        if (tenantId != null && tenantId.isNotEmpty) 'tenantId': tenantId,
       },
     );
     return AdminUserModel.fromJson(_map(response.data));

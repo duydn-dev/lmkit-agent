@@ -18,8 +18,9 @@ public class ToggleUserStatusCommandHandler : IRequestHandler<ToggleUserStatusCo
 
     public async Task<ToggleUserStatusResult> Handle(ToggleUserStatusCommand request, CancellationToken cancellationToken)
     {
+        // Admin-only endpoint quản lý ĐA tenant: tra user theo id trên toàn hệ thống.
         var user = await _dbContext.Users.FirstOrDefaultAsync(
-            candidate => candidate.Id == request.TargetUserId && candidate.TenantId == request.TenantId,
+            candidate => candidate.Id == request.TargetUserId,
             cancellationToken);
         if (user == null)
             return new ToggleUserStatusResult { Status = UserMutationStatus.NotFound, ErrorMessage = "Không tìm thấy User." };

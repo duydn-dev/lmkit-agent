@@ -18,10 +18,10 @@ public class UpdateUserRoleCommandHandler : IRequestHandler<UpdateUserRoleComman
 
     public async Task<UpdateUserRoleResult> Handle(UpdateUserRoleCommand request, CancellationToken cancellationToken)
     {
-        // Order preserved from the original action: tenant-scoped lookup FIRST (an invalid role
-        // for a nonexistent/cross-tenant user must still yield 404, not 400).
+        // Admin-only endpoint quản lý ĐA tenant: tra user theo id trên toàn hệ thống
+        // (an invalid role for a nonexistent user must still yield 404, not 400).
         var user = await _dbContext.Users.FirstOrDefaultAsync(
-            candidate => candidate.Id == request.TargetUserId && candidate.TenantId == request.TenantId,
+            candidate => candidate.Id == request.TargetUserId,
             cancellationToken);
         if (user == null)
             return new UpdateUserRoleResult { Status = UserMutationStatus.NotFound, ErrorMessage = "Không tìm thấy User." };

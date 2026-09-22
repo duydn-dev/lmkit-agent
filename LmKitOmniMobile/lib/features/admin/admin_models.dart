@@ -290,6 +290,7 @@ class AdminUserModel {
     this.failedLoginAttempts = 0,
     this.lockoutEnd,
     this.tenantId,
+    this.tenantName,
   });
 
   final String id;
@@ -302,6 +303,8 @@ class AdminUserModel {
   final int failedLoginAttempts;
   final DateTime? lockoutEnd;
   final String? tenantId;
+  /// Tên tenant (admin đa tenant thấy được) — hiển thị cạnh email.
+  final String? tenantName;
 
   bool get isAdmin => role.toLowerCase() == 'admin';
 
@@ -320,6 +323,7 @@ class AdminUserModel {
     failedLoginAttempts: (json['failedLoginAttempts'] as num?)?.toInt() ?? 0,
     lockoutEnd: _date(json['lockoutEnd']),
     tenantId: json['tenantId']?.toString(),
+    tenantName: json['tenantName'] as String?,
   );
 }
 

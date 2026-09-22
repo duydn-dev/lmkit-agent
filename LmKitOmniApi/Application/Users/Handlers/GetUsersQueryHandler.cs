@@ -17,8 +17,11 @@ public class GetUsersQueryHandler : IRequestHandler<GetUsersQuery, Common.PagedR
 
     public async Task<Common.PagedResult<UserSummaryDto>> Handle(GetUsersQuery request, CancellationToken cancellationToken)
     {
-        var query = _dbContext.Users
-            .Where(user => user.TenantId == request.TenantId);
+        // Admin-only endpoint: mặc định thấy user của MỌI tenant (full quyền hệ thống);
+        // có TenantId cụ thể thì lọc theo tenant đó.
+        var query = _dbContext.Users.AsNoTracking();
+        if (request.TenantId.HasValue)
+            query = query.Where(user => user.TenantId == request.TenantId.Value);
 
         var search = request.Search?.Trim();
         if (!string.IsNullOrEmpty(search))
@@ -40,7 +43,11 @@ public class GetUsersQueryHandler : IRequestHandler<GetUsersQuery, Common.PagedR
                 UpdatedAt = u.UpdatedAt,
                 FailedLoginAttempts = u.FailedLoginAttempts,
                 LockoutEnd = u.LockoutEnd,
-                TenantId = u.TenantId
+                TenantId = u.TenantId,
+                TenantName = _dbContext.Tenants
+                    .Where(t => t.Id == u.TenantId)
+                    .Select(t => t.Name)
+                    .FirstOrDefault() ?? string.Empty
             })
             .ToPagedResultAsync(request.Page, request.PageSize, cancellationToken);
     }

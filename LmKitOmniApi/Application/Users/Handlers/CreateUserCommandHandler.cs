@@ -31,6 +31,12 @@ public class CreateUserCommandHandler : IRequestHandler<CreateUserCommand, Creat
         if (!UserRules.AllowedRoles.Contains(role))
             return ValidationFailed("Role chỉ có thể là Admin hoặc Member.");
 
+        // Tenant gán cho user mới: request chỉ định (admin quản lý đa tenant) hoặc
+        // fallback về tenant của admin. Tenant phải tồn tại thật.
+        var targetTenantId = request.TargetTenantId ?? request.TenantId;
+        if (!await _dbContext.Tenants.AnyAsync(t => t.Id == targetTenantId, cancellationToken))
+            return ValidationFailed("Không tìm thấy tenant để gán user.");
+
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
 
         // Deliberately NOT tenant-scoped: emails are unique across the whole system (original behavior).
@@ -45,7 +51,7 @@ public class CreateUserCommandHandler : IRequestHandler<CreateUserCommand, Creat
             Role = UserRules.AllowedRoles.First(candidate => candidate.Equals(role, StringComparison.OrdinalIgnoreCase)),
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
             IsActive = true,
-            TenantId = request.TenantId
+            TenantId = targetTenantId
         };
 
         _dbContext.Users.Add(newUser);

@@ -144,6 +144,16 @@ class _UserCardState extends ConsumerState<_UserCard> {
                         user.email,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
+                    // Admin quản lý đa tenant: cho biết user này thuộc tenant nào.
+                    if (user.tenantName != null && user.tenantName!.isNotEmpty)
+                      Text(
+                        user.tenantName!,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontStyle: FontStyle.italic,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     const SizedBox(height: 6),
                     Wrap(
                       spacing: 6,
@@ -266,8 +276,19 @@ class _CreateUserDialogState extends ConsumerState<_CreateUserDialog> {
   final _password = TextEditingController();
   final _fullName = TextEditingController();
   String _role = 'Member';
+  String? _tenantId;
+  List<TenantOptionModel> _tenants = const [];
   bool _busy = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // Admin quản lý đa tenant: tải danh sách tenant để gán user mới.
+    ref.read(adminRepositoryProvider).tenantOptions().then((rows) {
+      if (mounted) setState(() => _tenants = rows);
+    }).catchError((_) {});
+  }
 
   @override
   void dispose() {
@@ -277,14 +298,22 @@ class _CreateUserDialogState extends ConsumerState<_CreateUserDialog> {
     super.dispose();
   }
 
-  /// Khớp quy tắc mật khẩu backend: ≥ 8 ký tự, có hoa, thường và số.
+  /// Tên tenant cho ô chọn; trả về id khi không tra được (phòng nợ dữ liệu cũ).
+  String _nameOf(String id) {
+    for (final t in _tenants) {
+      if (t.id == id) return t.name;
+    }
+    return id;
+  }
+
+  /// Khớp quy tắc mật khẩu backend: ≥ 12 ký tự, có hoa, thường và số.
   String? _validate() {
     if (_email.text.trim().isEmpty || !_email.text.contains('@')) {
       return 'Email không hợp lệ.';
     }
     if (_fullName.text.trim().isEmpty) return 'Vui lòng nhập họ và tên.';
     final password = _password.text;
-    if (password.length < 8) return 'Mật khẩu tối thiểu 8 ký tự.';
+    if (password.length < 12) return 'Mật khẩu tối thiểu 12 ký tự.';
     if (!RegExp(r'[A-Z]').hasMatch(password) ||
         !RegExp(r'[a-z]').hasMatch(password) ||
         !RegExp(r'\d').hasMatch(password)) {
@@ -311,6 +340,7 @@ class _CreateUserDialogState extends ConsumerState<_CreateUserDialog> {
             password: _password.text,
             fullName: _fullName.text,
             role: _role,
+            tenantId: _tenantId,
           );
       if (mounted) Navigator.pop(context, true);
     } catch (failure) {
@@ -336,7 +366,7 @@ class _CreateUserDialogState extends ConsumerState<_CreateUserDialog> {
         AdminField(
           controller: _password,
           label: 'Mật khẩu',
-          hint: 'Tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và số',
+          hint: 'Tối thiểu 12 ký tự, gồm chữ hoa, chữ thường và số',
           obscure: true,
         ),
         const SizedBox(height: 4),
@@ -355,6 +385,19 @@ class _CreateUserDialogState extends ConsumerState<_CreateUserDialog> {
           enabled: !_busy,
           onChanged: (value) => setState(() => _role = value),
         ),
+        if (_tenants.isNotEmpty)
+          AppSelectTile<String>(
+            label: 'Tenant',
+            icon: Icons.domain_outlined,
+            value: _tenantId ?? '',
+            items: ['', ..._tenants.map((t) => t.id)],
+            labelOf: (id) =>
+                id.isEmpty ? 'Mặc định (tenant của tôi)' : _nameOf(id),
+            helper: 'Tenant gán cho tài khoản mới.',
+            enabled: !_busy,
+            onChanged: (value) =>
+                setState(() => _tenantId = value.isEmpty ? null : value),
+          ),
       ],
     ),
     actions: [

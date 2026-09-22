@@ -12,12 +12,17 @@ public class CreateUserRequest
     public string Password { get; set; } = string.Empty;
     public string FullName { get; set; } = string.Empty;
     public string? Role { get; set; }
+    /// <summary>Admin-only: tenant gán cho user mới. Bỏ trống → tenant của admin.</summary>
+    public Guid? TenantId { get; set; }
 }
 
 public class CreateUserCommand : IRequest<CreateUserResult>
 {
-    /// <summary>Set by the controller from the authenticated principal's claims — never from the request body.</summary>
+    /// <summary>Tenant của admin (fallback khi request không chỉ định TargetTenantId).</summary>
     public Guid TenantId { get; set; }
+
+    /// <summary>Tenant gán cho user mới — null → dùng TenantId của admin.</summary>
+    public Guid? TargetTenantId { get; set; }
 
     public string Email { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
