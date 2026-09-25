@@ -9,7 +9,7 @@
         </div>
         <div class="min-w-0">
           <div class="font-semibold text-gray-900">CILA - AI Agent</div>
-          <div class="text-xs text-gray-500">Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi trường quốc gia</div>
+          <div class="text-xs text-gray-500">Đoạn chat được chia sẻ</div>
         </div>
       </header>
 

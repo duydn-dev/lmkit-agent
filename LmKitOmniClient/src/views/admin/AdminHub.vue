@@ -87,15 +87,15 @@ const statCards = [
 ] as const satisfies ReadonlyArray<{ key: StatKey; label: string; icon: string; accent: string; url: string }>;
 
 const navCards = [
-  { to: '/admin/users', icon: 'pi pi-users', accent: 'bg-gradient-to-br from-blue-500 to-blue-600', title: 'User Management', description: 'Cấp tài khoản, phân quyền và khóa người dùng.' },
-  { to: '/admin/mcp-servers', icon: 'pi pi-server', accent: 'bg-gradient-to-br from-emerald-500 to-emerald-600', title: 'MCP Servers', description: 'Kết nối và quản lý máy chủ Model Context Protocol.' },
-  { to: '/admin/knowledge', icon: 'pi pi-database', accent: 'bg-gradient-to-br from-violet-500 to-violet-600', title: 'Knowledge Base', description: 'Quản lý nguồn tri thức dùng chung cho tenant.' },
-  { to: '/admin/databases', icon: 'pi pi-table', accent: 'bg-gradient-to-br from-indigo-500 to-blue-600', title: 'Database Connections', description: 'Kết nối cơ sở dữ liệu ngoài để agent truy vấn và lập chỉ mục lược đồ.' },
-  { to: '/admin/tenants', icon: 'pi pi-building', accent: 'bg-gradient-to-br from-rose-500 to-red-600', title: 'Tenant Management', description: 'Quản lý đơn vị/tổ chức sử dụng hệ thống.' },
+  { to: '/admin/users', icon: 'pi pi-users', accent: 'bg-gradient-to-br from-blue-500 to-blue-600', title: 'Quản lý tài khoản', description: 'Cấp tài khoản, phân quyền và khóa người dùng.' },
+  { to: '/admin/mcp-servers', icon: 'pi pi-server', accent: 'bg-gradient-to-br from-emerald-500 to-emerald-600', title: 'Máy chủ MCP', description: 'Kết nối và quản lý máy chủ Model Context Protocol.' },
+  { to: '/admin/knowledge', icon: 'pi pi-database', accent: 'bg-gradient-to-br from-violet-500 to-violet-600', title: 'Cơ sở tri thức', description: 'Quản lý nguồn tri thức dùng chung cho tenant.' },
+  { to: '/admin/databases', icon: 'pi pi-table', accent: 'bg-gradient-to-br from-indigo-500 to-blue-600', title: 'Kết nối CSDL', description: 'Kết nối cơ sở dữ liệu ngoài để agent truy vấn và lập chỉ mục lược đồ.' },
+  { to: '/admin/tenants', icon: 'pi pi-building', accent: 'bg-gradient-to-br from-rose-500 to-red-600', title: 'Quản lý Tenant', description: 'Quản lý đơn vị/tổ chức sử dụng hệ thống.' },
   { to: '/admin/lora', icon: 'pi pi-sliders-h', accent: 'bg-gradient-to-br from-fuchsia-500 to-purple-600', title: 'LoRA Adapters', description: 'Đăng ký adapter tinh chỉnh hot-swap cho model chat.' },
-  { to: '/admin/audit', icon: 'pi pi-shield', accent: 'bg-gradient-to-br from-slate-500 to-slate-600', title: 'Audit Log', description: 'Theo dõi hoạt động của agent và hệ thống.' },
-  { to: '/admin/widget', icon: 'pi pi-objects-column', accent: 'bg-gradient-to-br from-blue-500 to-blue-700', title: 'Embed Widget', description: 'Bật widget chat công khai, cho phép origin và quản lý khóa.' },
-  { to: '/approvals', icon: 'pi pi-check-square', accent: 'bg-gradient-to-br from-amber-500 to-orange-600', title: 'HITL Approvals', description: 'Xem xét và duyệt các tác vụ đang chờ.' }
+  { to: '/admin/audit', icon: 'pi pi-shield', accent: 'bg-gradient-to-br from-slate-500 to-slate-600', title: 'Nhật ký hoạt động', description: 'Theo dõi hoạt động của agent và hệ thống.' },
+  { to: '/admin/widget', icon: 'pi pi-objects-column', accent: 'bg-gradient-to-br from-blue-500 to-blue-700', title: 'Widget nhúng', description: 'Bật widget chat công khai, cho phép origin và quản lý khóa.' },
+  { to: '/approvals', icon: 'pi pi-check-square', accent: 'bg-gradient-to-br from-amber-500 to-orange-600', title: 'Phê duyệt tác vụ', description: 'Xem xét và duyệt các tác vụ đang chờ.' }
 ];
 
 const statState = ref<Record<StatKey, StatStatus>>({ users: 'loading', documents: 'loading', mcp: 'loading', pending: 'loading' });

@@ -86,8 +86,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     child: Text(
-                      'Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi '
-                      'trường quốc gia',
+                      // Đa tenant: màn đăng nhập chỉ nêu BỘ chủ quản chung,
+                      // không nêu tên một đơn vị/tenant cụ thể.
+                      'Bộ Nông nghiệp và Môi trường',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: AppTheme.textMuted,

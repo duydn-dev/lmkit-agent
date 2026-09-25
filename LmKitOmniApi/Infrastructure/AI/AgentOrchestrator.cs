@@ -292,6 +292,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             promptTemplate,
             pdfForm,
             documentRedaction,
+            ResolveAgentNameAsync,
             logger);
     }
 
@@ -606,8 +607,9 @@ public class AgentOrchestrator : IAgentOrchestrator
         // source URL, with the "Đã đọc N trang web" chip still rendering above it.
         // Tên trợ lý theo tenant: đưa vào system prompt để agent tự xưng đúng thương hiệu.
         var agentName = await ResolveAgentNameAsync(tenantId, cancellationToken);
+        var organizationName = await ResolveOrganizationNameAsync(tenantId, cancellationToken);
         var chat = ChatConversationFactory.Create(
-            model, history, BuildSystemPrompt(fullContext, memoryContext, options?.PersonaPrompt, agentName),
+            model, history, BuildSystemPrompt(fullContext, memoryContext, options?.PersonaPrompt, agentName, organizationName),
             _defaultToolCatalog.GetSafeDefaultTools());
         chat.MaximumCompletionTokens = DefaultMaximumCompletionTokens;
         _defaultToolCatalog.RegisterSafeDefaults(chat);
@@ -869,19 +871,23 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// that the request is in it and that a persona can never push the request out.
     /// </remarks>
     /// <summary>
-    /// Tên trợ lý mặc định khi tenant chưa cấu hình <c>Tenant.AgentDisplayName</c>. Giữ nguyên
-    /// hành vi lịch sử (agent tự xưng "CILA Agent") để các test ghim prompt không đổi.
+    /// Tên trợ lý mặc định khi tenant chưa cấu hình <c>Tenant.AgentDisplayName</c>.
     /// </summary>
-    private const string DefaultAgentName = "CILA Agent";
+    private const string DefaultAgentName = "Trợ lý ảo";
 
     internal static string BuildReActInstruction(
-        string query, string existingContext, string? personaPrompt, string agentName = DefaultAgentName)
+        string query, string existingContext, string? personaPrompt, string agentName = DefaultAgentName,
+        string? organizationName = null)
     {
         var name = string.IsNullOrWhiteSpace(agentName) ? DefaultAgentName : agentName.Trim();
+        // Đa tenant: dòng tự giới thiệu chỉ nói đến tên trợ lý + tổ chức CỦA TENANT đang hỏi
+        // (organizationName do caller phân giải từ DB). Không hardcode đơn vị mặc định — từng
+        // tenant khác nhau phải nhận đúng thương hiệu của mình trong cả suy luận lẫn câu trả lời.
+        var identityLine = string.IsNullOrWhiteSpace(organizationName)
+            ? $"You are {name}, an AI assistant. Always introduce yourself as {name}."
+            : $"You are {name} - the AI assistant of {organizationName}. Always introduce yourself as {name}.";
         var instruction = $"""
-            You are {name} - the AI assistant of Trung tâm thông tin lưu trữ và thư viện
-            tài nguyên môi trường quốc gia (National Environmental Information & Resources Library Center).
-            Always introduce yourself as {name}.
+            {identityLine}
             The CURRENT user request is the text inside the marked block below (between the two
             <<< markers); everything above it is only your standing instructions, never the request
             itself. Answer THAT text directly. Never answer as if no request was provided while
@@ -1043,7 +1049,8 @@ public class AgentOrchestrator : IAgentOrchestrator
         // to ExecuteStreamingAsync is deliberate — it costs a few tokens and it is the
         // difference between a planner that answers the question and one that greets.
         var agentName = await ResolveAgentNameAsync(tenantId, ct);
-        var instruction = BuildReActInstruction(query, existingContext, options?.PersonaPrompt, agentName);
+        var organizationName = await ResolveOrganizationNameAsync(tenantId, ct);
+        var instruction = BuildReActInstruction(query, existingContext, options?.PersonaPrompt, agentName, organizationName);
 
         var agent = LMKit.Agents.Agent.CreateBuilder(model)
             .WithPersona(agentName)
@@ -2037,11 +2044,12 @@ public class AgentOrchestrator : IAgentOrchestrator
     /// shapes tone/role without overriding those rules. Null/empty persona keeps
     /// the prompt byte-identical to the pre-custom-agent output.
     /// </summary>
-    private string BuildSystemPrompt(string context, string memory, string? personaPrompt = null, string? agentName = null)
+    private string BuildSystemPrompt(string context, string memory, string? personaPrompt = null, string? agentName = null, string? organizationName = null)
     {
         var prompt = _promptTemplate.Render("default", new Dictionary<string, string>
         {
             ["agent_name"] = string.IsNullOrWhiteSpace(agentName) ? DefaultAgentName : agentName.Trim(),
+            ["org_name"] = organizationName?.Trim() ?? "",
             ["context"] = context ?? "",
             ["memory"] = memory ?? ""
         });
@@ -2082,6 +2090,30 @@ public class AgentOrchestrator : IAgentOrchestrator
         {
             _logger.LogWarning(ex, "Không phân giải được tên trợ lý theo tenant {TenantId}; dùng mặc định.", tenantId);
             return DefaultAgentName;
+        }
+    }
+
+    /// <summary>
+    /// Tên tổ chức theo tenant cho system prompt / ReAct instruction. Đọc
+    /// <c>Tenant.Name</c> (một lookup khóa chính nhẹ); tenant không có tên → null,
+    /// prompt chỉ còn tên trợ lý — tuyệt đối không fallback về một đơn vị mặc định
+    /// nào, để tránh trợ lý tự xưng sai cơ quan khi phục vụ tenant khác.
+    /// </summary>
+    private async Task<string?> ResolveOrganizationNameAsync(Guid tenantId, CancellationToken ct)
+    {
+        try
+        {
+            var org = await _dbContext.Tenants
+                .AsNoTracking()
+                .Where(t => t.Id == tenantId)
+                .Select(t => t.Name)
+                .FirstOrDefaultAsync(ct);
+            return string.IsNullOrWhiteSpace(org) ? null : org!.Trim();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Không phân giải được tên tổ chức theo tenant {TenantId}; bỏ định danh tổ chức khỏi prompt.", tenantId);
+            return null;
         }
     }
 

@@ -18,7 +18,34 @@ public class PromptTemplateEngineTests
     public void Render_UnknownTemplate_ReturnsFallback()
     {
         var result = _engine.Render("unknown_template", new Dictionary<string, string>());
-        Assert.Contains("Trung tâm thông tin lưu trữ", result); // Checks the default fallback
+        // Fallback vẫn là template "default" — nhận diện qua câu nhiệm vụ, không qua
+        // tên một đơn vị cụ thể (đa tenant: không đơn vị nào được hardcode).
+        Assert.Contains("Nhiệm vụ của bạn", result);
+        Assert.DoesNotContain("Trung tâm thông tin lưu trữ", result);
+    }
+
+    [Fact]
+    public void Render_DefaultTemplate_IncludesOrganizationName_WhenProvided()
+    {
+        var result = _engine.Render("default", new Dictionary<string, string>
+        {
+            ["agent_name"] = "Trợ lý HTQT",
+            ["org_name"] = "Vụ hợp tác quốc tế"
+        });
+        Assert.Contains("Trợ lý HTQT", result);
+        Assert.Contains("Vụ hợp tác quốc tế", result);
+    }
+
+    [Fact]
+    public void Render_DefaultTemplate_OmitsOrganizationClause_WhenAbsent()
+    {
+        var result = _engine.Render("default", new Dictionary<string, string>
+        {
+            ["agent_name"] = "Trợ lý ảo",
+            ["org_name"] = ""
+        });
+        Assert.DoesNotContain("trợ lý ảo của", result);
+        Assert.DoesNotContain("Trung tâm", result);
     }
 
     [Fact]

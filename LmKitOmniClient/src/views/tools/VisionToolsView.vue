@@ -8,7 +8,7 @@
             <i class="pi pi-eye text-white text-sm" aria-hidden="true"></i>
           </div>
           <div>
-            <h1 class="text-xl font-bold text-gray-900 tracking-tight">Thị giác ảnh</h1>
+            <h1 class="text-xl font-bold text-gray-900 tracking-tight">Thị giác & OCR</h1>
             <p class="text-xs text-gray-500">Tải ảnh lên rồi mô tả, OCR, phân loại hoặc xóa nền.</p>
           </div>
         </div>

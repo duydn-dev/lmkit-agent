@@ -136,22 +136,40 @@ public sealed class ReActPlannerInstructionTests
     }
 
     /// <summary>
-    /// Per-tenant branding: a configured agent name replaces the "CILA Agent" self-introduction
+    /// Per-tenant branding: a configured agent name replaces the default self-introduction
     /// in BOTH the "You are …" line and the "introduce yourself as …" line, while the 3-arg
-    /// default preserves the historical "CILA Agent" identity byte-for-byte.
+    /// default keeps the generic default identity.
     /// </summary>
     [Fact]
     public void ACustomAgentName_ReplacesTheDefaultSelfIntroduction_ButTheDefaultIsUnchanged()
     {
         var custom = AgentOrchestrator.BuildReActInstruction(Query, "", null, "Trợ lý CILA");
-        Assert.Contains("You are Trợ lý CILA -", custom, StringComparison.Ordinal);
+        // Không có organization → định danh generic, KHÔNG lẫn tên đơn vị nào.
+        Assert.Contains("You are Trợ lý CILA, an AI assistant", custom, StringComparison.Ordinal);
         Assert.Contains("introduce yourself as Trợ lý CILA", custom, StringComparison.Ordinal);
         Assert.DoesNotContain("CILA Agent", custom, StringComparison.Ordinal);
 
-        // Default (no name / whitespace) keeps the shipped identity.
-        Assert.Contains("You are CILA Agent -", Build(), StringComparison.Ordinal);
-        Assert.Contains("You are CILA Agent -",
+        // Default (no name / whitespace) keeps the generic default identity.
+        Assert.Contains("You are Trợ lý ảo, an AI assistant", Build(), StringComparison.Ordinal);
+        Assert.Contains("You are Trợ lý ảo, an AI assistant",
             AgentOrchestrator.BuildReActInstruction(Query, "", null, "   "), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Multi-tenant: the organization line carries ONLY the calling tenant's organization.
+    /// No default unit may ever be baked into the instruction — a tenant without one gets a
+    /// generic identity, never another agency's name.
+    /// </summary>
+    [Fact]
+    public void TheInstruction_CarriesOnlyTheCallingTenantsOrganization()
+    {
+        var branded = AgentOrchestrator.BuildReActInstruction(Query, "", null, "Trợ lý HTQT", "Vụ hợp tác quốc tế");
+        Assert.Contains("the AI assistant of Vụ hợp tác quốc tế", branded, StringComparison.Ordinal);
+
+        // No organization → generic identity; the DEFAULT org must not leak back in.
+        var generic = Build();
+        Assert.DoesNotContain("the AI assistant of", generic, StringComparison.Ordinal);
+        Assert.DoesNotContain("Trung tâm", generic, StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -9,7 +9,7 @@
               <i class="pi pi-key text-white text-sm"></i>
             </div>
             <div>
-              <h1 class="text-xl font-bold text-gray-900 tracking-tight">API Keys</h1>
+              <h1 class="text-xl font-bold text-gray-900 tracking-tight">Khóa API</h1>
               <p class="text-xs text-gray-500">Cấp quyền gọi API cho ứng dụng bên ngoài qua header X-Api-Key</p>
             </div>
           </div>

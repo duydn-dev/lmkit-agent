@@ -102,3 +102,6 @@ TestResults/
 # tro toi bang OfficeAuthoring__AsposeLicensePath (env/appsettings server).
 *.lic
 [Ll]icense [Kk]ey.txt
+
+# Tai khoan + mat khau he thong (noi bo) — KHONG BAO GIO commit
+/docs/tai-khoan-he-thong.md

@@ -2,11 +2,11 @@
   <div class="flex-1 overflow-y-auto bg-gray-50 p-4 md:p-6">
     <div class="max-w-6xl mx-auto">
       <header class="mb-4 flex items-center gap-4">
-        <div class="w-10 h-10 rounded-lg bg-[--color-gov-red] flex items-center justify-center shadow-md flex-shrink-0">
+        <div class="w-10 h-10 rounded-lg bg-gov-blue-dark flex items-center justify-center shadow-md flex-shrink-0">
           <i class="pi pi-calendar-clock text-white text-sm" aria-hidden="true"></i>
         </div>
         <div class="flex-1">
-          <h1 class="text-xl font-bold text-gray-900 tracking-tight">Task Scheduler</h1>
+          <h1 class="text-xl font-bold text-gray-900 tracking-tight">Lịch trình tự động</h1>
           <p class="text-sm text-gray-500">
             Chạy prompt tự động theo chu kỳ/ngày/tuần. Chế độ <strong>Automation Agent</strong> cho phép lịch dùng tool
             (query CSDL đã index, tri thức, web…) và trả kết quả đã định dạng qua thông báo.
@@ -56,7 +56,8 @@
         </Column>
         <Column field="runMode" header="Chế độ" style="min-width: 9rem">
           <template #body="{ data }">
-            <Tag :value="data.runMode === 'agent' ? 'Automation Agent' : 'Completion'" :severity="data.runMode === 'agent' ? 'danger' : 'secondary'" />
+            <!-- Chế độ chạy là PHÂN LOẠI, không phải trạng thái lỗi → info (xanh), secondary cho Completion. -->
+            <Tag :value="data.runMode === 'agent' ? 'Automation Agent' : 'Completion'" :severity="data.runMode === 'agent' ? 'info' : 'secondary'" />
             <div class="mt-1 flex flex-wrap gap-1">
               <Tag v-if="data.customAgentId" :value="personaName(data.customAgentId)" severity="info" v-tooltip.top="'Persona'" />
               <Tag v-if="data.deliveryWebhookUrl" value="Webhook" severity="warn" v-tooltip.top="data.deliveryWebhookUrl" />
@@ -177,7 +178,7 @@
               v-model="form.runAtLocal"
               type="datetime-local"
               required
-              class="min-h-11 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-[--color-gov-red]" />
+              class="min-h-11 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-gov-blue-dark" />
             <p class="text-xs text-gray-400">Chạy đúng một lần rồi lịch tự tắt (vẫn nằm trong danh sách để xem kết quả).</p>
           </div>
 
@@ -199,7 +200,7 @@
               v-model="form.timeOfDay"
               type="time"
               required
-              class="min-h-11 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-[--color-gov-red]" />
+              class="min-h-11 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-gov-blue-dark" />
             <p class="text-xs text-gray-400">Giờ tính theo UTC (giờ Việt Nam = UTC + 7).</p>
           </div>
         </form>

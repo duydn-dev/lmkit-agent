@@ -2,11 +2,11 @@
   <div class="flex-1 overflow-y-auto bg-gray-50 p-4 md:p-6">
     <div class="max-w-5xl mx-auto">
       <header class="mb-4 flex items-center gap-4">
-        <div class="w-10 h-10 rounded-lg bg-[--color-gov-red] flex items-center justify-center shadow-md flex-shrink-0">
+        <div class="w-10 h-10 rounded-lg bg-gov-blue-dark flex items-center justify-center shadow-md flex-shrink-0">
           <i class="pi pi-building text-white text-sm" aria-hidden="true"></i>
         </div>
         <div>
-          <h1 class="text-xl font-bold text-gray-900 tracking-tight">Tenant Management</h1>
+          <h1 class="text-xl font-bold text-gray-900 tracking-tight">Quản lý Tenant</h1>
           <p class="text-sm text-gray-500">Đơn vị/tổ chức sử dụng hệ thống. Chỉ tenant RỖNG mới xóa được — không bao giờ cascade dữ liệu.</p>
         </div>
       </header>

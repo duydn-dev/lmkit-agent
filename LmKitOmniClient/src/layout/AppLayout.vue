@@ -249,21 +249,21 @@ const userRole = computed(() => authStore.currentUser?.role || 'Member');
 const isAdmin = computed(() => userRole.value === 'Admin');
 
 // --- Thương hiệu theo tenant (logo + tên trợ lý + tên đơn vị) -----------------
-// Khi chưa cấu hình, giữ nguyên nhận diện mặc định của hệ thống.
-const DEFAULT_ORG = 'Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi trường quốc gia';
+// ĐA TENANT: tuyệt đối không fallback về một đơn vị mặc định nào — mỗi tenant
+// chỉ bao giờ thấy tên đơn vị của chính mình (từ /api/auth/me).
 const brandTitle = computed(() => authStore.currentUser?.tenant?.agentName?.trim() || 'CILA · AI AGENT');
-const orgName = computed(() => authStore.tenantName || DEFAULT_ORG);
+const orgName = computed(() => authStore.tenantName || 'CILA AI');
 
 // --- Grouped navigation --------------------------------------------------------
 // Data-driven so the desktop sidebar and the mobile drawer render the exact same
-// items from one source. Labels are kept stable (existing e2e/a11y selectors rely
-// on "Bộ nhớ trợ lý", "Quản lý User", "Kho tài liệu"). The "Quản trị" group is
-// admin-only and filtered out for members.
+// items from one source. Nhãn tiếng Việt hoá đồng bộ với PAGE_TITLES (router) và
+// tiêu đề từng trang; e2e selectors cũng đã cập nhật theo. The "Quản trị" group
+// is admin-only and filtered out for members.
 interface NavItem { to: string; icon: string; label: string }
 interface NavGroup { title: string; items: NavItem[]; adminOnly?: boolean }
 
-// Nhãn dùng thuật ngữ kỹ thuật chuẩn ngành (Automation Agent, RAG, HITL, MCP,
-// LoRA…) theo yêu cầu vận hành; tiêu đề nhóm giữ tiếng Việt hành chính.
+// Nhãn sidebar: tiếng Việt cho các mục người dùng cuối dễ hiểu; chỉ giữ thuật
+// ngữ kỹ thuật khi dịch sang tiếng Việt gây lúng túng (Agent, LoRA, MCP, OCR…).
 const navGroups: NavGroup[] = [
   {
     // Dashboard đứng ĐẦU sidebar theo yêu cầu: trang đích khi mở app, không
@@ -271,50 +271,50 @@ const navGroups: NavGroup[] = [
     title: 'Tổng quan',
     adminOnly: true,
     items: [
-      { to: '/admin', icon: 'pi pi-th-large', label: 'Dashboard' }
+      { to: '/admin', icon: 'pi pi-th-large', label: 'Bảng điều khiển' }
     ]
   },
   {
     title: 'Không gian làm việc',
     items: [
-      { to: '/chat', icon: 'pi pi-sparkles', label: 'AI Chat' },
-      { to: '/projects', icon: 'pi pi-folder', label: 'Projects' },
-      { to: '/documents', icon: 'pi pi-file-pdf', label: 'RAG Documents' },
-      { to: '/memory', icon: 'pi pi-history', label: 'Agent Memory' },
-      { to: '/settings/custom-instructions', icon: 'pi pi-user-edit', label: 'Custom Instructions' }
+      { to: '/chat', icon: 'pi pi-sparkles', label: 'Trò chuyện' },
+      { to: '/projects', icon: 'pi pi-folder', label: 'Dự án' },
+      { to: '/documents', icon: 'pi pi-file-pdf', label: 'Tài liệu RAG' },
+      { to: '/memory', icon: 'pi pi-history', label: 'Bộ nhớ Agent' },
+      { to: '/settings/custom-instructions', icon: 'pi pi-user-edit', label: 'Hướng dẫn tùy chỉnh' }
     ]
   },
   {
     title: 'AI Studio',
     items: [
-      { to: '/agents', icon: 'pi pi-microchip-ai', label: 'Agent Studio' },
-      { to: '/agents/content-creation', icon: 'pi pi-pen-to-square', label: 'Content Studio' },
-      { to: '/agent-mode', icon: 'pi pi-bolt', label: 'Automation Agent' },
-      { to: '/schedules', icon: 'pi pi-calendar-clock', label: 'Task Scheduler' },
-      { to: '/research', icon: 'pi pi-compass', label: 'Deep Research' },
-      { to: '/tools/text', icon: 'pi pi-align-left', label: 'Text Analytics' },
-      { to: '/tools/vision', icon: 'pi pi-image', label: 'Vision & OCR' }
+      { to: '/agents', icon: 'pi pi-microchip-ai', label: 'Thiết kế Agent' },
+      { to: '/agents/content-creation', icon: 'pi pi-pen-to-square', label: 'Tạo nội dung' },
+      { to: '/agent-mode', icon: 'pi pi-bolt', label: 'Agent tự động hóa' },
+      { to: '/schedules', icon: 'pi pi-calendar-clock', label: 'Lịch trình tự động' },
+      { to: '/research', icon: 'pi pi-compass', label: 'Nghiên cứu chuyên sâu' },
+      { to: '/tools/text', icon: 'pi pi-align-left', label: 'Phân tích văn bản' },
+      { to: '/tools/vision', icon: 'pi pi-image', label: 'Thị giác & OCR' }
     ]
   },
   {
     title: 'Vận hành',
     items: [
-      { to: '/approvals', icon: 'pi pi-check-square', label: 'HITL Approvals' },
-      { to: '/api-keys', icon: 'pi pi-key', label: 'API Keys' }
+      { to: '/approvals', icon: 'pi pi-check-square', label: 'Phê duyệt tác vụ' },
+      { to: '/api-keys', icon: 'pi pi-key', label: 'Khóa API' }
     ]
   },
   {
     title: 'Quản trị',
     adminOnly: true,
     items: [
-      { to: '/admin/users', icon: 'pi pi-users', label: 'User Management' },
-      { to: '/admin/tenants', icon: 'pi pi-building', label: 'Tenant Management' },
-      { to: '/admin/databases', icon: 'pi pi-database', label: 'Database Connections' },
-      { to: '/admin/knowledge', icon: 'pi pi-book', label: 'Knowledge Base' },
-      { to: '/admin/mcp-servers', icon: 'pi pi-server', label: 'MCP Servers' },
+      { to: '/admin/users', icon: 'pi pi-users', label: 'Quản lý tài khoản' },
+      { to: '/admin/tenants', icon: 'pi pi-building', label: 'Quản lý Tenant' },
+      { to: '/admin/databases', icon: 'pi pi-database', label: 'Kết nối CSDL' },
+      { to: '/admin/knowledge', icon: 'pi pi-book', label: 'Cơ sở tri thức' },
+      { to: '/admin/mcp-servers', icon: 'pi pi-server', label: 'Máy chủ MCP' },
       { to: '/admin/lora', icon: 'pi pi-sliders-h', label: 'LoRA Adapters' },
-      { to: '/admin/widget', icon: 'pi pi-qrcode', label: 'Embed Widget' },
-      { to: '/admin/audit', icon: 'pi pi-shield', label: 'Audit Log' }
+      { to: '/admin/widget', icon: 'pi pi-qrcode', label: 'Widget nhúng' },
+      { to: '/admin/audit', icon: 'pi pi-shield', label: 'Nhật ký hoạt động' }
     ]
   }
 ];

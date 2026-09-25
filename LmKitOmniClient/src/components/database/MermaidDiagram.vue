@@ -54,7 +54,8 @@ function loadMermaid() {
         fontSize: '13px',
         primaryColor: '#ffffff',
         primaryTextColor: '#111827',
-        primaryBorderColor: '#b81f33',
+        // Khớp chrome xanh của app (gov-blue-dark) — đỏ chỉ dành cho trạng thái lỗi.
+        primaryBorderColor: '#1e3a8a',
         lineColor: '#6b7280',
         tertiaryColor: '#f9fafb'
       },

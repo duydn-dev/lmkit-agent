@@ -112,6 +112,9 @@ public sealed class AgentActionDispatcher
         PromptTemplateEngine promptTemplate,
         LmKitOmniApi.Infrastructure.AI.Documents.IPdfFormService pdfForm,
         LmKitOmniApi.Infrastructure.AI.Documents.IDocumentRedactionService documentRedaction,
+        // Đa tenant: phân giải tên trợ lý theo tenant cho các prompt nội bộ (SUMMARIZE…).
+        // Null → fallback tên generic, không bao giờ hardcode một đơn vị/tên cũ.
+        System.Func<Guid, CancellationToken, Task<string>>? agentNameResolver,
         ILogger logger)
     {
         _ragService = ragService;
@@ -133,6 +136,7 @@ public sealed class AgentActionDispatcher
         _promptTemplate = promptTemplate;
         _pdfForm = pdfForm;
         _documentRedaction = documentRedaction;
+        _agentNameResolver = agentNameResolver;
         _logger = logger;
     }
 
@@ -186,7 +190,7 @@ public sealed class AgentActionDispatcher
 
             // ── Document Summarization ──
             case "SUMMARIZE":
-                return await ExecuteSummarizationAsync(query, ct);
+                return await ExecuteSummarizationAsync(tenantId, query, ct);
 
             // ── Code Interpreter (v1: sandboxed JavaScript via Jint) ──
             case "CODE":
@@ -821,14 +825,36 @@ public sealed class AgentActionDispatcher
         return result;
     }
 
-    private async Task<string> ExecuteSummarizationAsync(string query, CancellationToken ct)
+    /// <summary>Tên trợ lý generic khi không phân giải được tên theo tenant.</summary>
+    private const string DefaultAgentName = "Trợ lý ảo";
+
+    private readonly System.Func<Guid, CancellationToken, Task<string>>? _agentNameResolver;
+
+    /// <summary>Tên trợ lý theo tenant cho prompt nội bộ; lỗi → generic, không phá tool.</summary>
+    private async Task<string> ResolveAgentNameAsync(Guid tenantId, CancellationToken ct)
+    {
+        if (_agentNameResolver is null) return DefaultAgentName;
+        try
+        {
+            var name = await _agentNameResolver(tenantId, ct);
+            return string.IsNullOrWhiteSpace(name) ? DefaultAgentName : name.Trim();
+        }
+        catch
+        {
+            return DefaultAgentName;
+        }
+    }
+
+    private async Task<string> ExecuteSummarizationAsync(Guid tenantId, string query, CancellationToken ct)
     {
         _logger.LogInformation("📝 Summarizing content...");
+        var agentName = await ResolveAgentNameAsync(tenantId, ct);
         var summaryModel = await _modelManager.GetChatModelAsync(ct: ct);
         var summaryChat = new MultiTurnConversation(summaryModel);
+        // Đa tenant: tên trợ lý phân giải theo tenant, không hardcode.
         summaryChat.SystemPrompt = _promptTemplate.Render("summarize", new Dictionary<string, string>
         {
-            ["agent_name"] = "CILA Agent",
+            ["agent_name"] = agentName,
             ["context"] = query.Length > SummarizeContextMaxChars ? query.Substring(0, SummarizeContextMaxChars) : query
         });
         var summaryResult = summaryChat.Submit("Hãy tóm tắt nội dung trên.", ct);

@@ -21,7 +21,7 @@
             <img class="object-contain w-full h-full" src="@/assets/quochuy.svg" alt="Quốc Huy" />
           </div>
           <h1 class="text-2xl font-bold text-gray-900 mb-2">Trợ lý ảo - CILA AI</h1>
-          <p class="text-gray-600 text-sm">Trung tâm Thông tin lưu trữ và Thư viện tài nguyên môi trường quốc gia</p>
+          <p class="text-gray-600 text-sm">Bộ Nông nghiệp và Môi trường</p>
         </div>
         
         <!-- Error Message -->

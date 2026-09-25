@@ -3,11 +3,11 @@
     <div class="max-w-6xl mx-auto">
       <!-- Page header -->
       <header class="mb-4 flex items-center gap-4">
-        <div class="w-10 h-10 rounded-lg bg-[--color-gov-red] flex items-center justify-center shadow-md flex-shrink-0">
+        <div class="w-10 h-10 rounded-lg bg-gov-blue-dark flex items-center justify-center shadow-md flex-shrink-0">
           <i class="pi pi-database text-white text-sm" aria-hidden="true"></i>
         </div>
         <div>
-          <h1 class="text-xl font-bold text-gray-900 tracking-tight">Database Connections</h1>
+          <h1 class="text-xl font-bold text-gray-900 tracking-tight">Kết nối CSDL</h1>
           <p class="text-sm text-gray-500">
             Kết nối CSDL ngoài cho agent truy vấn. Kết nối "Toàn hệ thống" dùng chung cho mọi tenant.
           </p>
@@ -83,7 +83,7 @@
           <template #body="{ data }">
             <div class="flex flex-wrap gap-1">
               <Tag :value="data.isActive ? 'Kích hoạt' : 'Tạm tắt'" :severity="data.isActive ? 'success' : 'secondary'" />
-              <Tag v-if="data.allowWrites" value="Cho phép ghi" severity="danger" />
+              <Tag v-if="data.allowWrites" value="Cho phép ghi" severity="warn" />
             </div>
           </template>
         </Column>

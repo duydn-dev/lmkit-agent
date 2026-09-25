@@ -9,7 +9,7 @@
               <i class="pi pi-microchip-ai text-white text-sm"></i>
             </div>
             <div>
-              <h1 class="text-xl font-bold text-gray-900 tracking-tight">Agent Studio</h1>
+              <h1 class="text-xl font-bold text-gray-900 tracking-tight">Thiết kế Agent</h1>
               <p class="text-xs text-gray-500">Tạo trợ lý chuyên biệt với persona, công cụ, tri thức và LoRA adapter riêng</p>
             </div>
           </div>

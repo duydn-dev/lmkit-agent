@@ -195,17 +195,17 @@ test('authenticated user can create a chat and consume the SSE response', async 
 test('admin can navigate documents, memory, users and the admin hub', async ({ page }) => {
   const browserErrors = await mockAuthenticatedApi(page);
   await page.goto('/documents');
-  await expect(page.getByRole('heading', { name: 'Kho Tài Liệu' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Tài liệu RAG' })).toBeVisible();
   await expect(page.getByText('quy-trinh.pdf')).toBeVisible();
   await expectNoWcagViolations(page);
 
-  await page.getByRole('link', { name: 'Agent Memory' }).click();
+  await page.getByRole('link', { name: 'Bộ nhớ Agent' }).click();
   await expect(page.getByRole('heading', { name: 'Bộ nhớ của trợ lý' })).toBeVisible();
   await expect(page.getByText('Trả lời bằng tiếng Việt')).toBeVisible();
   await expectNoWcagViolations(page);
 
-  await page.getByRole('link', { name: 'User Management' }).click();
-  await expect(page.getByRole('heading', { name: 'User Management' })).toBeVisible();
+  await page.getByRole('link', { name: 'Quản lý tài khoản' }).click();
+  await expect(page.getByRole('heading', { name: 'Quản lý tài khoản' })).toBeVisible();
   await expect(page.getByRole('table').getByText('admin@example.test')).toBeVisible();
   await expectNoWcagViolations(page);
 
@@ -226,11 +226,11 @@ test('mobile navigation exposes the primary routes and closes after navigation',
   const menuButton = page.getByRole('button', { name: 'Mở menu điều hướng' });
   await menuButton.click();
   await expect(page.getByRole('navigation', { name: 'Điều hướng di động' })).toBeVisible();
-  await page.getByRole('link', { name: 'RAG Documents' }).click();
+  await page.getByRole('link', { name: 'Tài liệu RAG' }).click();
 
   await expect(page).toHaveURL(/\/documents$/);
   await expect(page.getByRole('navigation', { name: 'Điều hướng di động' })).toBeHidden();
-  await expect(page.getByRole('heading', { name: 'Kho Tài Liệu' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Tài liệu RAG' })).toBeVisible();
   await expectNoWcagViolations(page);
   expect(browserErrors).toEqual([]);
 });
@@ -265,7 +265,7 @@ test('files a tool produced render inline in the assistant reply', async ({ page
 test('agent mode streams a run and renders the step timeline and result', async ({ page }) => {
   const browserErrors = await mockAuthenticatedApi(page);
   await page.goto('/agent-mode');
-  await expect(page.getByRole('heading', { name: 'Automation Agent' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Agent tự động hóa' })).toBeVisible();
 
   await page.getByLabel('Mục tiêu', { exact: true }).fill('Tính 2+2');
   await page.getByRole('button', { name: 'Chạy', exact: true }).click();

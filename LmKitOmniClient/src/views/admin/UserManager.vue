@@ -2,11 +2,11 @@
   <div class="flex-1 overflow-y-auto bg-gray-50 p-4 md:p-6">
     <div class="max-w-6xl mx-auto">
       <header class="mb-4 flex items-center gap-4">
-        <div class="w-10 h-10 rounded-lg bg-[--color-gov-red] flex items-center justify-center shadow-md flex-shrink-0">
+        <div class="w-10 h-10 rounded-lg bg-gov-blue-dark flex items-center justify-center shadow-md flex-shrink-0">
           <i class="pi pi-users text-white text-sm" aria-hidden="true"></i>
         </div>
         <div class="flex-1">
-          <h1 class="text-xl font-bold text-gray-900 tracking-tight">User Management</h1>
+          <h1 class="text-xl font-bold text-gray-900 tracking-tight">Quản lý tài khoản</h1>
           <p class="text-sm text-gray-500">Cấp tài khoản, phân quyền và khóa/mở khóa người dùng trong tenant.</p>
         </div>
       </header>
@@ -60,7 +60,8 @@
         </Column>
         <Column field="role" header="Quyền" style="min-width: 7rem">
           <template #body="{ data }">
-            <Tag :value="data.role" :severity="data.role === 'Admin' ? 'danger' : 'info'" />
+            <!-- Quyền là phân loại, không phải lỗi: Admin = info (xanh đậm), Member = secondary (xám). -->
+            <Tag :value="data.role" :severity="data.role === 'Admin' ? 'info' : 'secondary'" />
           </template>
         </Column>
         <Column field="isActive" header="Trạng thái" style="min-width: 9rem">

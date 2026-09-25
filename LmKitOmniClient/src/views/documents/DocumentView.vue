@@ -9,7 +9,7 @@
               <i class="pi pi-file text-white text-sm"></i>
             </div>
             <div>
-              <h1 class="text-xl font-bold text-gray-900 tracking-tight">Kho Tài Liệu</h1>
+              <h1 class="text-xl font-bold text-gray-900 tracking-tight">Tài liệu RAG</h1>
               <p class="text-xs text-gray-500">Quản lý tài liệu cho hệ thống RAG</p>
             </div>
           </div>
