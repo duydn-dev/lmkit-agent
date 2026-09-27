@@ -68,9 +68,17 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
                     PersonaPrompt = customAgent.PersonaPrompt,
                     AllowedTools = allowedTools,
                     KnowledgeDocumentIds = Application.CustomAgents.CustomAgentRules.ParseDocumentIdsCsv(customAgent.KnowledgeDocumentIdsCsv),
-                    LoraAdapterId = customAgent.LoraAdapterId
+                    LoraAdapterId = customAgent.LoraAdapterId,
+                    ScheduledTaskId = request.ScheduledTaskId
                 };
             }
+        }
+
+        if (request.ScheduledTaskId is { } scheduledTaskId)
+        {
+            options = options is null
+                ? new Application.Abstractions.AgentRequestOptions { ScheduledTaskId = scheduledTaskId }
+                : options with { ScheduledTaskId = scheduledTaskId };
         }
 
         // Hidden session = HITL/approval substrate; excluded from the chat list.
@@ -79,7 +87,8 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
             TenantId = request.TenantId,
             UserId = request.UserId,
             Title = goal.Length > 200 ? goal[..200] : goal,
-            IsAgentRun = true
+            IsAgentRun = true,
+            ScheduledTaskId = request.ScheduledTaskId
         };
         _dbContext.ChatSessions.Add(session);
 

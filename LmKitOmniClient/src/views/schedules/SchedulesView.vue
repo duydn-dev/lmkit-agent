@@ -60,6 +60,7 @@
             <Tag :value="data.runMode === 'agent' ? 'Automation Agent' : 'Completion'" :severity="data.runMode === 'agent' ? 'info' : 'secondary'" />
             <div class="mt-1 flex flex-wrap gap-1">
               <Tag v-if="data.customAgentId" :value="personaName(data.customAgentId)" severity="info" v-tooltip.top="'Persona'" />
+              <Tag v-if="data.approveFutureRuns" value="Tự duyệt ghi" severity="warn" v-tooltip.top="'Tự duyệt chỉ cho thao tác ghi của lịch này'" />
               <Tag v-if="data.deliveryWebhookUrl" value="Webhook" severity="warn" v-tooltip.top="data.deliveryWebhookUrl" />
             </div>
           </template>
@@ -72,6 +73,13 @@
             <Tag v-if="data.lastStatus" :value="statusLabel(data.lastStatus)" :severity="statusSeverity(data.lastStatus)" :title="data.lastError ?? undefined" />
             <span v-else class="text-xs text-gray-400">Chưa chạy</span>
             <p v-if="data.lastStatus === 'Failed' && data.lastError" class="text-[11px] text-red-600 mt-1 max-w-56 truncate" :title="data.lastError">{{ data.lastError }}</p>
+            <router-link
+              v-if="data.lastAgentRunId"
+              :to="{ path: '/agent-mode', query: { runId: data.lastAgentRunId } }"
+              class="mt-1 inline-flex min-h-8 items-center gap-1 text-xs font-semibold text-blue-800 underline underline-offset-2"
+            >
+              Xem tiến trình
+            </router-link>
           </template>
         </Column>
         <Column header="Chạy kế tiếp / cuối" style="min-width: 12rem">
@@ -81,8 +89,7 @@
           </template>
         </Column>
         <Column header="Bật" style="width: 5rem">
-          <template #body="{ data }">
-            <ToggleSwitch
+          <template #body="{ data }">              <ToggleSwitch
               :modelValue="data.enabled"
               :inputId="`schedule-enabled-${data.id}`"
               :aria-label="`Bật tắt lịch ${data.name}`"
@@ -127,11 +134,21 @@
             <p class="text-xs text-gray-500">
               <template v-if="form.runMode === 'agent'">
                 Automation Agent: lịch chạy qua pipeline agent đầy đủ — truy vấn CSDL đã index, tri thức, web…; từng bước được lưu
-                trong Automation Agent. Bước cần phê duyệt sẽ tạm dừng chờ bạn duyệt (HITL).
+                trong Automation Agent. Bước ghi dữ liệu mặc định tạm dừng chờ bạn duyệt (HITL).
               </template>
               <template v-else>
                 Completion: một lượt suy luận thuần, không dùng tool — nhanh và nhẹ, phù hợp nhắc việc/tóm tắt.
               </template>
+            </p>
+          </div>
+
+          <div v-if="form.runMode === 'agent'" class="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <label class="flex items-start gap-2 text-sm font-medium text-amber-950">
+              <Checkbox v-model="form.approveFutureRuns" :binary="true" inputId="schedule-approve-future" />
+              <span>Cho phép tự duyệt thao tác ghi CSDL/API ở các lượt sau</span>
+            </label>
+            <p class="ml-7 mt-1 text-xs text-amber-800">
+              Mặc định tắt: mỗi INSERT/UPDATE/DELETE hoặc API ghi đều chờ bạn duyệt riêng. Bật mục này sẽ bỏ HITL cho lịch này; có thể thu hồi bằng cách bỏ chọn hoặc tắt lịch.
             </p>
           </div>
 
@@ -184,8 +201,8 @@
 
           <div v-if="form.scheduleKind === 'interval'" class="grid gap-1">
             <label for="schedule-interval" class="text-sm font-medium text-gray-700">Chạy mỗi (phút)</label>
-            <InputNumber v-model="form.intervalMinutes" inputId="schedule-interval" :min="15" :useGrouping="false" showButtons suffix=" phút" class="w-full" />
-            <p class="text-xs text-gray-400">Tối thiểu 15 phút.</p>
+            <InputNumber v-model="form.intervalMinutes" inputId="schedule-interval" :min="10" :useGrouping="false" showButtons suffix=" phút" class="w-full" />
+            <p class="text-xs text-gray-400">Tối thiểu 10 phút.</p>
           </div>
 
           <div v-if="form.scheduleKind === 'weekly'" class="grid gap-1">
@@ -231,6 +248,8 @@ interface Schedule {
   prompt: string;
   runMode: RunMode;
   customAgentId: string | null;
+  approveFutureRuns: boolean;
+  lastAgentRunId: string | null;
   deliveryWebhookUrl: string | null;
   scheduleKind: ScheduleKind;
   intervalMinutes: number | null;
@@ -248,6 +267,7 @@ interface ScheduleForm {
   prompt: string;
   runMode: RunMode;
   customAgentId: string | null;
+  approveFutureRuns: boolean;
   deliveryWebhookUrl: string;
   scheduleKind: ScheduleKind;
   intervalMinutes: number | null;
@@ -305,6 +325,7 @@ const emptyForm = (): ScheduleForm => ({
   prompt: '',
   runMode: 'completion',
   customAgentId: null,
+  approveFutureRuns: false,
   deliveryWebhookUrl: '',
   scheduleKind: 'interval',
   intervalMinutes: 60,
@@ -385,6 +406,7 @@ const openEditForm = (schedule: Schedule) => {
     prompt: schedule.prompt,
     runMode: schedule.runMode === 'agent' ? 'agent' : 'completion',
     customAgentId: schedule.customAgentId,
+    approveFutureRuns: schedule.approveFutureRuns ?? false,
     deliveryWebhookUrl: schedule.deliveryWebhookUrl ?? '',
     scheduleKind: schedule.scheduleKind,
     intervalMinutes: schedule.intervalMinutes ?? 60,
@@ -433,8 +455,8 @@ const saveSchedule = async () => {
     runAtUtc = parsed.toISOString();
   } else if (kind === 'interval') {
     intervalMinutes = form.value.intervalMinutes;
-    if (intervalMinutes === null || intervalMinutes < 15) {
-      formError.value = 'Chu kỳ tối thiểu là 15 phút.';
+    if (intervalMinutes === null || intervalMinutes < 10) {
+      formError.value = 'Chu kỳ tối thiểu là 10 phút.';
       return;
     }
   } else {
@@ -453,6 +475,7 @@ const saveSchedule = async () => {
     prompt,
     runMode: form.value.runMode,
     customAgentId: form.value.customAgentId,
+    approveFutureRuns: form.value.runMode === 'agent' && form.value.approveFutureRuns,
     deliveryWebhookUrl: form.value.deliveryWebhookUrl.trim() || null,
     scheduleKind: kind,
     intervalMinutes,

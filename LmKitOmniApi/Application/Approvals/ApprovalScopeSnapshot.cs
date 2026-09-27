@@ -52,6 +52,7 @@ public static class ApprovalScopeSnapshot
         public IReadOnlyCollection<string>? AllowedTools { get; init; }
         public IReadOnlyCollection<Guid>? KnowledgeDocumentIds { get; init; }
         public bool AllowWebSearch { get; init; } = true;
+        public Guid? ScheduledTaskId { get; init; }
     }
 
     /// <summary>
@@ -71,13 +72,15 @@ public static class ApprovalScopeSnapshot
         {
             AllowedTools = options.AllowedTools,
             KnowledgeDocumentIds = options.KnowledgeDocumentIds,
-            AllowWebSearch = options.AllowWebSearch
+            AllowWebSearch = options.AllowWebSearch,
+            ScheduledTaskId = options.ScheduledTaskId
         };
 
         // Nothing restrictive to record: no whitelist, no document pin, and web search
         // left on. Storing that is indistinguishable from storing nothing, and storing
         // nothing keeps the fallback path identical to the pre-snapshot behaviour.
-        if (payload.AllowedTools is null && payload.KnowledgeDocumentIds is null && payload.AllowWebSearch)
+        if (payload.AllowedTools is null && payload.KnowledgeDocumentIds is null
+            && payload.AllowWebSearch && payload.ScheduledTaskId is null)
             return null;
 
         return JsonSerializer.Serialize(payload, SerializerOptions);
@@ -113,7 +116,8 @@ public static class ApprovalScopeSnapshot
         {
             AllowedTools = payload.AllowedTools,
             KnowledgeDocumentIds = payload.KnowledgeDocumentIds,
-            AllowWebSearch = payload.AllowWebSearch
+            AllowWebSearch = payload.AllowWebSearch,
+            ScheduledTaskId = payload.ScheduledTaskId
         };
         return true;
     }
@@ -151,8 +155,11 @@ public static class ApprovalScopeSnapshot
     /// </summary>
     public static AgentRequestOptions? Narrow(AgentRequestOptions? left, AgentRequestOptions? right)
     {
-        if (left is null) return right;
-        if (right is null) return left;
+        if (left is null && right is null) return null;
+        if (left is null)
+            return right!.ScheduledTaskId is null ? right : right with { ScheduledTaskId = null };
+        if (right is null)
+            return left.ScheduledTaskId is null ? left : left with { ScheduledTaskId = null };
 
         var documents = Intersect(left.KnowledgeDocumentIds, right.KnowledgeDocumentIds);
         if (documents is { Count: 0 }) return DenyAll;
@@ -161,7 +168,12 @@ public static class ApprovalScopeSnapshot
         {
             AllowWebSearch = left.AllowWebSearch && right.AllowWebSearch,
             AllowedTools = IntersectTools(left.AllowedTools, right.AllowedTools),
-            KnowledgeDocumentIds = documents
+            KnowledgeDocumentIds = documents,
+            // A schedule grant can only survive when both the original request snapshot
+            // and the current session binding name the same task.
+            ScheduledTaskId = left.ScheduledTaskId == right.ScheduledTaskId
+                ? left.ScheduledTaskId
+                : null
         };
     }
 

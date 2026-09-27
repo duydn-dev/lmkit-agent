@@ -142,16 +142,37 @@ public sealed class ApprovalScopeSnapshotTests
 
     /// <summary>Nothing on either side ⇒ nothing narrows, which is the pre-snapshot behaviour.</summary>
     [Fact]
+    public void CaptureAndNarrow_PreserveOnlyMatchingScheduledGrant()
+    {
+        var taskId = Guid.NewGuid();
+        var snapshot = ApprovalScopeSnapshot.Capture(new AgentRequestOptions { ScheduledTaskId = taskId });
+        Assert.True(ApprovalScopeSnapshot.TryRead(snapshot, out var captured));
+        Assert.Equal(taskId, captured?.ScheduledTaskId);
+        Assert.Equal(taskId, ApprovalScopeSnapshot.Narrow(
+            captured, new AgentRequestOptions { ScheduledTaskId = taskId })?.ScheduledTaskId);
+        Assert.Null(ApprovalScopeSnapshot.Narrow(
+            captured, new AgentRequestOptions { ScheduledTaskId = Guid.NewGuid() })?.ScheduledTaskId);
+        Assert.Null(ApprovalScopeSnapshot.Narrow(captured, null)?.ScheduledTaskId);
+        Assert.Null(ApprovalScopeSnapshot.Narrow(null, captured)?.ScheduledTaskId);
+    }
+
+    [Fact]
     public void Narrow_OfTwoAbsentScopes_IsStillAbsent()
         => Assert.Null(ApprovalScopeSnapshot.Narrow(null, null));
 
     /// <summary>One side absent ⇒ the other side stands, unmodified.</summary>
     [Fact]
-    public void Narrow_WithOneAbsentSide_KeepsTheOther()
+    public void Narrow_WithOneAbsentSide_KeepsNormalScopeButDropsScheduleGrant()
     {
         var scope = new AgentRequestOptions { AllowedTools = new[] { "AnalyzeText" } };
         Assert.Same(scope, ApprovalScopeSnapshot.Narrow(scope, null));
         Assert.Same(scope, ApprovalScopeSnapshot.Narrow(null, scope));
+
+        var scheduled = scope with { ScheduledTaskId = Guid.NewGuid() };
+        Assert.Null(ApprovalScopeSnapshot.Narrow(scheduled, null)?.ScheduledTaskId);
+        Assert.Null(ApprovalScopeSnapshot.Narrow(null, scheduled)?.ScheduledTaskId);
+        Assert.Equal(scope.AllowedTools, ApprovalScopeSnapshot.Narrow(scheduled, null)?.AllowedTools);
+        Assert.Equal(scope.AllowedTools, ApprovalScopeSnapshot.Narrow(null, scheduled)?.AllowedTools);
     }
 
     /// <summary>

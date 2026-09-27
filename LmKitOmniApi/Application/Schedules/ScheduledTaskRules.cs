@@ -18,7 +18,7 @@ public static class ScheduledTaskRules
     public const int MaxNameLength = 100;
     public const int MaxWebhookUrlLength = 500;
     public const int MaxPromptLength = 2000;
-    public const int MinIntervalMinutes = 15;
+    public const int MinIntervalMinutes = 10;
     /// <summary>Lịch "once" phải hẹn trong tương lai gần: tối đa 366 ngày tới.</summary>
     public const int MaxOnceLeadDays = 366;
     public const int MaxIntervalMinutes = 10080; // 7 days
@@ -44,6 +44,8 @@ public static class ScheduledTaskRules
 
         if (NormalizeRunMode(request.RunMode) is null)
             return "Chế độ chạy không hợp lệ. Chỉ hỗ trợ: completion, agent.";
+        if (request.ApproveFutureRuns && NormalizeRunMode(request.RunMode) != AgentRunMode)
+            return "Tự phê duyệt các lượt sau chỉ dùng được với chế độ Automation Agent.";
 
         var webhook = request.DeliveryWebhookUrl?.Trim();
         if (!string.IsNullOrEmpty(webhook))
@@ -97,6 +99,7 @@ public static class ScheduledTaskRules
         task.Prompt = request.Prompt.Trim();
         task.RunMode = NormalizeRunMode(request.RunMode)!;
         task.CustomAgentId = request.CustomAgentId;
+        task.ApproveFutureRuns = request.ApproveFutureRuns;
         task.DeliveryWebhookUrl = string.IsNullOrWhiteSpace(request.DeliveryWebhookUrl)
             ? null
             : request.DeliveryWebhookUrl.Trim();
@@ -160,6 +163,8 @@ public static class ScheduledTaskRules
         Prompt = task.Prompt,
         RunMode = task.RunMode,
         CustomAgentId = task.CustomAgentId,
+        ApproveFutureRuns = task.ApproveFutureRuns,
+        LastAgentRunId = task.LastAgentRunId,
         DeliveryWebhookUrl = task.DeliveryWebhookUrl,
         ScheduleKind = task.ScheduleKind,
         IntervalMinutes = task.IntervalMinutes,

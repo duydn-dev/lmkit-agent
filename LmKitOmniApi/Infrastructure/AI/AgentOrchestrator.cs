@@ -1439,7 +1439,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         {
             tools.Add(new DelegatedActionTool(
                 "call_api_write",
-                "Gửi MỘT yêu cầu REST GHI (POST/PUT/PATCH/DELETE) tới API ngoài — LUÔN cần người dùng phê duyệt trước khi chạy. "
+                "Gửi MỘT yêu cầu REST GHI (POST/PUT/PATCH/DELETE) tới API ngoài — mặc định cần người dùng phê duyệt trước khi chạy. "
                     + "Payload JSON: {\"method\":\"POST\",\"url\":\"https://…\",\"headers\":{…},\"body\":{…}}. "
                     + "Chỉ dùng khi người dùng yêu cầu rõ ràng việc ghi/gửi dữ liệu ra ngoài.",
                 (q, ct) => invoke("CALL_API_WRITE", q, ct)));
@@ -1454,9 +1454,10 @@ public class AgentOrchestrator : IAgentOrchestrator
                 "schedule_task",
                 "Tạo LỊCH TỰ ĐỘNG theo yêu cầu người dùng — CẦN người dùng phê duyệt trước khi tạo. "
                     + "Payload JSON: {\"name\":\"Báo cáo sáng\",\"prompt\":\"nội dung chạy mỗi lần\",\"kind\":\"interval|daily|weekly|once\","
-                    + "\"intervalMinutes\":30,\"timeOfDayUtc\":\"01:00\",\"dayOfWeek\":1,\"runAtUtc\":\"2026-09-15T01:00:00Z\",\"runMode\":\"agent|completion\"}. "
+                    + "\"intervalMinutes\":30,\"timeOfDayUtc\":\"01:00\",\"dayOfWeek\":1,\"runAtUtc\":\"2026-09-15T01:00:00Z\",\"runMode\":\"agent|completion\",\"approveFutureRuns\":false}. "
                     + "GIỜ THEO UTC — Việt Nam = UTC+7 (8h sáng VN = 01:00 UTC). kind \"once\" = chạy đúng một lần lúc runAtUtc rồi tự tắt. "
-                    + "runMode \"agent\" cho phép lịch dùng tool (query CSDL, web…); \"completion\" là một lượt suy luận thuần.",
+                    + "runMode \"agent\" cho phép lịch dùng tool (query CSDL, web…); \"completion\" là một lượt suy luận thuần. "
+                    + "Chỉ đặt approveFutureRuns=true khi người dùng yêu cầu rõ ràng tự duyệt các lượt ghi CSDL/API sau này; mặc định false để từng lượt ghi chờ phê duyệt riêng.",
                 (q, ct) => invoke("SCHEDULE_CREATE", q, ct)));
         }
         if (ActionAllowed("SCHEDULE_LIST"))
@@ -1610,8 +1611,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                 (q, ct) => invoke("VALIDATE_PDFA", q, ct)));
         }
 
-        // External database agent (read-only). Two model-free tools, offered only
-        // when an operator enabled the feature (_dbQuery.IsEnabled) and the mapped
+        // External database agent tools, offered only when an operator enabled the
+        // feature (_dbQuery.IsEnabled) and the mapped
         // "DbQuery" permission is allowed. The agent first gets the relevant schema,
         // then writes its own read-only SQL and runs it; writes are refused here and
         // require a separate approval flow.
@@ -1630,7 +1631,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             tools.Add(new DelegatedActionTool(
                 "run_database_write",
                 "Đề xuất MỘT câu SQL GHI dữ liệu (INSERT/UPDATE/DELETE) trên cơ sở dữ liệu đã kết nối. "
-                    + "LUÔN cần người dùng phê duyệt; khi được duyệt, hệ thống sao lưu bảng liên quan RỒI mới thực thi. "
+                    + "Mặc định cần người dùng phê duyệt; khi được duyệt, hệ thống sao lưu bảng liên quan RỒI mới thực thi. "
                     + "Chỉ dùng khi người dùng yêu cầu thay đổi dữ liệu. Nhiều kết nối: thêm \"db=<tên>;\".",
                 (q, ct) => invoke("DBWRITE", q, ct)));
         }
@@ -1728,7 +1729,15 @@ public class AgentOrchestrator : IAgentOrchestrator
         var startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
         // Layer 1: Permission check (C3 Fix: map action name → tool name for correct RBAC)
         var toolNameForPermission = ActionToToolMap.TryGetValue(action, out var mapped) ? mapped : action;
-        var permResult = await _toolPermission.CanInvokeToolAsync(tenantId, userId, userRole, toolNameForPermission, ct);
+        var hasScheduledWriteGrant = options?.ScheduledTaskId is { } scheduledTaskId
+            && IsDatabaseOrApiWrite(action)
+            && await HasActiveScheduledWriteGrantAsync(scheduledTaskId, tenantId, userId, ct);
+        // The dedicated permission path bypasses ONLY interactive approval; it still
+        // checks role authorization and the normal rate limit before any write executes.
+        var permResult = hasScheduledWriteGrant
+            ? await _toolPermission.CanInvokeScheduledWriteAsync(tenantId, userId, userRole, toolNameForPermission, ct)
+            : await _toolPermission.CanInvokeToolAsync(tenantId, userId, userRole, toolNameForPermission, ct);
+
         if (!permResult.IsAllowed)
         {
             if (permResult.RequiresApproval)
@@ -1822,6 +1831,30 @@ public class AgentOrchestrator : IAgentOrchestrator
         Guid tenantId, Guid? userId, string userRole, string query, string action, AgentRequestOptions? options,
         CancellationToken ct, IList<ProducedFile>? fileSink = null)
         => _actionDispatcher.ExecuteAsync(tenantId, userId, userRole, query, action, options, ct, fileSink);
+
+    private static bool IsDatabaseOrApiWrite(string action) =>
+        action.Equals("DBWRITE", StringComparison.OrdinalIgnoreCase)
+        || action.Equals("CALL_API_WRITE", StringComparison.OrdinalIgnoreCase);
+
+    private Task<bool> HasActiveScheduledWriteGrantAsync(
+        Guid scheduleId, Guid tenantId, Guid? userId, CancellationToken ct)
+    {
+        if (userId is not { } ownerId) return Task.FromResult(false);
+        return HasActiveScheduledWriteGrantAsync(_dbContext, scheduleId, tenantId, ownerId, ct);
+    }
+
+    internal static Task<bool> HasActiveScheduledWriteGrantAsync(
+        LmKitOmniApi.Infrastructure.Data.HermesDbContext dbContext,
+        Guid scheduleId,
+        Guid tenantId,
+        Guid userId,
+        CancellationToken ct)
+        => dbContext.ScheduledTasks.AnyAsync(task => task.Id == scheduleId
+            && task.TenantId == tenantId
+            && task.UserId == userId
+            && task.Enabled
+            && task.ApproveFutureRuns
+            && task.RunMode == LmKitOmniApi.Application.Schedules.ScheduledTaskRules.AgentRunMode, ct);
 
     /// <summary>
     /// Executes an approved action without repeating the approval check, while still
@@ -1995,12 +2028,16 @@ public class AgentOrchestrator : IAgentOrchestrator
         Guid sessionId,
         CancellationToken ct)
     {
-        var boundAgentId = await dbContext.ChatSessions
+        var sessionScope = await dbContext.ChatSessions
             .AsNoTracking()
             .Where(session => session.Id == sessionId && session.TenantId == tenantId)
-            .Select(session => session.CustomAgentId)
+            .Select(session => new { session.CustomAgentId, session.ScheduledTaskId })
             .FirstOrDefaultAsync(ct);
-        if (boundAgentId is not Guid customAgentId) return null;
+        if (sessionScope is null) return null;
+        if (sessionScope.CustomAgentId is not Guid customAgentId)
+            return sessionScope.ScheduledTaskId is { } scheduleId
+                ? new AgentRequestOptions { ScheduledTaskId = scheduleId }
+                : null;
 
         // Same visibility rule the chat path applies when binding an agent to a turn
         // (owner, or shared with the tenant).
@@ -2023,7 +2060,8 @@ public class AgentOrchestrator : IAgentOrchestrator
                 || allowedTools.Contains("SearchWeb", StringComparer.OrdinalIgnoreCase),
             AllowedTools = allowedTools,
             KnowledgeDocumentIds = LmKitOmniApi.Application.CustomAgents.CustomAgentRules
-                .ParseDocumentIdsCsv(agent.KnowledgeDocumentIdsCsv)
+                .ParseDocumentIdsCsv(agent.KnowledgeDocumentIdsCsv),
+            ScheduledTaskId = sessionScope.ScheduledTaskId
         };
     }
 

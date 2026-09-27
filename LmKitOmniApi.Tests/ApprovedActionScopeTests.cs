@@ -443,7 +443,68 @@ public sealed class ApprovedActionScopeTests : IDisposable
         Assert.False(DispatcherWouldAllow("PYTHON", options));
     }
 
-    // ── 3. Unscoped turns keep behaving exactly as before ──
+    // ── 3. Schedule write grants are owner-, tenant-, and state-scoped ──
+
+    [Fact]
+    public async Task ScheduledWriteGrant_RequiresMatchingOwnerTenantEnabledGrantAndAgentMode()
+    {
+        var task = new ScheduledTask
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            UserId = _userId,
+            Name = "Granted schedule",
+            Prompt = "Update rows",
+            RunMode = LmKitOmniApi.Application.Schedules.ScheduledTaskRules.AgentRunMode,
+            Enabled = true,
+            ApproveFutureRuns = true,
+            NextRunUtc = DateTime.UtcNow.AddHours(1)
+        };
+        _db.ScheduledTasks.Add(task);
+        await _db.SaveChangesAsync();
+
+        var isGranted = () => AgentOrchestrator.HasActiveScheduledWriteGrantAsync(
+            _db, task.Id, _tenantId, _userId, CancellationToken.None);
+
+        Assert.True(await isGranted());
+        Assert.False(await AgentOrchestrator.HasActiveScheduledWriteGrantAsync(
+            _db, task.Id, _tenantId, Guid.NewGuid(), CancellationToken.None));
+        Assert.False(await AgentOrchestrator.HasActiveScheduledWriteGrantAsync(
+            _db, task.Id, Guid.NewGuid(), _userId, CancellationToken.None));
+
+        task.Enabled = false;
+        await _db.SaveChangesAsync();
+        Assert.False(await isGranted());
+        task.Enabled = true;
+        task.ApproveFutureRuns = false;
+        await _db.SaveChangesAsync();
+        Assert.False(await isGranted());
+        task.ApproveFutureRuns = true;
+        task.RunMode = LmKitOmniApi.Application.Schedules.ScheduledTaskRules.CompletionRunMode;
+        await _db.SaveChangesAsync();
+        Assert.False(await isGranted());
+    }
+
+    // ── 4. Unscoped turns keep behaving exactly as before ──
+
+    [Fact]
+    public async Task ApprovedAction_DoesNotGainScheduleGrant_WhenOnlyLiveSessionHasIt()
+    {
+        var taskId = Guid.NewGuid();
+        var approvalId = SeedApproval(agent: null, snapshotScope: null);
+        var sessionId = await _db.TaskApprovals
+            .Where(approval => approval.Id == approvalId)
+            .Select(approval => approval.ChatSessionId)
+            .SingleAsync();
+        var session = await _db.ChatSessions.SingleAsync(row => row.Id == sessionId);
+        session.ScheduledTaskId = taskId;
+        await _db.SaveChangesAsync();
+
+        var options = await AgentOrchestrator.ResolveApprovedActionOptionsAsync(
+            _db, _tenantId, _userId, approvalId, CancellationToken.None);
+
+        Assert.Null(options?.ScheduledTaskId);
+    }
 
     [Fact]
     public async Task ApprovedAction_StaysUnscoped_WhenTheSessionHasNoBoundAgent()

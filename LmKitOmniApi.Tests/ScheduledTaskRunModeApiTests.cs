@@ -64,6 +64,83 @@ public sealed class ScheduledTaskRunModeApiTests : IClassFixture<LmKitApiFactory
     }
 
     [Fact]
+    public async Task Create_WithTenMinuteIntervalAndFutureWriteOptIn_IsAccepted()
+    {
+        var client = await ClientAsync();
+        var name = $"API→DB {Guid.NewGuid():N}"[..30];
+        var created = await client.PostAsJsonAsync("/api/schedules", new
+        {
+            name,
+            prompt = "Lấy dữ liệu API và chuẩn bị INSERT vào CSDL.",
+            runMode = "agent",
+            approveFutureRuns = true,
+            scheduleKind = "interval",
+            intervalMinutes = 10
+        });
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var dto = await created.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(dto.GetProperty("approveFutureRuns").GetBoolean());
+
+        var page = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/schedules?search={Uri.EscapeDataString(name)}");
+        var row = Assert.Single(page.GetProperty("items").EnumerateArray().ToArray());
+        Assert.True(row.GetProperty("approveFutureRuns").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Update_ClearingFutureWriteOptInRevokesIt()
+    {
+        var client = await ClientAsync();
+        var name = $"Revoke grant {Guid.NewGuid():N}"[..30];
+        var create = await client.PostAsJsonAsync("/api/schedules", new
+        {
+            name,
+            prompt = "Kiểm tra trạng thái đơn hàng.",
+            runMode = "agent",
+            approveFutureRuns = true,
+            scheduleKind = "interval",
+            intervalMinutes = 30
+        });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var created = await create.Content.ReadFromJsonAsync<JsonElement>();
+        var id = created.GetProperty("id").GetString();
+        Assert.NotNull(id);
+
+        var update = await client.PutAsJsonAsync($"/api/schedules/{id}", new
+        {
+            name,
+            prompt = "Kiểm tra trạng thái đơn hàng.",
+            runMode = "agent",
+            approveFutureRuns = false,
+            scheduleKind = "interval",
+            intervalMinutes = 30,
+            enabled = true
+        });
+
+        Assert.Equal(HttpStatusCode.NoContent, update.StatusCode);
+        var page = await client.GetFromJsonAsync<JsonElement>($"/api/schedules?search={Uri.EscapeDataString(name)}");
+        var row = Assert.Single(page.GetProperty("items").EnumerateArray().ToArray());
+        Assert.False(row.GetProperty("approveFutureRuns").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Create_WithFutureWriteOptInAndCompletionMode_Is400()
+    {
+        var client = await ClientAsync();
+        var created = await client.PostAsJsonAsync("/api/schedules", new
+        {
+            name = $"Invalid grant {Guid.NewGuid():N}"[..30],
+            prompt = "x",
+            runMode = "completion",
+            approveFutureRuns = true,
+            scheduleKind = "daily",
+            timeOfDayMinutes = 60
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, created.StatusCode);
+    }
+
+    [Fact]
     public async Task Create_WithUnknownRunMode_Is400()
     {
         var client = await ClientAsync();

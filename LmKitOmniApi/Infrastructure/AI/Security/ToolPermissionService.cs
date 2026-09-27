@@ -67,6 +67,12 @@ public class ToolPermissionService : IToolPermissionService
         }
     };
 
+    // Approval can be bypassed only by the explicit active-schedule grant for these writes.
+    private static readonly HashSet<string> ScheduledWriteTools = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "DbWrite", "CallApiWrite"
+    };
+
     // Tools that require human approval before execution
     private static readonly HashSet<string> ApprovalRequiredTools = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -146,7 +152,21 @@ public class ToolPermissionService : IToolPermissionService
         _redis = redis?.GetDatabase();
     }
 
-    public async Task<ToolPermissionResult> CanInvokeToolAsync(Guid tenantId, Guid? userId, string userRole, string toolName, CancellationToken ct = default)
+    public Task<ToolPermissionResult> CanInvokeToolAsync(
+        Guid tenantId, Guid? userId, string userRole, string toolName, CancellationToken ct = default)
+        => EvaluatePermissionAsync(tenantId, userId, userRole, toolName, bypassApproval: false, ct);
+
+    public Task<ToolPermissionResult> CanInvokeScheduledWriteAsync(
+        Guid tenantId, Guid? userId, string userRole, string toolName, CancellationToken ct = default)
+    {
+        if (!ScheduledWriteTools.Contains(toolName))
+            return Task.FromResult(ToolPermissionResult.Deny("Scheduled approval bypass is limited to database/API write tools."));
+
+        return EvaluatePermissionAsync(tenantId, userId, userRole, toolName, bypassApproval: true, ct);
+    }
+
+    private async Task<ToolPermissionResult> EvaluatePermissionAsync(
+        Guid tenantId, Guid? userId, string userRole, string toolName, bool bypassApproval, CancellationToken ct)
     {
         // Check 1: Role-based permission
         if (!IsToolAllowedForRole(userRole, toolName))
@@ -157,7 +177,7 @@ public class ToolPermissionService : IToolPermissionService
         }
 
         // Check 2: Approval required?
-        if (ApprovalRequiredTools.Contains(toolName))
+        if (!bypassApproval && ApprovalRequiredTools.Contains(toolName))
         {
             _logger.LogInformation("⚠️ Tool '{Tool}' requires human approval (User: {User})", toolName, userId);
             return ToolPermissionResult.NeedApproval();

@@ -51,7 +51,7 @@ public sealed class ScheduledTask
     [MaxLength(20)]
     public string ScheduleKind { get; set; } = "daily";
 
-    /// <summary>interval kind: minutes between runs (min 15).</summary>
+    /// <summary>interval kind: minutes between runs (min 10).</summary>
     public int? IntervalMinutes { get; set; }
 
     /// <summary>daily/weekly kinds: minutes after midnight UTC (0..1439).</summary>
@@ -61,6 +61,16 @@ public sealed class ScheduledTask
     public int? DayOfWeek { get; set; }
 
     public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Explicit, revocable grant for this schedule only: allow DB/API write actions
+    /// in later agent runs without asking again. False by default; ordinary HITL
+    /// approvals remain required unless the owner opts in.
+    /// </summary>
+    public bool ApproveFutureRuns { get; set; }
+
+    /// <summary>Latest persisted agent run for this task, for direct progress/detail navigation.</summary>
+    public Guid? LastAgentRunId { get; set; }
 
     public DateTime NextRunUtc { get; set; }
 

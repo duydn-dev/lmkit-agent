@@ -338,6 +338,9 @@ namespace LmKitOmniApi.Migrations
                     b.Property<Guid?>("ProjectId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("ScheduledTaskId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Summary")
                         .HasColumnType("text");
 
@@ -874,6 +877,9 @@ namespace LmKitOmniApi.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("ApproveFutureRuns")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid?>("CustomAgentId")
                         .HasColumnType("uuid");
 
@@ -893,6 +899,9 @@ namespace LmKitOmniApi.Migrations
                     b.Property<string>("LastError")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("LastAgentRunId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime?>("LastRunUtc")
                         .HasColumnType("timestamp with time zone");

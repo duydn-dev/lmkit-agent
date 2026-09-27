@@ -63,4 +63,19 @@ public class PendingApprovalDto
     /// <see cref="IsChatSession"/>.
     /// </summary>
     public string ChatSessionTitle { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The agent run this approval is gating, resolved to the run that is CURRENTLY parked:
+    /// the newest non-terminal (<c>Running</c> / <c>AwaitingApproval</c>) run on the same
+    /// chat session, falling back to the newest run of any status. Null for approvals that
+    /// were not raised inside the agent-run substrate (an ordinary chat turn, a computer-use
+    /// gate) — those have no run detail to deep-link to.
+    ///
+    /// <para><b>Why not the approval row.</b> <c>TaskApproval</c> does not know its run; the
+    /// pairing lives on <c>AgentRun.ChatSessionId</c>, which the approval already carries.
+    /// Resolving per request (instead of adding a column) keeps the schema untouched and
+    /// follows the run forward: a resumed run that gates AGAIN on a NEW approval still
+    /// points back at the same run, which is exactly what a "xem chi tiết" link wants.</para>
+    /// </summary>
+    public Guid? AgentRunId { get; set; }
 }

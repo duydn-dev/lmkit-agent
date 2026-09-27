@@ -54,6 +54,7 @@ public sealed class ScheduleToolService
             Prompt = request.Prompt,
             RunMode = request.RunMode,
             CustomAgentId = request.CustomAgentId,
+            ApproveFutureRuns = request.ApproveFutureRuns,
             DeliveryWebhookUrl = request.DeliveryWebhookUrl,
             ScheduleKind = request.Kind,
             IntervalMinutes = request.IntervalMinutes,
@@ -147,7 +148,7 @@ public sealed class ScheduleToolService
     private sealed record CreateRequest(
         string Name, string Prompt, string Kind, string RunMode,
         int? IntervalMinutes, int? TimeOfDayMinutes, int? DayOfWeek, DateTime? RunAtUtc,
-        Guid? CustomAgentId, string? DeliveryWebhookUrl);
+        Guid? CustomAgentId, bool ApproveFutureRuns, string? DeliveryWebhookUrl);
 
     private static (CreateRequest? Request, string? Error) ParseCreateInput(string input)
     {
@@ -208,12 +209,14 @@ public sealed class ScheduleToolService
                 customAgentId = parsedAgent;
             }
 
+            var approveFutureRuns = root.TryGetProperty("approveFutureRuns", out var approveElement)
+                && approveElement.ValueKind == JsonValueKind.True;
             var webhook = GetString(root, "deliveryWebhookUrl");
 
             return (new CreateRequest(
                 name.Trim(), prompt.Trim(), kind, runMode,
                 interval, timeOfDayMinutes, dayOfWeek, runAtUtc,
-                customAgentId, string.IsNullOrWhiteSpace(webhook) ? null : webhook.Trim()), null);
+                customAgentId, approveFutureRuns, string.IsNullOrWhiteSpace(webhook) ? null : webhook.Trim()), null);
         }
         catch (JsonException)
         {

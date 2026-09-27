@@ -49,4 +49,7 @@ public sealed record AgentRequestOptions
     /// registration is active with a present file; otherwise it is a silent no-op.
     /// </summary>
     public Guid? LoraAdapterId { get; init; }
+
+    /// <summary>Schedule identity used only to re-check an explicit, revocable write grant.</summary>
+    public Guid? ScheduledTaskId { get; init; }
 }

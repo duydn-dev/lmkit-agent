@@ -9,8 +9,14 @@ public interface IToolPermissionService
 {
     /// <summary>Check if a user can invoke a specific tool.</summary>
     Task<ToolPermissionResult> CanInvokeToolAsync(Guid tenantId, Guid? userId, string userRole, string toolName, CancellationToken ct = default);
-    
-    /// <summary>Record a tool invocation for audit and rate limiting.</summary>
+
+    /// <summary>
+    /// Check RBAC and rate limits for a scheduled DB/API write whose active schedule grant
+    /// has already been verified. This bypasses only the interactive approval requirement.
+    /// </summary>
+    Task<ToolPermissionResult> CanInvokeScheduledWriteAsync(Guid tenantId, Guid? userId, string userRole, string toolName, CancellationToken ct = default);
+
+        /// <summary>Record a tool invocation for audit and rate limiting.</summary>
     Task RecordToolInvocationAsync(Guid tenantId, Guid? userId, string toolName, string? parameters = null, CancellationToken ct = default);
     
     /// <summary>Get all allowed tools for a user role.</summary>

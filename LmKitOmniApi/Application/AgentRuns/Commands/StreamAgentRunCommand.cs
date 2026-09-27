@@ -24,6 +24,9 @@ public sealed class StreamAgentRunCommand : IStreamRequest<string>
     /// </summary>
     public Guid? CustomAgentId { get; set; }
 
+    /// <summary>Internal schedule owner for scoped, revocable future-write grants.</summary>
+    public Guid? ScheduledTaskId { get; set; }
+
     /// <summary>Set by the handler once the AgentRun row exists, so the controller can echo it first.</summary>
     public Guid RunId { get; set; }
 }

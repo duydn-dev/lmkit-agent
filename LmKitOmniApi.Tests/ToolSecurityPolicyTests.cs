@@ -62,6 +62,34 @@ public class ToolSecurityPolicyTests
     }
 
     [Fact]
+    public async Task ScheduledWritePermission_BypassesOnlyApprovalAndStillEnforcesRoleAndQuota()
+    {
+        var permissions = new ToolPermissionService(NullLogger<ToolPermissionService>.Instance);
+        var tenantId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+
+        var normalWrite = await permissions.CanInvokeToolAsync(tenantId, userId, "User", "DbWrite");
+        Assert.True(normalWrite.RequiresApproval);
+
+        var bypassedWrite = await permissions.CanInvokeScheduledWriteAsync(tenantId, userId, "User", "DbWrite");
+        Assert.True(bypassedWrite.IsAllowed);
+
+        var guestWrite = await permissions.CanInvokeScheduledWriteAsync(tenantId, userId, "Guest", "DbWrite");
+        Assert.False(guestWrite.IsAllowed);
+        Assert.False(guestWrite.RequiresApproval);
+
+        var nonWrite = await permissions.CanInvokeScheduledWriteAsync(tenantId, userId, "User", "DbQuery");
+        Assert.False(nonWrite.IsAllowed);
+
+        for (var i = 0; i < 3; i++)
+            await permissions.RecordToolInvocationAsync(tenantId, userId, "DbWrite");
+
+        var overQuota = await permissions.CanInvokeScheduledWriteAsync(tenantId, userId, "User", "DbWrite");
+        Assert.False(overQuota.IsAllowed);
+        Assert.Contains("Rate limit", overQuota.DenialReason);
+    }
+
+    [Fact]
     public async Task ToolRateLimit_PersistsAcrossCallsOnSameService()
     {
         var permissions = new ToolPermissionService(NullLogger<ToolPermissionService>.Instance);

@@ -489,6 +489,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { useRoute } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
@@ -584,6 +585,7 @@ const resetApprovalGate = (): void => {
 // --- Past runs (right column) --------------------------------------------
 const confirm = useConfirm();
 const toast = useToast();
+const route = useRoute();
 
 // Getlist chuẩn server-side cho cột "Lần chạy gần đây" (alias giữ template cũ).
 const runList = useServerPage<AgentRunSummary>(ApiFactory.AGENT_RUNS.BASE, { pageSize: 10, errorLabel: 'danh sách lần chạy' });
@@ -1005,6 +1007,8 @@ const stopRun = (): void => {
 onMounted(() => {
   void loadRuns();
   void loadPersonaOptions();
+  const runId = typeof route.query.runId === 'string' ? route.query.runId : '';
+  if (runId) void openRun(runId);
 });
 
 onUnmounted(stopRun);

@@ -232,9 +232,13 @@ public class ScheduledTaskWorker : BackgroundService
             TenantId = task.TenantId,
             UserId = task.UserId,
             Goal = task.Prompt,
-            CustomAgentId = task.CustomAgentId
+            CustomAgentId = task.CustomAgentId,
+            ScheduledTaskId = task.Id
         };
 
+        string? interruptedStatus = null;
+        string? interruptedError = null;
+        Notification? interruptedNotification = null;
         try
         {
             using var runCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -255,30 +259,44 @@ public class ScheduledTaskWorker : BackgroundService
             // Máy đang kín chỗ suy luận: run đã được handler ghi Failed, nhưng với LỊCH thì
             // đây là tình huống tạm thời — Skipped để thử lại trong ~10 phút, không spam lỗi.
             _logger.LogWarning("Scheduled agent task {TaskId} skipped: {Reason}", task.Id, refused.Message);
-            return (SkippedStatus, Truncate(refused.Message, MaxErrorLength), null);
+            interruptedStatus = SkippedStatus;
+            interruptedError = Truncate(refused.Message, MaxErrorLength);
         }
         catch (OperationCanceledException)
         {
             _logger.LogWarning("Scheduled agent task {TaskId} timed out after {Timeout}", task.Id, MaxRunDuration);
-            return (FailedStatus,
-                Truncate($"Task run exceeded the {MaxRunDuration.TotalMinutes:0} minute limit.", MaxErrorLength),
-                BuildErrorNotification(task));
+            interruptedStatus = FailedStatus;
+            interruptedError = Truncate($"Task run exceeded the {MaxRunDuration.TotalMinutes:0} minute limit.", MaxErrorLength);
+            interruptedNotification = BuildErrorNotification(task);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Scheduled agent task {TaskId} failed", task.Id);
-            return (FailedStatus, Truncate(ex.Message, MaxErrorLength), BuildErrorNotification(task));
+            interruptedStatus = FailedStatus;
+            interruptedError = Truncate(ex.Message, MaxErrorLength);
+            interruptedNotification = BuildErrorNotification(task);
         }
 
-        // Đọc kết quả thật từ hàng AgentRun bằng một scope DbContext MỚI: dbContext của
-        // vòng lặp còn đang track ScheduledTask, và handler đã lưu bằng context của scope này.
+        if (command.RunId == Guid.Empty)
+            return (interruptedStatus ?? FailedStatus, interruptedError ?? "Agent run was not created.", interruptedNotification);
+
+        // Đọc hàng AgentRun bằng một scope DbContext MỚI: dbContext của vòng lặp còn đang
+        // track ScheduledTask, và handler đã lưu bằng context của scope này. Cũng đọc sau
+        // timeout/lỗi để lưu đúng liên kết của run thất bại hoặc bị bỏ qua.
         using var runReader = scopedServices.GetRequiredService<IServiceScopeFactory>().CreateScope();
         var runDb = runReader.ServiceProvider.GetRequiredService<HermesDbContext>();
         var run = await runDb.AgentRuns.AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == command.RunId, stoppingToken);
 
         if (run is null)
-            return (FailedStatus, "Agent run row was not persisted.", BuildErrorNotification(task));
+            return (interruptedStatus ?? FailedStatus, interruptedError ?? "Agent run row was not persisted.", interruptedNotification ?? BuildErrorNotification(task));
+
+        task.LastAgentRunId = run.Id;
+        if (interruptedStatus is not null)
+        {
+            if (interruptedNotification is not null) interruptedNotification.AgentRunId = run.Id;
+            return (interruptedStatus, interruptedError, interruptedNotification);
+        }
 
         if (run.Status == AgentRunStatuses.AwaitingApproval)
         {

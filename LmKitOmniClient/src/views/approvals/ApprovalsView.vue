@@ -78,6 +78,18 @@
                       <span class="text-gray-400">({{ absoluteTime(row.expiresAtUtc) }})</span>
                     </span>
                   </p>
+                  <!-- Deep link to the agent run this approval gates (Claude/Codex-style
+                       "watch what the agent is doing" before deciding). Hidden for the
+                       substrates with no run to show — an ordinary chat turn or a
+                       computer-use gate, where the API sends no agentRunId. -->
+                  <router-link
+                    v-if="row.agentRunId"
+                    :to="{ path: '/agent-mode', query: { runId: row.agentRunId } }"
+                    class="mt-2 inline-flex items-center gap-1.5 min-h-11 text-sm font-semibold text-blue-900 underline underline-offset-2 hover:text-blue-950 focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
+                    :aria-label="`Xem chi tiết lần chạy của tác vụ ${row.actionName}`"
+                  >
+                    <i class="pi pi-eye" aria-hidden="true"></i>Xem chi tiết
+                  </router-link>
                   <pre v-if="row.details" class="mt-2 text-xs text-gray-800 bg-gray-50 border border-gray-200 rounded-lg p-3 max-h-40 overflow-auto whitespace-pre-wrap break-words">{{ row.details }}</pre>
                 </div>
 
@@ -275,6 +287,8 @@ interface PendingApproval {
   chatSessionId?: string;
   isChatSession?: boolean;
   chatSessionTitle?: string;
+  /** The agent run this approval gates (null for plain-chat / computer-use approvals). */
+  agentRunId?: string | null;
 }
 
 /**
@@ -323,6 +337,7 @@ const toRow = (item: PendingApproval): ApprovalRow => ({
   chatSessionId: item.chatSessionId,
   isChatSession: item.isChatSession,
   chatSessionTitle: item.chatSessionTitle,
+  agentRunId: item.agentRunId,
   busyAction: null,
   error: '',
   done: false,

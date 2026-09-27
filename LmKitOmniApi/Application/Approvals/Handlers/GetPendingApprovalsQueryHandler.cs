@@ -1,5 +1,6 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using LmKitOmniApi.Application.AgentRuns;
 using LmKitOmniApi.Application.Approvals.Queries;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Infrastructure.Security;
@@ -51,6 +52,34 @@ public class GetPendingApprovalsQueryHandler : IRequestHandler<GetPendingApprova
             })
             .ToListAsync(cancellationToken);
 
+        // One batched lookup pairs every gated approval with its agent run. The run is the
+        // approval's own chat session's CURRENT run: still parked (Running / AwaitingApproval)
+        // when it is, else the most recent one — so the detail link follows the run forward
+        // when a resumed run gates again on a new approval. Rows are fetched newest-first and
+        // grouped in memory because EF cannot translate OrderBy inside GroupBy.
+        var sessionIds = rows.Select(t => t.ChatSessionId).Distinct().ToList();
+        Dictionary<Guid, Guid> runsBySession;
+        if (sessionIds.Count == 0)
+        {
+            runsBySession = [];
+        }
+        else
+        {
+            var runs = await _dbContext.AgentRuns
+                .AsNoTracking()
+                .Where(r => sessionIds.Contains(r.ChatSessionId))
+                .OrderByDescending(r => r.CreatedAtUtc)
+                .Select(r => new { r.Id, r.ChatSessionId, r.Status })
+                .ToListAsync(cancellationToken);
+
+            runsBySession = runs
+                .GroupBy(r => r.ChatSessionId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.FirstOrDefault(r => r.Status == AgentRunStatuses.Running || r.Status == AgentRunStatuses.AwaitingApproval)?.Id
+                        ?? g.First().Id);
+        }
+
         return rows.Select(t => new PendingApprovalDto
         {
             Id = t.Id,
@@ -60,7 +89,8 @@ public class GetPendingApprovalsQueryHandler : IRequestHandler<GetPendingApprova
             ExpiresAtUtc = t.ExpiresAtUtc,
             ChatSessionId = t.ChatSessionId,
             IsChatSession = t.IsChatSession,
-            ChatSessionTitle = t.IsChatSession ? (t.ChatSessionTitle ?? string.Empty) : string.Empty
+            ChatSessionTitle = t.IsChatSession ? (t.ChatSessionTitle ?? string.Empty) : string.Empty,
+            AgentRunId = runsBySession.TryGetValue(t.ChatSessionId, out var agentRunId) ? agentRunId : null
         }).ToList();
     }
 

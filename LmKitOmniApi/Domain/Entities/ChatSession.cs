@@ -22,6 +22,9 @@ public class ChatSession
     /// </summary>
     public bool IsAgentRun { get; set; }
 
+    /// <summary>Owning schedule for a scheduled AgentRun; null for manual runs.</summary>
+    public Guid? ScheduledTaskId { get; set; }
+
     /// <summary>
     /// True for a temporary ("Chat tạm thời") conversation — ChatGPT/Gemini style.
     /// The turns stream normally but no <see cref="ChatMessage"/> rows are persisted,
