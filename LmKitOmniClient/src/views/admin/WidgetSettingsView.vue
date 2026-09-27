@@ -87,24 +87,59 @@
           </p>
           <code class="mt-3 block break-all rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 font-mono text-sm">{{ createdKey }}</code>
           <div class="mt-4 flex items-center justify-between gap-3">
-            <button type="button" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium" @click="copyKey">{{ copied ? 'Đã sao chép' : 'Sao chép' }}</button>
+            <button type="button" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium" @click="copyKey">{{ copied ? 'Đã sao chép' : 'Sao chép khóa' }}</button>
             <button type="button" class="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white" @click="createdKey = null">Đã lưu khóa</button>
           </div>
+          <h3 class="mt-5 text-sm font-semibold text-gray-900">Mã nhúng đã kèm khóa</h3>
+          <p class="mt-1 text-xs text-gray-500">Copy nguyên đoạn dưới đây, dán vào trang web là chạy ngay (không cần thay gì).</p>
+          <pre class="mt-2 overflow-x-auto rounded-lg bg-gray-900 px-4 py-3 text-xs text-gray-100"><code>{{ widgetEmbedScript }}</code></pre>
+          <button type="button" class="mt-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700" @click="copyEmbed('script')">
+            {{ copiedField === 'script' ? 'Đã sao chép!' : 'Copy mã nhúng (đã kèm khóa)' }}
+          </button>
         </div>
       </div>
 
-      <!-- Embed snippet -->
+      <!-- Embed snippets: hai biến thể đều copy-paste-run. Khóa thật chỉ có trong
+           phiên sau khi bấm "Tạo khóa mới" (key show-once, BE chỉ lưu hash) —
+           trước đó snippet dùng chỗ giữ chỗ <WIDGET_KEY>. -->
       <section v-if="form.isActive" class="mt-8 rounded-xl border border-gray-200 bg-white p-5">
         <h2 class="text-sm font-semibold text-gray-900">Mã nhúng</h2>
-        <p class="mt-1 text-xs text-gray-500">Dán vào cuối <code>&lt;body&gt;</code> của trang web. Thay <code>&lt;WIDGET_KEY&gt;</code> bằng khóa đã tạo.</p>
-        <pre class="mt-2 overflow-x-auto rounded-lg bg-gray-900 px-4 py-3 text-xs text-gray-100"><code>&lt;script
-  src="{{ appOrigin }}/widget.js"
-  data-widget-key="&lt;WIDGET_KEY&gt;"&gt;
-&lt;/script&gt;</code></pre>
-        <p class="mt-2 text-xs text-gray-500">
-          Loader này gắn nút chat nổi (nút 60px, góc phải dưới), iframe 380×600 và tự nhận nút thu nhỏ của widget.
-          Nếu bạn tự nhúng iframe thô (không qua widget.js), hãy tự nghe sự kiện
-          <code>postMessage</code> <code>{ type: 'lmkit-close-widget' }</code> — nếu không, nút thu nhỏ trên widget sẽ không có tác dụng.
+        <p class="mt-1 text-xs text-gray-500">
+          Chọn một trong hai cách, dán vào trang web của bạn là chạy ngay. Nhớ thêm origin của trang đích vào
+          mục <strong>Origin được phép nhúng</strong> ở trên — thiếu origin widget sẽ bị chặn (403).
+        </p>
+
+        <!-- Cách 1: loader script (nút chat nổi) -->
+        <div class="mt-4">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h3 class="text-sm font-medium text-gray-900">Cách 1 — Nút chat nổi (khuyên dùng)</h3>
+            <button type="button" class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50" @click="copyEmbed('script')">
+              {{ copiedField === 'script' ? 'Đã sao chép!' : 'Copy' }}
+            </button>
+          </div>
+          <p class="mt-1 text-xs text-gray-500">Dán vào cuối <code>&lt;body&gt;</code>. Tự gắn nút chat tròn góc phải dưới + cửa sổ chat 380×600, hỗ trợ nút thu nhỏ.</p>
+          <pre class="mt-2 overflow-x-auto rounded-lg bg-gray-900 px-4 py-3 text-xs text-gray-100"><code>{{ widgetEmbedScript }}</code></pre>
+        </div>
+
+        <!-- Cách 2: iframe trực tiếp -->
+        <div class="mt-6">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h3 class="text-sm font-medium text-gray-900">Cách 2 — Nhúng iframe trực tiếp</h3>
+            <button type="button" class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50" @click="copyEmbed('html')">
+              {{ copiedField === 'html' ? 'Đã sao chép!' : 'Copy' }}
+            </button>
+          </div>
+          <p class="mt-1 text-xs text-gray-500">Cửa sổ chat cố định góc phải dưới, hiện sẵn khi tải trang (không có nút nổi). Khối listener đi kèm để nút thu nhỏ trong widget hoạt động.</p>
+          <pre class="mt-2 overflow-x-auto rounded-lg bg-gray-900 px-4 py-3 text-xs text-gray-100"><code>{{ widgetEmbedHtml }}</code></pre>
+        </div>
+
+        <p v-if="!embedKey" class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <i class="pi pi-info-circle mr-1" aria-hidden="true"></i>
+          Đoạn mã đang dùng chỗ giữ chỗ <code>&lt;WIDGET_KEY&gt;</code>. Bấm “Tạo khóa mới” ở trên để nhận khóa thật — mã nhúng sẽ tự điền sẵn khóa để copy-paste là chạy (khóa chỉ hiển thị một lần).
+        </p>
+        <p v-else class="mt-4 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800">
+          <i class="pi pi-check-circle mr-1" aria-hidden="true"></i>
+          Đoạn mã đã điền sẵn khóa của phiên này — copy và dán vào trang web là dùng được ngay.
         </p>
       </section>
     </div>
@@ -112,7 +147,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage } from '@/api/errors';
@@ -144,7 +179,39 @@ const saving = ref(false);
 const rotating = ref(false);
 const createdKey = ref<string | null>(null);
 const copied = ref(false);
+const copiedField = ref<'script' | 'html' | null>(null);
 const appOrigin = window.location.origin;
+// Khóa thô của lần rotate GẦN NHẤT trong phiên này (không persist, BE chỉ lưu
+// hash). Đưa thẳng vào snippet để copy-paste là chạy; hết phiên thì fallback về
+// chỗ giữ chỗ <WIDGET_KEY> vì thiết kế show-once không cho xem lại khóa.
+const embedKey = ref<string | null>(null);
+
+// `<` của thẻ script/iframe trong chuỗi JS viết dạng \u003C để trình phân tích
+// SFC không thấy thẻ đóng script (dạng chữ) và cắt khối script của file .vue.
+const widgetEmbedScript = computed(() => {
+  const key = embedKey.value ?? '<WIDGET_KEY>';
+  return `\u003Cscript
+  src="${appOrigin}/widget.js"
+  data-widget-key="${key}">\u003C/script>`;
+});
+
+const widgetEmbedHtml = computed(() => {
+  const key = embedKey.value ?? '<WIDGET_KEY>';
+  return `\u003Ciframe
+  id="cila-widget-frame"
+  src="${appOrigin}/widget/chat?key=${encodeURIComponent(key)}"
+  style="position:fixed;bottom:16px;right:16px;width:380px;height:560px;border:0;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.25);z-index:99999"
+  title="CILA - AI Agent"
+  allow="clipboard-write"></iframe>
+\u003Cscript>
+window.addEventListener('message', function (e) {
+  if (e.data && e.data.type === 'lmkit-close-widget') {
+    var f = document.getElementById('cila-widget-frame');
+    if (f) f.style.display = 'none';
+  }
+});
+\u003C/script>`;
+});
 
 const load = async () => {
   loadError.value = '';
@@ -197,6 +264,8 @@ const rotateKey = async () => {
     }
     const data = await response.json();
     createdKey.value = data.rawKey;
+    embedKey.value = data.rawKey;
+    copiedField.value = null;
   } catch (error) {
     actionError.value = errorMessage(error, 'Không thể tạo khóa widget mới.');
   } finally {
@@ -211,6 +280,17 @@ const copyKey = async () => {
     copied.value = true;
   } catch {
     /* clipboard unavailable — key stays visible for manual copy */
+  }
+};
+
+const copyEmbed = async (which: 'script' | 'html') => {
+  const text = which === 'script' ? widgetEmbedScript.value : widgetEmbedHtml.value;
+  try {
+    await navigator.clipboard.writeText(text);
+    copiedField.value = which;
+    setTimeout(() => { if (copiedField.value === which) copiedField.value = null; }, 2000);
+  } catch {
+    /* clipboard unavailable — snippet stays visible for manual copy */
   }
 };
 
