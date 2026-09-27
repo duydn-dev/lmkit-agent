@@ -144,9 +144,9 @@
               />
               <router-link
                 to="/approvals"
-                class="inline-flex items-center min-h-11 px-2 text-sm font-semibold text-blue-900 underline underline-offset-2 hover:text-blue-950 focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
+                class="inline-flex items-center gap-1.5 min-h-11 px-2 text-sm font-semibold text-blue-900 underline underline-offset-2 hover:text-blue-950 focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
               >
-                Mở trang phê duyệt
+                <i class="pi pi-check-square" aria-hidden="true"></i>Mở trang phê duyệt
               </router-link>
             </div>
 

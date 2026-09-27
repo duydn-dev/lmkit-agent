@@ -78,7 +78,7 @@
               :to="{ path: '/agent-mode', query: { runId: data.lastAgentRunId } }"
               class="mt-1 inline-flex min-h-8 items-center gap-1 text-xs font-semibold text-blue-800 underline underline-offset-2"
             >
-              Xem tiến trình
+              <i class="pi pi-eye" aria-hidden="true"></i>Xem tiến trình
             </router-link>
           </template>
         </Column>

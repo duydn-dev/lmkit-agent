@@ -97,12 +97,15 @@
       <section v-if="form.isActive" class="mt-8 rounded-xl border border-gray-200 bg-white p-5">
         <h2 class="text-sm font-semibold text-gray-900">Mã nhúng</h2>
         <p class="mt-1 text-xs text-gray-500">Dán vào cuối <code>&lt;body&gt;</code> của trang web. Thay <code>&lt;WIDGET_KEY&gt;</code> bằng khóa đã tạo.</p>
-        <pre class="mt-2 overflow-x-auto rounded-lg bg-gray-900 px-4 py-3 text-xs text-gray-100"><code>&lt;iframe
-  src="{{ appOrigin }}/widget/chat?key=&lt;WIDGET_KEY&gt;"
-  style="position:fixed;bottom:16px;right:16px;width:380px;height:560px;border:0;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.25);z-index:99999"
-  title="CILA - AI Agent"
-  allow="clipboard-write"&gt;
-&lt;/iframe&gt;</code></pre>
+        <pre class="mt-2 overflow-x-auto rounded-lg bg-gray-900 px-4 py-3 text-xs text-gray-100"><code>&lt;script
+  src="{{ appOrigin }}/widget.js"
+  data-widget-key="&lt;WIDGET_KEY&gt;"&gt;
+&lt;/script&gt;</code></pre>
+        <p class="mt-2 text-xs text-gray-500">
+          Loader này gắn nút chat nổi (nút 60px, góc phải dưới), iframe 380×600 và tự nhận nút thu nhỏ của widget.
+          Nếu bạn tự nhúng iframe thô (không qua widget.js), hãy tự nghe sự kiện
+          <code>postMessage</code> <code>{ type: 'lmkit-close-widget' }</code> — nếu không, nút thu nhỏ trên widget sẽ không có tác dụng.
+        </p>
       </section>
     </div>
   </div>

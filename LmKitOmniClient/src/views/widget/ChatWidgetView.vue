@@ -201,10 +201,18 @@ const applyBranding = async () => {
 };
 
 const closeWidget = () => {
-    if (window.parent && document.referrer) {
-        const parentOrigin = new URL(document.referrer).origin;
-        window.parent.postMessage({ type: 'lmkit-close-widget' }, parentOrigin);
+    if (window.parent === window.self) return;
+    // Origin của trang nhúng được tính TỪ TRONG iframe (ancestorOrigins/referrer),
+    // không bao giờ tin nội dung do trang cha gửi. Referrer có thể rỗng (nội bộ
+    // redirect), nên phải bắt exception của `new URL('')` — không thì nút thu nhỏ
+    // chết âm thầm ngay lần bấm đầu.
+    let parentOrigin: string | null = null;
+    try { parentOrigin = window.location.ancestorOrigins?.[0] ?? null; } catch { /* trình duyệt chặn */ }
+    if (!parentOrigin && document.referrer) {
+        try { parentOrigin = new URL(document.referrer).origin; } catch { parentOrigin = null; }
     }
+    if (!parentOrigin) return;
+    window.parent.postMessage({ type: 'lmkit-close-widget' }, parentOrigin);
 };
 
 const scrollToBottom = async () => {
