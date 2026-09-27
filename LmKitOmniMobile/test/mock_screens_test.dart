@@ -102,8 +102,7 @@ final _screens = <String, Widget Function()>{
       const SharedChatScreen(initialToken: 'demo-share-token'),
   'Chi tiết agent run': () =>
       const RunDetailScreen(runId: 'run-demo-0001', goal: 'Rà soát hợp đồng'),
-  'Canvas artifact': () =>
-      const CanvasPanelScreen(sessionId: 's-demo-0001'),
+  'Canvas artifact': () => const CanvasPanelScreen(sessionId: 's-demo-0001'),
   'AI Chat': () => const ChatScreen(),
 };
 
@@ -126,9 +125,11 @@ Future<void> _pumpScreen(
   Size size = _narrow,
   bool openDemoSession = false,
   String? screenKey,
+
   /// Phiên đăng nhập khác — dùng khi test cần một tenant **chưa có logo**
   /// riêng, để kiểm đúng nhánh mặc định (Quốc huy).
   AuthSession? session,
+
   /// Bộ ghi âm giả: plugin `record` cần micro thật nên không chạy trong test.
   VoiceTranscriber? recorder,
 }) async {
@@ -138,7 +139,9 @@ Future<void> _pumpScreen(
     ProviderScope(
       overrides: [
         bootstrapAppConfigProvider.overrideWithValue(_mockConfig),
-        authControllerProvider.overrideWith(() => _FakeAuth(session ?? _session)),
+        authControllerProvider.overrideWith(
+          () => _FakeAuth(session ?? _session),
+        ),
         if (recorder != null) voiceRecorderProvider.overrideWithValue(recorder),
         if (openDemoSession)
           pendingChatSessionProvider.overrideWith(_OpenSession.new),
@@ -366,13 +369,12 @@ void main() {
           container: container,
           child: MaterialApp(
             theme: AppTheme.material(AppTheme.forui()),
-            builder: (context, inner) =>
-                FTheme(data: AppTheme.forui(), child: inner ?? const SizedBox()),
+            builder: (context, inner) => FTheme(
+              data: AppTheme.forui(),
+              child: inner ?? const SizedBox(),
+            ),
             home: const Center(
-              child: TenantLogo(
-                path: MockFixtures.logoPath,
-                size: 40,
-              ),
+              child: TenantLogo(path: MockFixtures.logoPath, size: 40),
             ),
           ),
         ),
@@ -406,9 +408,7 @@ void main() {
         ProviderScope(
           overrides: [
             bootstrapAppConfigProvider.overrideWithValue(_mockConfig),
-            authControllerProvider.overrideWith(
-              () => _FakeAuth(_session),
-            ),
+            authControllerProvider.overrideWith(() => _FakeAuth(_session)),
           ],
           child: const LmKitOmniApp(),
         ),
@@ -461,24 +461,22 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('màn đăng nhập ở chế độ dữ liệu mẫu nói rõ đang là dữ liệu giả', (
-      tester,
-    ) async {
-      await _pumpScreen(tester, const LoginScreen());
+    testWidgets(
+      'màn đăng nhập ở chế độ dữ liệu mẫu nói rõ đang là dữ liệu giả',
+      (tester) async {
+        await _pumpScreen(tester, const LoginScreen());
 
-      expect(find.textContaining('dữ liệu mẫu'), findsWidgets);
-      expect(tester.takeException(), isNull);
-    });
+        expect(find.textContaining('dữ liệu mẫu'), findsWidgets);
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 
   /// Test trên chỉ có giá trị nếu các màn **thật sự** hiển thị dữ liệu mẫu —
   /// nếu không nó lại đang kiểm trạng thái rỗng như bộ test cũ.
   group('dữ liệu mẫu thực sự lên màn hình', () {
     const probes = <String, (Widget, String)>{
-      'Thông báo': (
-        NotificationsScreen(),
-        'Tài liệu đã xử lý xong',
-      ),
+      'Thông báo': (NotificationsScreen(), 'Tài liệu đã xử lý xong'),
       'Người dùng': (UsersScreen(), 'lan.pham@cila.gov.vn'),
       'API Keys': (ApiKeysScreen(), 'Tích hợp cổng dịch vụ công'),
       'Tenant Management': (
@@ -513,7 +511,9 @@ void main() {
       ),
     };
 
-    testWidgets('mọi danh sách then chốt hiện đúng nội dung mẫu', (tester) async {
+    testWidgets('mọi danh sách then chốt hiện đúng nội dung mẫu', (
+      tester,
+    ) async {
       for (final entry in probes.entries) {
         await _pumpScreen(
           tester,
@@ -558,8 +558,9 @@ void main() {
       expect(find.text('Tạo lịch tự động'), findsOneWidget);
       expect(
         find.byType(FTextField),
-        findsNWidgets(3),
-        reason: 'ba ô nhập phải là ô của hệ thiết kế (Forui), không phải Material',
+        findsNWidgets(4),
+        reason:
+            'các ô nhập phải là ô của hệ thiết kế (Forui), không phải Material',
       );
       expect(find.text('Loại lịch'), findsOneWidget);
 
@@ -567,13 +568,18 @@ void main() {
       // (trước đây ô này bị bỏ qua, luôn gửi `interval` khi tạo lịch).
       await tester.tap(find.text('Loại lịch'));
       await _drain(tester, rounds: 6);
-      await tester.tap(find.text('Chạy một lần'));
+      await tester.tap(find.text('Một lần (hẹn giờ)'));
       await _drain(tester, rounds: 6);
       expect(tester.takeException(), isNull);
       expect(
-        find.text('Chạy một lần'),
+        find.text('Một lần (hẹn giờ)'),
         findsWidgets,
         reason: 'chọn "Chạy một lần" xong hộp thoại không cập nhật',
+      );
+      expect(
+        find.text('Thời điểm chạy (giờ địa phương)'),
+        findsOneWidget,
+        reason: 'lịch một lần cần hiện ô nhập thời điểm hẹn',
       );
     });
 
@@ -667,14 +673,22 @@ void main() {
       // Chưa gõ gì và chưa đính kèm file thì nút gửi **khoá** (đúng `:disabled`
       // của web). Nếu ai đó bỏ điều kiện này, người dùng sẽ bấm một nút trông
       // như bấm được mà không có gì xảy ra.
-      expect(_sendEnabled(tester), isFalse, reason: 'nút gửi phải khoá khi trống');
+      expect(
+        _sendEnabled(tester),
+        isFalse,
+        reason: 'nút gửi phải khoá khi trống',
+      );
 
       await tester.enterText(
         find.byType(TextField),
         'Tóm tắt nhanh tài liệu mẫu',
       );
       await tester.pump();
-      expect(_sendEnabled(tester), isTrue, reason: 'có chữ mà nút gửi vẫn khoá');
+      expect(
+        _sendEnabled(tester),
+        isTrue,
+        reason: 'có chữ mà nút gửi vẫn khoá',
+      );
 
       await tester.tap(find.byTooltip('Gửi tin nhắn'));
       await _drain(tester, rounds: 10);
@@ -731,7 +745,11 @@ void main() {
         findsWidgets,
         reason: 'tenant có logo riêng mà không dùng logo đó',
       );
-      expect(_emblem, findsNothing, reason: 'có logo riêng thì không dùng Quốc huy');
+      expect(
+        _emblem,
+        findsNothing,
+        reason: 'có logo riêng thì không dùng Quốc huy',
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -745,7 +763,11 @@ void main() {
         screenKey: 'logo-emblem',
         session: _sessionWithoutLogo(),
       );
-      expect(_emblem, findsWidgets, reason: 'thiếu logo thì phải rơi về Quốc huy');
+      expect(
+        _emblem,
+        findsWidgets,
+        reason: 'thiếu logo thì phải rơi về Quốc huy',
+      );
       // Không được rơi về avatar chữ cái hay ô trống.
       expect(
         find.descendant(
@@ -762,35 +784,36 @@ void main() {
     /// đơn vị đã tải logo riêng (`hasLogo`) đi đường ảnh có Bearer, đơn vị chưa
     /// cấu hình rơi về Quốc huy. Cấu hình logo là **theo từng tenant**, nên một
     /// bên đổi không được kéo bên kia theo.
-    testWidgets('Tenant Management: logo theo từng tenant, chưa có thì Quốc huy', (
-      tester,
-    ) async {
-      await _pumpScreen(
-        tester,
-        const TenantsScreen(),
-        size: _phone,
-        screenKey: 'tenants-logo',
-      );
+    testWidgets(
+      'Tenant Management: logo theo từng tenant, chưa có thì Quốc huy',
+      (tester) async {
+        await _pumpScreen(
+          tester,
+          const TenantsScreen(),
+          size: _phone,
+          screenKey: 'tenants-logo',
+        );
 
-      expect(
-        find.text('Sở Tài nguyên và Môi trường tỉnh Bắc Ninh'),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(
-          of: find.byType(TenantLogo),
-          matching: find.byType(Image),
-        ),
-        findsOneWidget,
-        reason: 'đơn vị đã có logo mà không dựng ảnh',
-      );
-      expect(
-        _emblem,
-        findsOneWidget,
-        reason: 'đơn vị chưa cấu hình logo mà không rơi về Quốc huy',
-      );
-      expect(tester.takeException(), isNull);
-    });
+        expect(
+          find.text('Sở Tài nguyên và Môi trường tỉnh Bắc Ninh'),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: find.byType(TenantLogo),
+            matching: find.byType(Image),
+          ),
+          findsOneWidget,
+          reason: 'đơn vị đã có logo mà không dựng ảnh',
+        );
+        expect(
+          _emblem,
+          findsOneWidget,
+          reason: 'đơn vị chưa cấu hình logo mà không rơi về Quốc huy',
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
 
     /// Quản trị viên cấu hình logo **ngay trong hộp thoại sửa tenant**, và nhãn
     /// phải nói rõ để trống là dùng Quốc huy — nếu không, người dùng tưởng đơn vị
@@ -865,7 +888,11 @@ void main() {
           red++;
         }
       }
-      expect(opaque, greaterThan(0), reason: 'Quốc huy raster trong suốt hoàn toàn');
+      expect(
+        opaque,
+        greaterThan(0),
+        reason: 'Quốc huy raster trong suốt hoàn toàn',
+      );
       expect(
         red / opaque,
         greaterThan(0.3),
@@ -1074,9 +1101,9 @@ void main() {
 
       // Hồi quy: đích cuộn cũ được tính ở một frame mà nội dung còn dài hơn, nên
       // `animateTo` dừng NGOÀI đáy và cả khung chat trống trơn dù đã tải xong.
-      final position = tester.state<ScrollableState>(
-        find.byType(Scrollable).first,
-      ).position;
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
       expect(
         position.pixels,
         lessThanOrEqualTo(position.maxScrollExtent),

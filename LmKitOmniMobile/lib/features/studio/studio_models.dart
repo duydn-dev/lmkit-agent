@@ -1,5 +1,57 @@
 import '../chat/chat_models.dart' show ProducedFileModel;
 
+/// Parsers for the user-editable Scheduler time fields.
+class ScheduledTaskInput {
+  static int? parseTime(String value) {
+    final parts = value.trim().split(':');
+    if (parts.length != 2 ||
+        parts[0].isEmpty ||
+        parts[0].length > 2 ||
+        parts[1].length != 2 ||
+        !_digitsOnly(parts[0]) ||
+        !_digitsOnly(parts[1])) {
+      return null;
+    }
+    final hour = int.parse(parts[0]);
+    final minute = int.parse(parts[1]);
+    if (hour > 23 || minute > 59) return null;
+    return hour * 60 + minute;
+  }
+
+  /// Parses a wall-clock local time, rejecting DateTime's automatic date rollover.
+  static DateTime? parseLocalDateTime(String value) {
+    if (value.length != 16 ||
+        (value[10] != ' ' && value[10] != 'T') ||
+        value[4] != '-' ||
+        value[7] != '-' ||
+        value[13] != ':') {
+      return null;
+    }
+    final fields = [
+      value.substring(0, 4),
+      value.substring(5, 7),
+      value.substring(8, 10),
+      value.substring(11, 13),
+      value.substring(14, 16),
+    ];
+    if (fields.any((field) => !_digitsOnly(field))) return null;
+    final year = int.parse(fields[0]);
+    final month = int.parse(fields[1]);
+    final day = int.parse(fields[2]);
+    final hour = int.parse(fields[3]);
+    final minute = int.parse(fields[4]);
+    if (hour > 23 || minute > 59) return null;
+    final date = DateTime(year, month, day, hour, minute);
+    if (date.year != year || date.month != month || date.day != day) {
+      return null;
+    }
+    return date;
+  }
+
+  static bool _digitsOnly(String value) =>
+      value.codeUnits.every((code) => code >= 48 && code <= 57);
+}
+
 class CustomAgentModel {
   const CustomAgentModel({
     required this.id,
@@ -60,6 +112,10 @@ class ScheduledTaskModel {
     required this.enabled,
     required this.nextRunUtc,
     this.runMode = 'completion',
+    this.customAgentId,
+    this.approveFutureRuns = false,
+    this.lastAgentRunId,
+    this.deliveryWebhookUrl,
     this.intervalMinutes,
     this.timeOfDayMinutes,
     this.dayOfWeek,
@@ -74,6 +130,10 @@ class ScheduledTaskModel {
   final bool enabled;
   final DateTime? nextRunUtc;
   final String runMode;
+  final String? customAgentId;
+  final bool approveFutureRuns;
+  final String? lastAgentRunId;
+  final String? deliveryWebhookUrl;
   final int? intervalMinutes;
   final int? timeOfDayMinutes;
   final int? dayOfWeek;
@@ -89,6 +149,10 @@ class ScheduledTaskModel {
         enabled: json['enabled'] as bool? ?? false,
         nextRunUtc: _date(json['nextRunUtc']),
         runMode: json['runMode'] as String? ?? 'completion',
+        customAgentId: json['customAgentId']?.toString(),
+        approveFutureRuns: json['approveFutureRuns'] as bool? ?? false,
+        lastAgentRunId: json['lastAgentRunId']?.toString(),
+        deliveryWebhookUrl: json['deliveryWebhookUrl'] as String?,
         intervalMinutes: (json['intervalMinutes'] as num?)?.toInt(),
         timeOfDayMinutes: (json['timeOfDayMinutes'] as num?)?.toInt(),
         dayOfWeek: (json['dayOfWeek'] as num?)?.toInt(),

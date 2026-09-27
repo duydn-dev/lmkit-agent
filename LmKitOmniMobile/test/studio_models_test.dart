@@ -2,6 +2,45 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lmkit_omni_mobile/features/studio/studio_models.dart';
 
 void main() {
+  test('schedule đọc quyền grant, trạng thái và liên kết Agent Run', () {
+    final schedule = ScheduledTaskModel.fromJson({
+      'id': 'S1',
+      'name': 'Báo cáo sáng',
+      'prompt': 'Tổng hợp số liệu hôm qua.',
+      'scheduleKind': 'daily',
+      'enabled': true,
+      'nextRunUtc': '2026-09-27T01:00:00Z',
+      'runMode': 'agent',
+      'customAgentId': 'A1',
+      'approveFutureRuns': true,
+      'lastAgentRunId': 'R1',
+      'deliveryWebhookUrl': 'https://example.gov.vn/report',
+      'lastStatus': 'AwaitingApproval',
+      'lastError': null,
+    });
+
+    expect(schedule.runMode, 'agent');
+    expect(schedule.customAgentId, 'A1');
+    expect(schedule.approveFutureRuns, isTrue);
+    expect(schedule.lastAgentRunId, 'R1');
+    expect(schedule.deliveryWebhookUrl, 'https://example.gov.vn/report');
+    expect(schedule.lastStatus, 'AwaitingApproval');
+  });
+
+  test('schedule mặc định không cấp tự duyệt', () {
+    final schedule = ScheduledTaskModel.fromJson({
+      'id': 'S2',
+      'name': 'Nhắc việc',
+      'prompt': 'Nhắc kiểm tra hồ sơ.',
+      'scheduleKind': 'interval',
+      'enabled': true,
+      'nextRunUtc': '2026-09-27T01:00:00Z',
+    });
+
+    expect(schedule.approveFutureRuns, isFalse);
+    expect(schedule.lastAgentRunId, isNull);
+  });
+
   test('custom agent đọc công cụ và tài liệu ghim', () {
     final agent = CustomAgentModel.fromJson({
       'id': 'AG1',

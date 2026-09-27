@@ -281,6 +281,9 @@ class MockHttpAdapter implements HttpClientAdapter {
       if (path == '/api/schedules') {
         return _json(MockFixtures.createdSchedule(body: body));
       }
+      if (_has(r'^/api/schedules/[^/]+/toggle$', path)) {
+        return _json(const <String, dynamic>{});
+      }
       if (path == '/api/projects') {
         return _json(MockFixtures.createdProject(body: body));
       }
@@ -365,6 +368,9 @@ class MockHttpAdapter implements HttpClientAdapter {
     }
 
     if (method == 'PUT') {
+      if (_has(r'^/api/schedules/[^/]+$', path)) {
+        return _json(const <String, dynamic>{});
+      }
       if (path == '/api/user/custom-instructions') {
         return _json({
           'aboutUser': body['aboutUser'],

@@ -18,7 +18,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Trợ lý ảo - CILA AI'), findsOneWidget);
-    expect(find.textContaining('Trung tâm Thông tin lưu trữ'), findsOneWidget);
+    expect(find.text('Bộ Nông nghiệp và Môi trường'), findsOneWidget);
     expect(find.text('Đăng Nhập'), findsOneWidget);
     // Mỗi ô có **hai** chỗ cùng chữ: nhãn đứng trên ô và placeholder nằm trong
     // ô trống (giống `LoginView.vue` — `label` + `placeholder` trùng nội dung).

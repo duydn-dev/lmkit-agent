@@ -42,7 +42,11 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
     config = AppConfig.fromEnvironment().copyWith(useMockData: true);
     store = SecureSessionStore(const FlutterSecureStorage());
-    client = ApiClient(config: config, store: store, refresh: () async => false);
+    client = ApiClient(
+      config: config,
+      store: store,
+      refresh: () async => false,
+    );
     adapter = client.dio.httpClientAdapter as MockHttpAdapter;
   });
 
@@ -61,23 +65,26 @@ void main() {
     );
   });
 
-  test('auth: mọi tài khoản đều đăng nhập được, trả về thương hiệu tenant', () async {
-    final repository = AuthRepository(config: config, store: store);
-    final session = await repository.login(
-      email: 'chuyenvien@cila.gov.vn',
-      password: 'bat-ky-mat-khau-nao',
-    );
+  test(
+    'auth: mọi tài khoản đều đăng nhập được, trả về thương hiệu tenant',
+    () async {
+      final repository = AuthRepository(config: config, store: store);
+      final session = await repository.login(
+        email: 'chuyenvien@cila.gov.vn',
+        password: 'bat-ky-mat-khau-nao',
+      );
 
-    expect(session.accessToken, isNotEmpty);
-    expect(session.refreshToken, isNotEmpty);
-    expect(session.user.role, 'Admin');
-    expect(session.user.tenant?.agentName, MockFixtures.agentName);
-    expect(
-      session.user.tenant?.logoUrl,
-      isNotNull,
-      reason: 'thiếu logoUrl thì đầu mỗi câu trả lời mất avatar trợ lý',
-    );
-  });
+      expect(session.accessToken, isNotEmpty);
+      expect(session.refreshToken, isNotEmpty);
+      expect(session.user.role, 'Admin');
+      expect(session.user.tenant?.agentName, MockFixtures.agentName);
+      expect(
+        session.user.tenant?.logoUrl,
+        isNotNull,
+        reason: 'thiếu logoUrl thì đầu mỗi câu trả lời mất avatar trợ lý',
+      );
+    },
+  );
 
   test('auth: khôi phục phiên bằng /api/auth/me khi đã có token', () async {
     final repository = AuthRepository(config: config, store: store);
@@ -87,38 +94,45 @@ void main() {
     expect(restored!.user.email, isNotEmpty);
   });
 
-  test('chat: danh sách phiên và tin nhắn đọc được, có biểu đồ + tệp + nguồn', () async {
-    final repository = ChatRepository(client);
-    final sessions = await repository.listSessions();
-    expect(sessions, isNotEmpty);
-    expect(
-      sessions.map((session) => session.id),
-      contains(MockFixtures.sessionReportId),
-    );
+  test(
+    'chat: danh sách phiên và tin nhắn đọc được, có biểu đồ + tệp + nguồn',
+    () async {
+      final repository = ChatRepository(client);
+      final sessions = await repository.listSessions();
+      expect(sessions, isNotEmpty);
+      expect(
+        sessions.map((session) => session.id),
+        contains(MockFixtures.sessionReportId),
+      );
 
-    final messages = await repository.getMessages(
-      MockFixtures.sessionReportId,
-    );
-    expect(messages.length, greaterThanOrEqualTo(4));
-    expect(messages.first.isUser, isTrue);
-    expect(messages.any((message) => message.isAssistant), isTrue);
+      final messages = await repository.getMessages(
+        MockFixtures.sessionReportId,
+      );
+      expect(messages.length, greaterThanOrEqualTo(4));
+      expect(messages.first.isUser, isTrue);
+      expect(messages.any((message) => message.isAssistant), isTrue);
 
-    final answer = messages.firstWhere((message) => message.isAssistant);
-    // Marker của backend phải bị tách khỏi phần chữ hiển thị.
-    expect(answer.content, isNot(contains('[REASONING]')));
-    expect(answer.content, isNot(contains('[THINKING]')));
-    expect(answer.webUrls, isNotEmpty, reason: 'mất chip "Nguồn" trên giao diện');
-    expect(
-      answer.producedFiles,
-      isNotEmpty,
-      reason: 'mất thẻ tệp do agent tạo',
-    );
-    expect(
-      parseGenerativeContent(answer.content).charts,
-      isNotEmpty,
-      reason: 'biểu đồ <chart> phải dựng được trong bong bóng chat',
-    );
-  });
+      final answer = messages.firstWhere((message) => message.isAssistant);
+      // Marker của backend phải bị tách khỏi phần chữ hiển thị.
+      expect(answer.content, isNot(contains('[REASONING]')));
+      expect(answer.content, isNot(contains('[THINKING]')));
+      expect(
+        answer.webUrls,
+        isNotEmpty,
+        reason: 'mất chip "Nguồn" trên giao diện',
+      );
+      expect(
+        answer.producedFiles,
+        isNotEmpty,
+        reason: 'mất thẻ tệp do agent tạo',
+      );
+      expect(
+        parseGenerativeContent(answer.content).charts,
+        isNotEmpty,
+        reason: 'biểu đồ <chart> phải dựng được trong bong bóng chat',
+      );
+    },
+  );
 
   test('chat: tìm kiếm phiên lọc đúng theo tiêu đề', () async {
     final repository = ChatRepository(client);
@@ -167,8 +181,69 @@ void main() {
     expect(runs, isNotEmpty);
     final detail = await repository.agentRun('run-demo-0001');
     expect(detail.goal, isNotEmpty);
-    expect(detail.steps, isNotEmpty, reason: 'màn chi tiết run cần log từng bước');
+    expect(
+      detail.steps,
+      isNotEmpty,
+      reason: 'màn chi tiết run cần log từng bước',
+    );
   });
+
+  test(
+    'studio: hợp đồng tạo/sửa lịch dùng đúng endpoint và camelCase',
+    () async {
+      final repository = StudioRepository(client);
+      final runAtUtc = DateTime.utc(2026, 9, 27, 1);
+
+      final created = await repository.createSchedule(
+        name: '  Lịch tuần  ',
+        prompt: '  Tổng hợp báo cáo  ',
+        scheduleKind: 'weekly',
+        runMode: 'agent',
+        customAgentId: 'a-demo-legal',
+        approveFutureRuns: true,
+        deliveryWebhookUrl: 'https://example.gov.vn/report',
+        timeOfDayMinutes: 480,
+        dayOfWeek: 0,
+        runAtUtc: runAtUtc,
+      );
+      expect(created.runMode, 'agent');
+      expect(created.approveFutureRuns, isTrue);
+
+      final createRequest = adapter.requests.lastWhere(
+        (request) =>
+            request.method == 'POST' && request.uri.path == '/api/schedules',
+      );
+      final createBody = Map<String, dynamic>.from(createRequest.data as Map);
+      expect(createBody['name'], 'Lịch tuần');
+      expect(createBody['prompt'], 'Tổng hợp báo cáo');
+      expect(createBody['scheduleKind'], 'weekly');
+      expect(createBody['runMode'], 'agent');
+      expect(createBody['customAgentId'], 'a-demo-legal');
+      expect(createBody['approveFutureRuns'], isTrue);
+      expect(createBody['deliveryWebhookUrl'], 'https://example.gov.vn/report');
+      expect(createBody['timeOfDayMinutes'], 480);
+      expect(createBody['dayOfWeek'], 0);
+      expect(createBody['runAtUtc'], runAtUtc.toIso8601String());
+
+      await repository.updateSchedule(
+        id: 'sch-demo-0001',
+        name: 'Lịch ngày',
+        prompt: 'Báo cáo nhanh',
+        scheduleKind: 'daily',
+        runMode: 'completion',
+        timeOfDayMinutes: 60,
+      );
+      final updateRequest = adapter.requests.lastWhere(
+        (request) =>
+            request.method == 'PUT' &&
+            request.uri.path == '/api/schedules/sch-demo-0001',
+      );
+      final updateBody = Map<String, dynamic>.from(updateRequest.data as Map);
+      expect(updateBody['runMode'], 'completion');
+      expect(updateBody['approveFutureRuns'], isFalse);
+      expect(updateBody.containsKey('enabled'), isFalse);
+    },
+  );
 
   test('studio: agent tự hành và nghiên cứu trả về SSE đọc được', () async {
     final repository = StudioRepository(client);
@@ -216,44 +291,50 @@ void main() {
     expect(instructions.aboutUser, isNotEmpty);
   });
 
-  test('admin: tenant, người dùng, api key, audit, MCP, CSDL, LoRA, widget', () async {
-    final repository = AdminRepository(client);
+  test(
+    'admin: tenant, người dùng, api key, audit, MCP, CSDL, LoRA, widget',
+    () async {
+      final repository = AdminRepository(client);
 
-    final tenants = await repository.tenants();
-    expect(tenants, isNotEmpty);
-    expect(tenants.first.hasLogo, isTrue);
-    expect(await repository.tenantOptions(), isNotEmpty);
-    expect(await repository.mcpServers(), isNotEmpty);
-    expect(await repository.mcpCatalog(), isNotEmpty);
-    expect(await repository.databaseConnections(), isNotEmpty);
-    expect(await repository.loraAdapters(), isNotEmpty);
+      final tenants = await repository.tenants();
+      expect(tenants, isNotEmpty);
+      expect(tenants.first.hasLogo, isTrue);
+      expect(await repository.tenantOptions(), isNotEmpty);
+      expect(await repository.mcpServers(), isNotEmpty);
+      expect(await repository.mcpCatalog(), isNotEmpty);
+      expect(await repository.databaseConnections(), isNotEmpty);
+      expect(await repository.loraAdapters(), isNotEmpty);
 
-    final users = await repository.users();
-    expect(users.items, isNotEmpty);
-    expect(users.items.any((user) => user.isLockedOut), isTrue);
-    expect(users.items.any((user) => !user.isActive), isTrue);
+      final users = await repository.users();
+      expect(users.items, isNotEmpty);
+      expect(users.items.any((user) => user.isLockedOut), isTrue);
+      expect(users.items.any((user) => !user.isActive), isTrue);
 
-    final audit = await repository.auditLogs();
-    expect(audit.items, isNotEmpty);
-    expect(audit.items.first.action, isNotEmpty);
-    final facets = await repository.auditFacets();
-    expect(facets.actions, isNotEmpty);
+      final audit = await repository.auditLogs();
+      expect(audit.items, isNotEmpty);
+      expect(audit.items.first.action, isNotEmpty);
+      final facets = await repository.auditFacets();
+      expect(facets.actions, isNotEmpty);
 
-    final widget = await repository.widgetSettings();
-    expect(widget.allowedOrigins, isNotEmpty);
-    expect(widget.brandColor, isNotNull);
+      final widget = await repository.widgetSettings();
+      expect(widget.allowedOrigins, isNotEmpty);
+      expect(widget.brandColor, isNotNull);
 
-    expect(await repository.testDatabaseConnection('db-demo-0001'), isNotEmpty);
-    expect(await repository.rotateWidgetKey(), isNotEmpty);
-    expect(
-      await repository.mcpAuthorizeUrl('mcp-demo-0001'),
-      startsWith('https://'),
-    );
-    expect(
-      (await repository.mcpOAuthStatus('mcp-demo-0001')).connected,
-      isTrue,
-    );
-  });
+      expect(
+        await repository.testDatabaseConnection('db-demo-0001'),
+        isNotEmpty,
+      );
+      expect(await repository.rotateWidgetKey(), isNotEmpty);
+      expect(
+        await repository.mcpAuthorizeUrl('mcp-demo-0001'),
+        startsWith('https://'),
+      );
+      expect(
+        (await repository.mcpOAuthStatus('mcp-demo-0001')).connected,
+        isTrue,
+      );
+    },
+  );
 
   test('admin: phân trang người dùng và audit lọc đúng theo trang', () async {
     final repository = AdminRepository(client);
@@ -311,143 +392,178 @@ void main() {
     expect(bytes.length, greaterThan(1000));
   });
 
-  test('`DioImage` giải mã được logo thành ảnh thật (không rơi về nhãn dự phòng)', () async {
-    final provider = DioImage(
-      client.dio,
-      '${config.apiBaseUrl}${MockFixtures.logoPath}',
-    );
+  test(
+    '`DioImage` giải mã được logo thành ảnh thật (không rơi về nhãn dự phòng)',
+    () async {
+      final provider = DioImage(
+        client.dio,
+        '${config.apiBaseUrl}${MockFixtures.logoPath}',
+      );
 
-    final completer = Completer<ImageInfo>();
-    provider
-        .resolve(ImageConfiguration.empty)
-        .addListener(
-          ImageStreamListener(
-            (info, _) => completer.complete(info),
-            onError: (error, stack) => completer.completeError(error, stack),
-          ),
-        );
+      final completer = Completer<ImageInfo>();
+      provider
+          .resolve(ImageConfiguration.empty)
+          .addListener(
+            ImageStreamListener(
+              (info, _) => completer.complete(info),
+              onError: (error, stack) => completer.completeError(error, stack),
+            ),
+          );
 
-    final info = await completer.future.timeout(const Duration(seconds: 10));
-    expect(info.image.width, greaterThan(0));
-    expect(info.image.height, greaterThan(0));
-  });
+      final info = await completer.future.timeout(const Duration(seconds: 10));
+      expect(info.image.width, greaterThan(0));
+      expect(info.image.height, greaterThan(0));
+    },
+  );
 
-  test('lưới an toàn: không endpoint nào app gọi bị thiếu dữ liệu mẫu', () async {
-    final chat = ChatRepository(client);
-    final studio = StudioRepository(client);
-    final workspace = WorkspaceRepository(client);
-    final admin = AdminRepository(client);
-    final canvas = CanvasRepository(client);
-    final share = ShareRepository(buildDio(config));
-    final auth = AuthRepository(config: config, store: store);
+  test(
+    'lưới an toàn: không endpoint nào app gọi bị thiếu dữ liệu mẫu',
+    () async {
+      final chat = ChatRepository(client);
+      final studio = StudioRepository(client);
+      final workspace = WorkspaceRepository(client);
+      final admin = AdminRepository(client);
+      final canvas = CanvasRepository(client);
+      final share = ShareRepository(buildDio(config));
+      final auth = AuthRepository(config: config, store: store);
 
-    // Đúng những lời gọi mà các màn hình trong app thực hiện.
-    await auth.login(email: 'admin@cila.gov.vn', password: 'x');
-    await auth.restore();
+      // Đúng những lời gọi mà các màn hình trong app thực hiện.
+      await auth.login(email: 'admin@cila.gov.vn', password: 'x');
+      await auth.restore();
 
-    await chat.listSessions();
-    await chat.searchSessions('quan trắc');
-    await chat.getMessages(MockFixtures.sessionReportId);
-    final created = await chat.createSession();
-    await chat.renameSession(created.id, 'Đổi tên');
-    await chat.createShareLink(created.id);
-    await chat.revokeShareLink(created.id);
-    await chat.deleteSession(created.id);
+      await chat.listSessions();
+      await chat.searchSessions('quan trắc');
+      await chat.getMessages(MockFixtures.sessionReportId);
+      final created = await chat.createSession();
+      await chat.renameSession(created.id, 'Đổi tên');
+      await chat.createShareLink(created.id);
+      await chat.revokeShareLink(created.id);
+      await chat.deleteSession(created.id);
 
-    await studio.customAgents();
-    await studio.toolCatalog();
-    await studio.ownedDocuments();
-    await studio.createCustomAgent(name: 'a', personaPrompt: 'b');
-    await studio.updateCustomAgent(id: 'a-demo-0001', name: 'a', personaPrompt: 'b');
-    await studio.deleteCustomAgent('a-demo-new');
-    await studio.schedules();
-    await studio.createSchedule(name: 'n', prompt: 'p', scheduleKind: 'interval');
-    await studio.toggleSchedule('sch-demo-0001');
-    await studio.deleteSchedule('sch-demo-new');
-    await studio.agentRuns();
-    await studio.agentRun('run-demo-0001');
-    await studio.cancelAgentRun('run-demo-0002');
-    await studio.pendingApprovals();
-    await studio.approve('ap-demo-0001');
-    await studio.reject('ap-demo-0001');
-    await studio.apiKeys();
-    await studio.createApiKey(name: 'k', expiresInDays: 30);
-    await studio.revokeApiKey('key-demo-0003');
-    await studio.notifications(unreadOnly: true);
-    await studio.markNotificationRead('n-demo-0001');
-    await studio.markAllNotificationsRead();
-    await studio.analyzeText('văn bản');
-    await studio.classifyText('văn bản', const ['a', 'b']);
-    await studio.detectLanguage('văn bản');
-    await studio.extractKeywords('văn bản');
-    await studio.embeddings('văn bản');
-    await studio.analyzeVision('/api/files/x', 'mô tả');
-    await studio.ocrVision('/api/files/x');
-    await studio.classifyVision('/api/files/x', const ['a']);
-    await studio.removeVisionBackground('/api/files/x');
-    await studio.createContent('chủ đề');
+      await studio.customAgents();
+      await studio.toolCatalog();
+      await studio.ownedDocuments();
+      await studio.createCustomAgent(name: 'a', personaPrompt: 'b');
+      await studio.updateCustomAgent(
+        id: 'a-demo-0001',
+        name: 'a',
+        personaPrompt: 'b',
+      );
+      await studio.deleteCustomAgent('a-demo-new');
+      await studio.schedules();
+      await studio.createSchedule(
+        name: 'Lịch tuần',
+        prompt: 'Tổng hợp báo cáo',
+        scheduleKind: 'weekly',
+        runMode: 'agent',
+        customAgentId: 'a-demo-legal',
+        approveFutureRuns: true,
+        deliveryWebhookUrl: 'https://example.gov.vn/report',
+        timeOfDayMinutes: 480,
+        dayOfWeek: 0,
+        runAtUtc: DateTime.utc(2026, 9, 27, 1),
+      );
+      await studio.updateSchedule(
+        id: 'sch-demo-0001',
+        name: 'Lịch ngày',
+        prompt: 'Tổng hợp báo cáo',
+        scheduleKind: 'daily',
+        runMode: 'completion',
+        timeOfDayMinutes: 60,
+      );
+      await studio.toggleSchedule('sch-demo-0001');
+      await studio.deleteSchedule('sch-demo-new');
+      await studio.agentRuns();
+      await studio.agentRun('run-demo-0001');
+      await studio.cancelAgentRun('run-demo-0002');
+      await studio.pendingApprovals();
+      await studio.approve('ap-demo-0001');
+      await studio.reject('ap-demo-0001');
+      await studio.apiKeys();
+      await studio.createApiKey(name: 'k', expiresInDays: 30);
+      await studio.revokeApiKey('key-demo-0003');
+      await studio.notifications(unreadOnly: true);
+      await studio.markNotificationRead('n-demo-0001');
+      await studio.markAllNotificationsRead();
+      await studio.analyzeText('văn bản');
+      await studio.classifyText('văn bản', const ['a', 'b']);
+      await studio.detectLanguage('văn bản');
+      await studio.extractKeywords('văn bản');
+      await studio.embeddings('văn bản');
+      await studio.analyzeVision('/api/files/x', 'mô tả');
+      await studio.ocrVision('/api/files/x');
+      await studio.classifyVision('/api/files/x', const ['a']);
+      await studio.removeVisionBackground('/api/files/x');
+      await studio.createContent('chủ đề');
 
-    await workspace.projects();
-    await workspace.projectSessions(MockFixtures.sessionReportId);
-    await workspace.createProject(name: 'Dự án');
-    await workspace.updateProject('p-demo-0001', name: 'Dự án');
-    await workspace.deleteProject('p-demo-new');
-    await workspace.documents();
-    await workspace.deleteDocument('doc-demo-0004');
-    await workspace.memories();
-    await workspace.confirmMemory('mem-demo-0002');
-    await workspace.forgetMemory('mem-demo-0003');
-    await workspace.instructions();
-    await workspace.saveInstructions(aboutUser: 'a', responseStyle: 'b');
+      await workspace.projects();
+      await workspace.projectSessions(MockFixtures.sessionReportId);
+      await workspace.createProject(name: 'Dự án');
+      await workspace.updateProject('p-demo-0001', name: 'Dự án');
+      await workspace.deleteProject('p-demo-new');
+      await workspace.documents();
+      await workspace.deleteDocument('doc-demo-0004');
+      await workspace.memories();
+      await workspace.confirmMemory('mem-demo-0002');
+      await workspace.forgetMemory('mem-demo-0003');
+      await workspace.instructions();
+      await workspace.saveInstructions(aboutUser: 'a', responseStyle: 'b');
 
-    await admin.tenants();
-    await admin.tenantOptions();
-    await admin.createTenant(name: 'Tenant mới');
-    await admin.updateTenant(id: 'tenant-demo-0002', name: 'Sửa tên');
-    await admin.deleteTenant('tenant-demo-0002');
-    await admin.deleteTenantLogo('tenant-demo-0002');
-    await admin.mcpServers();
-    await admin.mcpCatalog();
-    await admin.saveMcpServer(name: 'n', url: 'https://x/sse');
-    await admin.deleteMcpServer('mcp-demo-0002');
-    await admin.ingestKnowledge(fileName: 'f.txt', content: 'nội dung');
-    await admin.queryKnowledge(query: 'câu hỏi');
-    await admin.databaseConnections();
-    await admin.saveDatabaseConnection(name: 'n', provider: 'PostgreSQL');
-    await admin.deleteDatabaseConnection('db-demo-0002');
-    await admin.reindexDatabaseConnection('db-demo-0001');
-    await admin.databaseSchema('db-demo-0001');
-    await admin.loraAdapters();
-    await admin.updateLoraAdapter(id: 'lora-demo-0001', name: 'n');
-    await admin.deleteLoraAdapter('lora-demo-0002');
-    await admin.assignLoraAdapter(adapterId: 'lora-demo-0001', agentId: 'a-1');
-    await admin.unassignLoraAdapter('a-1');
-    await admin.widgetSettings();
-    await admin.updateWidgetSettings(isActive: true, allowedOrigins: const []);
-    await admin.mcpOAuthStatus('mcp-demo-0001');
-    await admin.disconnectMcp('mcp-demo-0001');
-    await admin.users();
-    await admin.createUser(email: 'a@b.c', password: 'x', fullName: 'A');
-    await admin.updateUserRole('u-0002', 'Admin');
-    await admin.toggleUserStatus('u-0002');
-    await admin.auditLogs();
-    await admin.auditFacets();
+      await admin.tenants();
+      await admin.tenantOptions();
+      await admin.createTenant(name: 'Tenant mới');
+      await admin.updateTenant(id: 'tenant-demo-0002', name: 'Sửa tên');
+      await admin.deleteTenant('tenant-demo-0002');
+      await admin.deleteTenantLogo('tenant-demo-0002');
+      await admin.mcpServers();
+      await admin.mcpCatalog();
+      await admin.saveMcpServer(name: 'n', url: 'https://x/sse');
+      await admin.deleteMcpServer('mcp-demo-0002');
+      await admin.ingestKnowledge(fileName: 'f.txt', content: 'nội dung');
+      await admin.queryKnowledge(query: 'câu hỏi');
+      await admin.databaseConnections();
+      await admin.saveDatabaseConnection(name: 'n', provider: 'PostgreSQL');
+      await admin.deleteDatabaseConnection('db-demo-0002');
+      await admin.reindexDatabaseConnection('db-demo-0001');
+      await admin.databaseSchema('db-demo-0001');
+      await admin.loraAdapters();
+      await admin.updateLoraAdapter(id: 'lora-demo-0001', name: 'n');
+      await admin.deleteLoraAdapter('lora-demo-0002');
+      await admin.assignLoraAdapter(
+        adapterId: 'lora-demo-0001',
+        agentId: 'a-1',
+      );
+      await admin.unassignLoraAdapter('a-1');
+      await admin.widgetSettings();
+      await admin.updateWidgetSettings(
+        isActive: true,
+        allowedOrigins: const [],
+      );
+      await admin.mcpOAuthStatus('mcp-demo-0001');
+      await admin.disconnectMcp('mcp-demo-0001');
+      await admin.users();
+      await admin.createUser(email: 'a@b.c', password: 'x', fullName: 'A');
+      await admin.updateUserRole('u-0002', 'Admin');
+      await admin.toggleUserStatus('u-0002');
+      await admin.auditLogs();
+      await admin.auditFacets();
 
-    await canvas.artifacts();
-    await canvas.artifact(rootId: 'cv-demo-0001');
-    await canvas.versions('cv-demo-0001');
-    await canvas.create(content: 'nội dung');
-    await canvas.update(rootId: 'cv-demo-0001', content: 'nội dung');
-    await canvas.delete('cv-demo-0003');
+      await canvas.artifacts();
+      await canvas.artifact(rootId: 'cv-demo-0001');
+      await canvas.versions('cv-demo-0001');
+      await canvas.create(content: 'nội dung');
+      await canvas.update(rootId: 'cv-demo-0001', content: 'nội dung');
+      await canvas.delete('cv-demo-0003');
 
-    await share.fetch(MockFixtures.shareToken);
+      await share.fetch(MockFixtures.shareToken);
 
-    expect(
-      adapter.unmatched,
-      isEmpty,
-      reason:
-          'Thiếu dữ liệu mẫu (hoặc sai đường dẫn) cho: '
-          '${adapter.unmatched.join(', ')}',
-    );
-  });
+      expect(
+        adapter.unmatched,
+        isEmpty,
+        reason:
+            'Thiếu dữ liệu mẫu (hoặc sai đường dẫn) cho: '
+            '${adapter.unmatched.join(', ')}',
+      );
+    },
+  );
 }

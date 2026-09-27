@@ -59,6 +59,7 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
   String _research = '';
   final _researchQuery = TextEditingController();
   bool _loading = false, _researching = false;
+  bool _editingSchedule = false;
   CancelToken? _researchCancel;
 
   /// Trạng thái tab Runs: mục tiêu, agent tuỳ chọn, log tiến trình đang chạy.
@@ -299,26 +300,96 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
     await _loadAll();
   }
 
-  Future<void> _createSchedule() async {
-    final form = await _scheduleForm();
-    if (form == null) return;
+  Future<void> _createSchedule() => _editSchedule();
+
+  Future<void> _editSchedule({ScheduledTaskModel? task}) async {
+    if (_editingSchedule) return;
+    final form = await _scheduleForm(task: task);
+    if (form == null || !mounted) return;
+    setState(() {
+      _editingSchedule = true;
+      _error = null;
+    });
     try {
-      await _repo.createSchedule(
-        name: form.$1,
-        prompt: form.$2,
-        scheduleKind: form.$3,
-        intervalMinutes: form.$4,
-      );
+      final runAtUtc = form.runAtLocal == null
+          ? null
+          : DateTime.tryParse(form.runAtLocal!)?.toUtc();
+      if (task == null) {
+        await _repo.createSchedule(
+          name: form.name,
+          prompt: form.prompt,
+          scheduleKind: form.scheduleKind,
+          runMode: form.runMode,
+          customAgentId: form.customAgentId,
+          approveFutureRuns: form.approveFutureRuns,
+          deliveryWebhookUrl: form.deliveryWebhookUrl,
+          intervalMinutes: form.intervalMinutes,
+          timeOfDayMinutes: form.timeOfDayMinutes,
+          dayOfWeek: form.dayOfWeek,
+          runAtUtc: runAtUtc,
+        );
+      } else {
+        await _repo.updateSchedule(
+          id: task.id,
+          name: form.name,
+          prompt: form.prompt,
+          scheduleKind: form.scheduleKind,
+          runMode: form.runMode,
+          customAgentId: form.customAgentId,
+          approveFutureRuns: form.approveFutureRuns,
+          deliveryWebhookUrl: form.deliveryWebhookUrl,
+          intervalMinutes: form.intervalMinutes,
+          timeOfDayMinutes: form.timeOfDayMinutes,
+          dayOfWeek: form.dayOfWeek,
+          runAtUtc: runAtUtc,
+        );
+      }
       await _loadAll();
+      if (mounted) {
+        showAppSnack(
+          context,
+          task == null ? 'Đã tạo lịch.' : 'Đã cập nhật lịch.',
+        );
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = _message(error));
+    } finally {
+      if (mounted) setState(() => _editingSchedule = false);
+    }
+  }
+
+  Future<void> _deleteSchedule(ScheduledTaskModel task) async {
+    final confirmed = await confirmAppAction(
+      context,
+      title: 'Xoá lịch tự động',
+      message: 'Xoá lịch "${task.name}"? Lịch sẽ không còn được chạy.',
+    );
+    if (!confirmed) return;
+    try {
+      await _repo.deleteSchedule(task.id);
+      await _loadAll();
+      if (mounted) showAppSnack(context, 'Đã xoá lịch.');
     } catch (error) {
       if (mounted) setState(() => _error = _message(error));
     }
   }
 
+  Future<void> _openScheduleRun(ScheduledTaskModel task) async {
+    final runId = task.lastAgentRunId;
+    if (runId == null || runId.isEmpty) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => RunDetailScreen(runId: runId)),
+    );
+    await _loadAll();
+  }
+
   /// Bật/tắt lịch: cập nhật lạc quan để công tắc phản hồi tức thì; lỗi mạng
   /// hay lỗi validate (vd vượt giới hạn số lịch bật) thì trả trạng thái cũ và
   /// báo đúng lý do cho người dùng.
-  Future<void> _toggleSchedule(ScheduledTaskModel task, {required bool enable}) async {
+  Future<void> _toggleSchedule(
+    ScheduledTaskModel task, {
+    required bool enable,
+  }) async {
     if (task.enabled == enable) return;
     setState(() {
       _schedules = [
@@ -335,6 +406,10 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
               intervalMinutes: item.intervalMinutes,
               timeOfDayMinutes: item.timeOfDayMinutes,
               dayOfWeek: item.dayOfWeek,
+              customAgentId: item.customAgentId,
+              approveFutureRuns: item.approveFutureRuns,
+              lastAgentRunId: item.lastAgentRunId,
+              deliveryWebhookUrl: item.deliveryWebhookUrl,
               lastStatus: item.lastStatus,
               lastError: item.lastError,
             )
@@ -574,35 +649,58 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
       for (final task in _schedules)
         AppTile(
           title: Text(task.name),
+          onTap: task.lastAgentRunId == null
+              ? null
+              : () => _openScheduleRun(task),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
               // Loại lịch mô tả bằng tiếng Việt — người dùng đọc là hiểu.
               Text(
-                _scheduleKindLabel(task),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              Text(
-                task.prompt,
+                '${task.runMode == 'agent' ? 'Automation Agent' : 'Completion'} · ${_scheduleKindLabel(task)}',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
+              if (task.approveFutureRuns)
+                const Padding(
+                  padding: EdgeInsets.only(top: 3),
+                  child: Text(
+                    'Tự duyệt ghi CSDL/API đã bật',
+                    style: TextStyle(
+                      color: AppTheme.warning,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              Text(task.prompt, maxLines: 2, overflow: TextOverflow.ellipsis),
               // Mốc hẹn kế tiếp / kết quả lần cuối — biết lịch còn sống hay đã
               // ngừng mà không cần bấm vào.
-              Text(
-                task.enabled && task.nextRunUtc != null
-                    ? 'Lần chạy kế: ${_fmtNextRun(task.nextRunUtc!)}'
-                    : task.lastStatus == null
-                        ? 'Chưa chạy lần nào'
-                        : 'Lần cuối: ${_lastStatusLabel(task.lastStatus!)}${task.lastError == null ? '' : ' — ${task.lastError}'}',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppTheme.textMuted,
+              if (task.enabled && task.nextRunUtc != null)
+                Text(
+                  'Lần chạy kế: ${_fmtNextRun(task.nextRunUtc!)}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: AppTheme.textMuted),
+                )
+              else if (task.lastStatus == null)
+                Text(
+                  'Chưa chạy lần nào',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: AppTheme.textMuted),
                 ),
-              ),
+              if (task.lastStatus != null)
+                Text(
+                  'Lần cuối: ${_lastStatusLabel(task.lastStatus!)}${task.lastError == null ? '' : ' — ${task.lastError}'}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: AppTheme.textMuted),
+                ),
             ],
           ),
           prefix: Icon(
@@ -614,17 +712,32 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
           suffix: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                task.enabled ? 'Đang chạy' : 'Đã tắt',
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: task.enabled ? AppTheme.success : AppTheme.textMuted,
-                  fontWeight: FontWeight.w600,
-                ),
+              AppMenuButton(
+                tooltip: 'Thao tác lịch ${task.name}',
+                items: [
+                  AppMenuItem(
+                    'Chỉnh sửa lịch',
+                    () => _editSchedule(task: task),
+                  ),
+                  if (task.lastAgentRunId != null)
+                    AppMenuItem(
+                      'Mở lần chạy gần nhất',
+                      () => _openScheduleRun(task),
+                    ),
+                  AppMenuItem(
+                    'Xoá lịch',
+                    () => _deleteSchedule(task),
+                    destructive: true,
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              FSwitch(
-                value: task.enabled,
-                onChange: (value) => _toggleSchedule(task, enable: value),
+              const SizedBox(width: 4),
+              Tooltip(
+                message: task.enabled ? 'Lịch đang bật' : 'Lịch đang tắt',
+                child: FSwitch(
+                  value: task.enabled,
+                  onChange: (value) => _toggleSchedule(task, enable: value),
+                ),
               ),
             ],
           ),
@@ -635,8 +748,15 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
   /// Mô tả loại lịch bằng tiếng Việt, kèm chi tiết (khoảng cách / giờ hẹn /
   /// ngày trong tuần) — chỉ nhìn tile là biết lịch hoạt động thế nào.
   String _scheduleKindLabel(ScheduledTaskModel task) {
+    // Backend dùng DayOfWeek theo .NET: 0 = Chủ nhật, 6 = Thứ bảy.
     const days = [
-      'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ nhật',
+      'Chủ nhật',
+      'Thứ 2',
+      'Thứ 3',
+      'Thứ 4',
+      'Thứ 5',
+      'Thứ 6',
+      'Thứ 7',
     ];
     String hhmm(int minutes) =>
         '${(minutes ~/ 60).toString().padLeft(2, '0')}:${(minutes % 60).toString().padLeft(2, '0')}';
@@ -644,9 +764,9 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
       'interval' when task.intervalMinutes != null =>
         'Lặp mỗi ${task.intervalMinutes} phút',
       'daily' when task.timeOfDayMinutes != null =>
-        'Hằng ngày lúc ${hhmm(task.timeOfDayMinutes!)}',
+        'Hằng ngày lúc ${hhmm(task.timeOfDayMinutes!)} UTC',
       'weekly' when task.timeOfDayMinutes != null =>
-        'Hàng tuần: ${task.dayOfWeek != null && task.dayOfWeek! >= 1 && task.dayOfWeek! <= 7 ? days[task.dayOfWeek! - 1] : '?'} lúc ${hhmm(task.timeOfDayMinutes!)}',
+        'Hàng tuần: ${task.dayOfWeek != null && task.dayOfWeek! >= 0 && task.dayOfWeek! <= 6 ? days[task.dayOfWeek!] : '?'} lúc ${hhmm(task.timeOfDayMinutes!)} UTC',
       'once' => 'Chạy một lần',
       _ => task.scheduleKind,
     };
@@ -703,10 +823,8 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
                   : _agents
                         .firstWhere(
                           (agent) => agent.id == id,
-                          orElse: () => CustomAgentModel(
-                            id: id,
-                            name: 'Agent đã xoá',
-                          ),
+                          orElse: () =>
+                              CustomAgentModel(id: id, name: 'Agent đã xoá'),
                         )
                         .name,
               subtitleOf: (id) => id == null
@@ -903,75 +1021,290 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
     ],
   );
 
-  Future<(String, String, String, int?)?> _scheduleForm() async {
-    final name = TextEditingController(),
-        prompt = TextEditingController(),
-        interval = TextEditingController(text: '60');
-    // Loại lịch người dùng chọn; trước đây ô chọn bị bỏ qua và luôn gửi
-    // `interval`, nên chọn "Chạy một lần" xong vẫn tạo lịch theo khoảng thời gian.
-    var kind = 'interval';
+  Future<_ScheduleFormData?> _scheduleForm({ScheduledTaskModel? task}) async {
+    final name = TextEditingController(text: task?.name ?? '');
+    final prompt = TextEditingController(text: task?.prompt ?? '');
+    final interval = TextEditingController(
+      text: '${task?.intervalMinutes ?? 60}',
+    );
+    final time = TextEditingController(
+      text: _formatTime(task?.timeOfDayMinutes ?? 480),
+    );
+    final runAt = TextEditingController(
+      text: task?.scheduleKind != 'once' || task?.nextRunUtc == null
+          ? ''
+          : _formatLocalDateTime(task!.nextRunUtc!.toLocal()),
+    );
+    final webhook = TextEditingController(text: task?.deliveryWebhookUrl ?? '');
+    var kind = task?.scheduleKind ?? 'interval';
+    var runMode = task?.runMode == 'agent' ? 'agent' : 'completion';
+    String? customAgentId = task?.customAgentId;
+    var approveFutureRuns = task?.approveFutureRuns ?? false;
+    var dayOfWeek = task?.dayOfWeek ?? 1;
     // Lưu ý: nội dung hộp thoại **không được** dùng widget cần tổ tiên
     // `Material` (`TextField`, `DropdownButtonFormField`…). `FDialog` của Forui
     // không có `Material`, nên những widget đó ném lỗi "No Material widget
     // found" và cả form trắng xoá — dùng widget của hệ thiết kế ở đây.
-    final result = await showAppDialog<(String, String, String, int?)>(
+    var validationError = '';
+    final result = await showAppDialog<_ScheduleFormData>(
       context,
-      builder: (dialogContext) => AppDialog(
-        title: 'Tạo lịch tự động',
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AppTextField(
-              controller: name,
-              label: 'Tên',
-              autofocus: true,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AppDialog(
+          title: task == null ? 'Tạo lịch tự động' : 'Chỉnh sửa lịch',
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (validationError.isNotEmpty)
+                AppAlert(message: validationError, isError: true),
+              AppTextField(controller: name, label: 'Tên', autofocus: true),
+              AppTextField(controller: prompt, label: 'Prompt', maxLines: 4),
+              AppSelectTile<String>(
+                label: 'Loại lịch',
+                icon: Icons.event_repeat,
+                value: kind,
+                items: const ['interval', 'daily', 'weekly', 'once'],
+                labelOf: (value) => switch (value) {
+                  'interval' => 'Theo chu kỳ (phút)',
+                  'daily' => 'Hàng ngày',
+                  'weekly' => 'Hàng tuần',
+                  _ => 'Một lần (hẹn giờ)',
+                },
+                subtitleOf: (value) => switch (value) {
+                  'interval' => 'Tối thiểu 10 phút giữa hai lần chạy.',
+                  'daily' => 'Chạy một lần mỗi ngày theo giờ UTC.',
+                  'weekly' => 'Chạy mỗi tuần theo ngày và giờ UTC.',
+                  _ => 'Chạy đúng một lần rồi tự tắt.',
+                },
+                onChanged: (value) => setDialogState(() => kind = value),
+              ),
+              AppSelectTile<String>(
+                label: 'Chế độ chạy',
+                icon: Icons.smart_toy_outlined,
+                value: runMode,
+                items: const ['completion', 'agent'],
+                labelOf: (value) => value == 'agent'
+                    ? 'Automation Agent — có thể dùng công cụ'
+                    : 'Completion — không dùng công cụ',
+                subtitleOf: (value) => value == 'agent'
+                    ? 'Lưu timeline từng bước; hành động ghi mặc định dừng chờ duyệt.'
+                    : 'Một lượt suy luận nhẹ, không gọi công cụ.',
+                onChanged: (value) => setDialogState(() => runMode = value),
+              ),
+              if (kind == 'interval')
+                AppTextField(
+                  controller: interval,
+                  label: 'Khoảng phút (tối thiểu 10)',
+                  keyboardType: TextInputType.number,
+                ),
+              if (kind == 'daily' || kind == 'weekly')
+                AppTextField(
+                  controller: time,
+                  label: 'Giờ UTC (HH:mm)',
+                  hint: 'Ví dụ 01:00 UTC = 08:00 giờ Việt Nam',
+                  keyboardType: TextInputType.datetime,
+                ),
+              if (kind == 'weekly')
+                AppSelectTile<int>(
+                  label: 'Ngày trong tuần (UTC)',
+                  icon: Icons.calendar_view_week_outlined,
+                  value: dayOfWeek,
+                  items: const [1, 2, 3, 4, 5, 6, 0],
+                  labelOf: (value) => switch (value) {
+                    0 => 'Chủ nhật',
+                    1 => 'Thứ 2',
+                    2 => 'Thứ 3',
+                    3 => 'Thứ 4',
+                    4 => 'Thứ 5',
+                    5 => 'Thứ 6',
+                    _ => 'Thứ 7',
+                  },
+                  onChanged: (value) => setDialogState(() => dayOfWeek = value),
+                ),
+              if (kind == 'once')
+                AppTextField(
+                  controller: runAt,
+                  label: 'Thời điểm chạy (giờ địa phương)',
+                  hint: 'YYYY-MM-DD HH:mm; ít nhất 1 phút trong tương lai',
+                  keyboardType: TextInputType.datetime,
+                ),
+              if (_agents.isNotEmpty)
+                AppSelectTile<String?>(
+                  label: 'Persona (không bắt buộc)',
+                  icon: Icons.person_outline,
+                  value: customAgentId,
+                  items: [null, for (final agent in _agents) agent.id],
+                  labelOf: (value) => value == null
+                      ? 'Agent mặc định'
+                      : _agents
+                            .firstWhere(
+                              (agent) => agent.id == value,
+                              orElse: () => CustomAgentModel(
+                                id: value,
+                                name: 'Agent không còn khả dụng',
+                              ),
+                            )
+                            .name,
+                  onChanged: (value) =>
+                      setDialogState(() => customAgentId = value),
+                ),
+              if (runMode == 'agent')
+                AppCheckTile(
+                  label: 'Tự duyệt thao tác ghi CSDL/API ở các lượt sau',
+                  subtitle:
+                      'Mặc định tắt: mỗi lần ghi cần phê duyệt riêng. Khi bật, chỉ schedule này được áp dụng; tắt lịch sẽ thu hồi grant.',
+                  value: approveFutureRuns,
+                  onChanged: (value) =>
+                      setDialogState(() => approveFutureRuns = value),
+                ),
+              AppTextField(
+                controller: webhook,
+                label: 'Webhook nhận kết quả (không bắt buộc)',
+                hint: 'https://example.gov.vn/nhan-bao-cao',
+              ),
+            ],
+          ),
+          actions: [
+            AppSecondaryButton(
+              label: 'Huỷ',
+              onPressed: () => Navigator.pop(dialogContext),
             ),
-            AppTextField(controller: prompt, label: 'Prompt', maxLines: 4),
-            AppSelectTile<String>(
-              label: 'Loại lịch',
-              icon: Icons.event_repeat,
-              value: kind,
-              items: const ['interval', 'once'],
-              labelOf: (value) => value == 'interval'
-                  ? 'Theo khoảng thời gian'
-                  : 'Chạy một lần',
-              subtitleOf: (value) => value == 'interval'
-                  ? 'Chạy lại sau mỗi số phút bên dưới.'
-                  : 'Chỉ chạy một lần ở lần kích hoạt kế tiếp.',
-              onChanged: (value) => kind = value,
-            ),
-            AppTextField(
-              controller: interval,
-              label: 'Khoảng phút',
-              hint: 'Dùng khi chạy theo khoảng thời gian',
-              keyboardType: TextInputType.number,
+            const SizedBox(width: 10),
+            AppPrimaryButton(
+              label: task == null ? 'Tạo lịch' : 'Lưu thay đổi',
+              onPressed: () {
+                final trimmedName = name.text.trim();
+                final trimmedPrompt = prompt.text.trim();
+                final intervalMinutes = kind == 'interval'
+                    ? int.tryParse(interval.text.trim())
+                    : null;
+                final timeMinutes = kind == 'daily' || kind == 'weekly'
+                    ? _parseTime(time.text)
+                    : null;
+                final runAtDate = kind == 'once'
+                    ? _parseLocalDateTime(runAt.text.trim())
+                    : null;
+                final webhookUrl = webhook.text.trim();
+                final webhookUri = webhookUrl.isEmpty
+                    ? null
+                    : Uri.tryParse(webhookUrl);
+                validationError = '';
+                if (trimmedName.isEmpty) {
+                  validationError = 'Nhập tên lịch.';
+                } else if (trimmedName.length > 100) {
+                  validationError = 'Tên lịch tối đa 100 ký tự.';
+                } else if (trimmedPrompt.isEmpty) {
+                  validationError = 'Nhập prompt cần chạy.';
+                } else if (trimmedPrompt.length > 2000) {
+                  validationError = 'Prompt tối đa 2000 ký tự.';
+                } else if (kind == 'interval' &&
+                    (intervalMinutes == null ||
+                        intervalMinutes < 10 ||
+                        intervalMinutes > 10080)) {
+                  validationError = 'Chu kỳ phải từ 10 đến 10080 phút.';
+                } else if ((kind == 'daily' || kind == 'weekly') &&
+                    timeMinutes == null) {
+                  validationError = 'Giờ UTC không hợp lệ; dùng HH:mm.';
+                } else if (kind == 'weekly' &&
+                    (dayOfWeek < 0 || dayOfWeek > 6)) {
+                  validationError = 'Chọn ngày hợp lệ trong tuần.';
+                } else if (kind == 'once' &&
+                    (runAtDate == null ||
+                        !runAtDate.isAfter(
+                          DateTime.now().add(const Duration(minutes: 1)),
+                        ) ||
+                        runAtDate.isAfter(
+                          DateTime.now().add(const Duration(days: 366)),
+                        ))) {
+                  validationError =
+                      'Thời điểm chạy phải sau ít nhất 1 phút và không quá 366 ngày.';
+                } else if (webhookUrl.length > 500 ||
+                    (webhookUrl.isNotEmpty &&
+                        (webhookUri == null ||
+                            !webhookUri.isAbsolute ||
+                            (webhookUri.scheme != 'http' &&
+                                webhookUri.scheme != 'https') ||
+                            webhookUri.host.isEmpty))) {
+                  validationError =
+                      'Webhook cần URL http/https hợp lệ, tối đa 500 ký tự.';
+                }
+                if (validationError.isNotEmpty) {
+                  setDialogState(() {});
+                  return;
+                }
+                Navigator.pop(
+                  dialogContext,
+                  _ScheduleFormData(
+                    name: trimmedName,
+                    prompt: trimmedPrompt,
+                    scheduleKind: kind,
+                    runMode: runMode,
+                    customAgentId: customAgentId,
+                    approveFutureRuns: approveFutureRuns,
+                    deliveryWebhookUrl: webhookUrl.isEmpty ? null : webhookUrl,
+                    intervalMinutes: intervalMinutes,
+                    timeOfDayMinutes: timeMinutes,
+                    dayOfWeek: kind == 'weekly' ? dayOfWeek : null,
+                    runAtLocal: kind == 'once'
+                        ? _formatLocalDateTime(runAtDate!)
+                        : null,
+                  ),
+                );
+              },
+              expand: false,
             ),
           ],
         ),
-        actions: [
-          AppSecondaryButton(
-            label: 'Huỷ',
-            onPressed: () => Navigator.pop(dialogContext),
-          ),
-          const SizedBox(width: 10),
-          AppPrimaryButton(
-            label: 'Tạo',
-            onPressed: () => Navigator.pop(dialogContext, (
-              name.text,
-              prompt.text,
-              kind,
-              int.tryParse(interval.text),
-            )),
-            expand: false,
-          ),
-        ],
       ),
     );
     name.dispose();
     prompt.dispose();
     interval.dispose();
+    time.dispose();
+    runAt.dispose();
+    webhook.dispose();
     return result;
   }
+
+  String _formatTime(int? minutes) {
+    final value = minutes ?? 480;
+    return '${(value ~/ 60).toString().padLeft(2, '0')}:${(value % 60).toString().padLeft(2, '0')}';
+  }
+
+  String _formatLocalDateTime(DateTime value) =>
+      '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')} ${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+
+  DateTime? _parseLocalDateTime(String value) =>
+      ScheduledTaskInput.parseLocalDateTime(value);
+
+  int? _parseTime(String value) => ScheduledTaskInput.parseTime(value);
+}
+
+class _ScheduleFormData {
+  const _ScheduleFormData({
+    required this.name,
+    required this.prompt,
+    required this.scheduleKind,
+    required this.runMode,
+    required this.approveFutureRuns,
+    this.customAgentId,
+    this.deliveryWebhookUrl,
+    this.intervalMinutes,
+    this.timeOfDayMinutes,
+    this.dayOfWeek,
+    this.runAtLocal,
+  });
+
+  final String name;
+  final String prompt;
+  final String scheduleKind;
+  final String runMode;
+  final String? customAgentId;
+  final bool approveFutureRuns;
+  final String? deliveryWebhookUrl;
+  final int? intervalMinutes;
+  final int? timeOfDayMinutes;
+  final int? dayOfWeek;
+  final String? runAtLocal;
 }
 
 class _Empty extends StatelessWidget {

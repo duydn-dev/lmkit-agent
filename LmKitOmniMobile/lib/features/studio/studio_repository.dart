@@ -137,6 +137,10 @@ class StudioRepository {
     required String name,
     required String prompt,
     required String scheduleKind,
+    String runMode = 'completion',
+    String? customAgentId,
+    bool approveFutureRuns = false,
+    String? deliveryWebhookUrl,
     int? intervalMinutes,
     int? timeOfDayMinutes,
     int? dayOfWeek,
@@ -144,20 +148,82 @@ class StudioRepository {
   }) async {
     final response = await _client.post(
       '/api/schedules',
-      data: {
-        'name': name.trim(),
-        'prompt': prompt.trim(),
-        'scheduleKind': scheduleKind,
-        'intervalMinutes': ?intervalMinutes,
-        'timeOfDayMinutes': ?timeOfDayMinutes,
-        'dayOfWeek': ?dayOfWeek,
-        'runAtUtc': ?runAtUtc?.toUtc().toIso8601String(),
-      },
+      data: _scheduleBody(
+        name: name,
+        prompt: prompt,
+        scheduleKind: scheduleKind,
+        runMode: runMode,
+        customAgentId: customAgentId,
+        approveFutureRuns: approveFutureRuns,
+        deliveryWebhookUrl: deliveryWebhookUrl,
+        intervalMinutes: intervalMinutes,
+        timeOfDayMinutes: timeOfDayMinutes,
+        dayOfWeek: dayOfWeek,
+        runAtUtc: runAtUtc,
+      ),
     );
     return ScheduledTaskModel.fromJson(
       Map<String, dynamic>.from(response.data as Map),
     );
   }
+
+  Future<void> updateSchedule({
+    required String id,
+    required String name,
+    required String prompt,
+    required String scheduleKind,
+    required String runMode,
+    String? customAgentId,
+    bool approveFutureRuns = false,
+    String? deliveryWebhookUrl,
+    int? intervalMinutes,
+    int? timeOfDayMinutes,
+    int? dayOfWeek,
+    DateTime? runAtUtc,
+  }) async {
+    await _client.put(
+      '/api/schedules/$id',
+      data: _scheduleBody(
+        name: name,
+        prompt: prompt,
+        scheduleKind: scheduleKind,
+        runMode: runMode,
+        customAgentId: customAgentId,
+        approveFutureRuns: approveFutureRuns,
+        deliveryWebhookUrl: deliveryWebhookUrl,
+        intervalMinutes: intervalMinutes,
+        timeOfDayMinutes: timeOfDayMinutes,
+        dayOfWeek: dayOfWeek,
+        runAtUtc: runAtUtc,
+      ),
+    );
+  }
+
+  Map<String, dynamic> _scheduleBody({
+    required String name,
+    required String prompt,
+    required String scheduleKind,
+    required String runMode,
+    String? customAgentId,
+    required bool approveFutureRuns,
+    String? deliveryWebhookUrl,
+    int? intervalMinutes,
+    int? timeOfDayMinutes,
+    int? dayOfWeek,
+    DateTime? runAtUtc,
+  }) => {
+    'name': name.trim(),
+    'prompt': prompt.trim(),
+    'scheduleKind': scheduleKind,
+    'runMode': runMode,
+    'customAgentId': ?customAgentId,
+    'approveFutureRuns': runMode == 'agent' && approveFutureRuns,
+    'deliveryWebhookUrl': ?deliveryWebhookUrl?.trim(),
+    'intervalMinutes': ?intervalMinutes,
+    'timeOfDayMinutes': ?timeOfDayMinutes,
+    'dayOfWeek': ?dayOfWeek,
+    'runAtUtc': ?runAtUtc?.toUtc().toIso8601String(),
+  };
 
   Future<void> toggleSchedule(String id) =>
       _client.post('/api/schedules/$id/toggle').then((_) {});
