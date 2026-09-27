@@ -7,6 +7,7 @@ import '../../app/theme.dart';
 
 import '../../app/ui/app_controls.dart';
 import '../../core/network/api_exception.dart';
+import '../studio/run_detail_screen.dart';
 import '../studio/studio_provider.dart';
 import 'notification_detail_sheet.dart';
 
@@ -302,8 +303,10 @@ class NotificationsScreen extends ConsumerWidget {
     );
   }
 
-  /// Tap thông báo: mở modal chi tiết (kết quả đầy đủ + file + nguồn web).
-  /// Thông báo chưa đọc được đánh dấu đã đọc song song, không chờ modal.
+  /// Tap thông báo: có deep-link (agentRunId) → mở thẳng chi tiết lần chạy —
+  /// đúng quy ước "thông báo có đích thì bấm là tới", không bắt người dùng
+  /// bấm thêm một lớp sheet. Không có deep-link → mở modal chi tiết nội dung.
+  /// Thông báo chưa đọc được đánh dấu đã đọc song song, không chờ điều hướng.
   Future<void> _openDetail(
     BuildContext context,
     NotificationsController controller,
@@ -318,12 +321,21 @@ class NotificationsScreen extends ConsumerWidget {
       }
     });
 
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) => NotificationDetailSheet(item: item),
-    );
+    final runId = item.agentRunId;
+    if (runId != null && runId.isNotEmpty) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => RunDetailScreen(runId: runId, goal: item.title),
+        ),
+      );
+    } else {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (sheetContext) => NotificationDetailSheet(item: item),
+      );
+    }
     unawaited(future);
   }
 

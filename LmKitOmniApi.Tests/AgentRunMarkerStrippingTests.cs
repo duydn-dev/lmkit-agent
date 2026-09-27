@@ -165,4 +165,44 @@ public class AgentRunMarkerStrippingTests
     {
         Assert.Empty(AgentRunMarkers.ExtractWebSourceUrls($"[STEP:{{}}]{Answer}"));
     }
+
+    /// <summary>
+    /// The EXACT emission that used to leak: the orchestrator serializes a step with the
+    /// default JSON encoder (every non-ASCII char escaped to \uXXXX) and a DBWRITE
+    /// observation OPENS with "[CSDL: name]" — so the payload embeds a literal ']' and the
+    /// old lazy bracket regex cut there, leaving the payload's escaped tail in the stored
+    /// result (and in the notification body built from it). The JSON-aware scanner must
+    /// consume the whole payload; the answer and only the answer survive.
+    /// </summary>
+    [Fact]
+    public void AStepMarkerWhosePayloadEmbedsABracket_IsStrippedWhole_AndTheAnswerSurvives()
+    {
+        var observation = "[CSDL: Metrics Test DB] Đã sao lưu bảng 'sensors' → 'sensors_backup_1' (chỉ riêng bảng này), rồi thực thi. Số dòng ảnh hưởng: 1.";
+        var payload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            ordinal = 3,
+            action = "DBWRITE",
+            input = "db=Metrics Test DB;INSERT INTO sensors (name, temperature, recorded_at) VALUES ('sensor-01', 28.1, '2026-09-27T01:52:25Z')",
+            observation
+        });
+        var raw = $"[STEP:{payload}]{Answer}";
+
+        var stripped = AgentRunMarkers.StripMarkers(raw);
+
+        Assert.Equal(Answer, stripped);
+        Assert.DoesNotContain("\\u0110", stripped, StringComparison.Ordinal);
+        Assert.DoesNotContain("sensors_backup", stripped, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Fail-safe direction: a payload that never closes is left VERBATIM rather than
+    /// eaten. A truncated stream must never cost the model's prose.
+    /// </summary>
+    [Fact]
+    public void ATruncatedStepPayload_IsLeftVerbatim_NotEaten()
+    {
+        var raw = "[STEP:{\"ordinal\":1,\"action\":\"DBWRI" + Answer;
+
+        Assert.Equal(raw, AgentRunMarkers.StripMarkers(raw));
+    }
 }

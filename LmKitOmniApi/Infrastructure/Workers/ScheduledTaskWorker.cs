@@ -337,9 +337,15 @@ public class ScheduledTaskWorker : BackgroundService
             return (SucceededStatus, null, notification);
         }
 
+        // Failed run WITH a persisted row: deep-link to the run detail — the real error
+        // and the step that broke live there, and the notification body alone never says
+        // enough. (Run == null and completion-mode failures have nothing to link to, so
+        // those notifications stay link-free by design.)
+        var failedNotification = BuildErrorNotification(task);
+        failedNotification.AgentRunId = run.Id;
         return (FailedStatus,
             Truncate(run.Error ?? "Agent run failed.", MaxErrorLength),
-            BuildErrorNotification(task));
+            failedNotification);
     }
 
     /// <summary>

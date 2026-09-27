@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace LmKitOmniApi.Application.AgentRuns;
@@ -45,17 +46,123 @@ internal static class AgentRunMarkers
     /// BRACKET-CLOSED markers: <c>[NAME:payload]</c>, emitted with no trailing newline. The body
     /// stays LAZY so the match ends at the payload's own closing bracket and cannot run on into
     /// the prose that follows. A payload carrying a literal <c>]</c> inside a JSON string ends
-    /// the match early and leaves a fragment — accepted deliberately, because the alternative is
-    /// a greedy match that can swallow the answer, and this repo has twice shipped a stripper
-    /// that did exactly that.
+    /// the match early and leaves a fragment — which is why the two markers whose payloads are
+    /// arbitrary JSON (<c>STEP</c>, <c>FILE</c>) are NOT handled here: their payloads can embed
+    /// <c>]</c> freely (a DBWRITE observation literally starts with <c>[CSDL: name]</c>), and a
+    /// lazy match would cut mid-payload and leak the escaped tail into the stored result. Those
+    /// two go through <see cref="StripJsonPayloadMarkers"/>, which scans the JSON for its real
+    /// closing bracket instead of guessing. This regex keeps only the markers whose payload is
+    /// known to never contain <c>]</c> (GUIDs, agent names).
     /// </summary>
     private static readonly Regex BracketMarkerRegex = new(
-        @"\[(?:Agent invoked|STEP|FILE|HITL_APPROVAL_REQUIRED|AGENT_RUN|RESEARCH_SAVED)[:\]][^\n\r]*?\][\n\r]*",
+        @"\[(?:Agent invoked|HITL_APPROVAL_REQUIRED|AGENT_RUN|RESEARCH_SAVED)[:\]][^\n\r]*?\][\n\r]*",
         RegexOptions.Compiled);
 
     /// <summary>Removes every status/step marker, leaving the model's prose.</summary>
     public static string StripMarkers(string rawContent) =>
-        BracketMarkerRegex.Replace(LineMarkerRegex.Replace(rawContent, string.Empty), string.Empty).Trim();
+        BracketMarkerRegex.Replace(StripJsonPayloadMarkers(LineMarkerRegex.Replace(rawContent, string.Empty)), string.Empty).Trim();
+
+    private const string StepMarkerPrefix = "[STEP:";
+    private const string FileMarkerPrefix = "[FILE:";
+
+    /// <summary>
+    /// Removes <c>[STEP:{…}]</c> and <c>[FILE:{…}]</c> markers by scanning the JSON payload for
+    /// its TRUE closing bracket (string- and escape-aware), instead of matching to the first
+    /// <c>]</c>.
+    ///
+    /// <para><b>Why this exists.</b> The orchestrator serializes a step's observation with the
+    /// default JSON encoder, which escapes every non-ASCII character — and a DBWRITE observation
+    /// begins with <c>[CSDL: connection name]</c>, i.e. the payload itself contains <c>]</c>. The
+    /// lazy bracket regex matched only up to that embedded bracket, so the payload's escaped tail
+    /// (<c>\u0110\u00E3 sao l\u01B0u…1."}]</c>) survived into <c>AgentRun.Result</c> and, from
+    /// there, into the notification body the user reads.</para>
+    ///
+    /// <para><b>Fail-safe by construction:</b> a payload that never closes, or does not start
+    /// with <c>{</c>, is left verbatim — a stripper that eats prose is the far worse failure and
+    /// this repo has shipped one twice. Consuming the whole span (payload + closing <c>]</c>) is
+    /// exact regardless of what the payload contains, because the scanner tracks string context
+    /// and brace depth.</para>
+    /// </summary>
+    private static string StripJsonPayloadMarkers(string content)
+    {
+        if (string.IsNullOrEmpty(content)) return content;
+
+        var builder = new StringBuilder(content.Length);
+        var position = 0;
+        while (position < content.Length)
+        {
+            var start = FindJsonMarker(content, position, out var prefixLength);
+            if (start < 0)
+            {
+                builder.Append(content[position..]);
+                break;
+            }
+
+            builder.Append(content[position..start]);
+            var end = FindJsonPayloadEnd(content, start + prefixLength);
+            if (end < 0)
+            {
+                // Malformed or truncated payload: keep the marker text verbatim (fail safe).
+                builder.Append(content[start..(start + prefixLength)]);
+                position = start + prefixLength;
+                continue;
+            }
+            position = end; // skip past the marker's closing ']'
+        }
+        return builder.ToString();
+    }
+
+    /// <summary>Next <c>[STEP:</c> / <c>[FILE:</c> occurrence at or after <paramref name="start"/>, or -1.</summary>
+    private static int FindJsonMarker(string content, int start, out int prefixLength)
+    {
+        var step = content.IndexOf(StepMarkerPrefix, start, StringComparison.Ordinal);
+        var file = content.IndexOf(FileMarkerPrefix, start, StringComparison.Ordinal);
+        if (step < 0 && file < 0)
+        {
+            prefixLength = 0;
+            return -1;
+        }
+        if (step < 0 || (file >= 0 && file < step))
+        {
+            prefixLength = FileMarkerPrefix.Length;
+            return file;
+        }
+        prefixLength = StepMarkerPrefix.Length;
+        return step;
+    }
+
+    /// <summary>
+    /// Index just past the closing <c>]</c> of the JSON object beginning at
+    /// <paramref name="objectStart"/>, honoring strings and escapes; -1 when the payload never
+    /// terminates or does not start with <c>{</c>.
+    /// </summary>
+    private static int FindJsonPayloadEnd(string content, int objectStart)
+    {
+        if (objectStart >= content.Length || content[objectStart] != '{') return -1;
+        var depth = 0;
+        var inString = false;
+        var escaped = false;
+        for (var i = objectStart; i < content.Length; i++)
+        {
+            var c = content[i];
+            if (inString)
+            {
+                if (escaped) escaped = false;
+                else if (c == '\\') escaped = true;
+                else if (c == '"') inString = false;
+                continue;
+            }
+            if (c == '"') { inString = true; }
+            else if (c == '{') { depth++; }
+            else if (c == '}')
+            {
+                depth--;
+                if (depth == 0)
+                    return i + 1 < content.Length && content[i + 1] == ']' ? i + 2 : -1;
+            }
+        }
+        return -1;
+    }
 
     /// <summary>
     /// Extracts the JSON payload of every <c>[FILE:{…}]</c> marker BEFORE the content is
