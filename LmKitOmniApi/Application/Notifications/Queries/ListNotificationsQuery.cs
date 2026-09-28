@@ -28,4 +28,8 @@ public sealed class NotificationDto
     /// <summary>Run this notification reports on (scheduled agent tasks); null for
     /// notifications without a run. Clients deep-link into the run detail.</summary>
     public Guid? AgentRunId { get; init; }
+
+    /// <summary>Scheduled task that produced this notification; lets clients deep-link
+    /// completion-mode results and generic errors back to the Lịch screen.</summary>
+    public Guid? ScheduledTaskId { get; init; }
 }

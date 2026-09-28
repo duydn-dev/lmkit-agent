@@ -232,6 +232,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 import { http } from '@/api/http';
@@ -280,6 +281,8 @@ interface ScheduleForm {
 
 const confirm = useConfirm();
 const toast = useToast();
+const route = useRoute();
+const router = useRouter();
 const list = useServerPage<Schedule>(ApiFactory.SCHEDULES.BASE, { errorLabel: 'lịch tác vụ' });
 
 const kindOptions = [
@@ -552,5 +555,24 @@ const performDelete = async (schedule: Schedule) => {
 onMounted(() => {
   void list.load();
   void loadPersonaOptions();
+  void openFromQuery();
 });
+
+/**
+ * Deep link từ thông báo (?taskId=…): sau khi danh sách đã tải, mở form chi tiết
+ * của lịch được chỉ định — bấm thông báo là tới đúng lịch, không bắt người dùng
+ * tự tìm trong bảng. Xóa query sau khi xử lý để refresh không mở lại form cũ.
+ */
+const openFromQuery = async () => {
+  const taskId = typeof route.query.taskId === 'string' ? route.query.taskId : '';
+  if (!taskId) return;
+  await list.load();
+  const schedule = list.rows.value.find((item) => item.id === taskId);
+  if (schedule) {
+    openEditForm(schedule);
+  } else {
+    toast.add({ severity: 'warn', summary: 'Không tìm thấy lịch tác vụ', detail: 'Lịch này có thể đã bị xóa.', life: 5000 });
+  }
+  await router.replace({ path: '/schedules' });
+};
 </script>

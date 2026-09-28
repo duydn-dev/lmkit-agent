@@ -9,6 +9,7 @@ import '../../app/ui/app_controls.dart';
 import '../../core/network/api_exception.dart';
 import '../studio/run_detail_screen.dart';
 import '../studio/studio_provider.dart';
+import '../studio/studio_screen.dart';
 import 'notification_detail_sheet.dart';
 
 /// Thông báo trong app (khớp `NotificationDto`): tài liệu đã xử lý xong, tác vụ
@@ -21,6 +22,7 @@ class NotificationModel {
     this.isRead = false,
     this.createdAt,
     this.agentRunId,
+    this.scheduledTaskId,
   });
 
   final String id;
@@ -33,6 +35,11 @@ class NotificationModel {
   /// run (timeline + nguồn + file) từ màn thông báo.
   final String? agentRunId;
 
+  /// Id lịch tự động sinh ra thông báo này (nếu có) — kết quả completion-mode
+  /// và lỗi chung không có run để mở, nên dẫn về tile lịch của chính task đó
+  /// (tab Lịch màn AI Studio).
+  final String? scheduledTaskId;
+
   factory NotificationModel.fromJson(Map<String, dynamic> json) =>
       NotificationModel(
         id: json['id']?.toString() ?? '',
@@ -43,6 +50,7 @@ class NotificationModel {
             ? DateTime.tryParse(json['createdAt'] as String)
             : null,
         agentRunId: json['agentRunId']?.toString(),
+        scheduledTaskId: json['scheduledTaskId']?.toString(),
       );
 }
 
@@ -72,6 +80,7 @@ class NotificationsController extends AsyncNotifier<List<NotificationModel>> {
                 isRead: true,
                 createdAt: item.createdAt,
                 agentRunId: item.agentRunId,
+                scheduledTaskId: item.scheduledTaskId,
               )
             : item,
     ]);
@@ -305,8 +314,10 @@ class NotificationsScreen extends ConsumerWidget {
 
   /// Tap thông báo: có deep-link (agentRunId) → mở thẳng chi tiết lần chạy —
   /// đúng quy ước "thông báo có đích thì bấm là tới", không bắt người dùng
-  /// bấm thêm một lớp sheet. Không có deep-link → mở modal chi tiết nội dung.
-  /// Thông báo chưa đọc được đánh dấu đã đọc song song, không chờ điều hướng.
+  /// bấm thêm một lớp sheet. Có scheduledTaskId (kết quả completion-mode, lỗi
+  /// chung — không có run để mở) → mở màn AI Studio ở tab Lịch. Còn lại →
+  /// modal chi tiết nội dung. Thông báo chưa đọc được đánh dấu đã đọc song
+  /// song, không chờ điều hướng.
   Future<void> _openDetail(
     BuildContext context,
     NotificationsController controller,
@@ -322,10 +333,17 @@ class NotificationsScreen extends ConsumerWidget {
     });
 
     final runId = item.agentRunId;
+    final taskId = item.scheduledTaskId;
     if (runId != null && runId.isNotEmpty) {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => RunDetailScreen(runId: runId, goal: item.title),
+        ),
+      );
+    } else if (taskId != null && taskId.isNotEmpty) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const StudioScreen(initialTab: 1),
         ),
       );
     } else {

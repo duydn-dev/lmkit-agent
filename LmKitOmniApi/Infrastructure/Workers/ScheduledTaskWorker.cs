@@ -307,7 +307,8 @@ public class ScheduledTaskWorker : BackgroundService
                 Type = ResultNotificationType,
                 Title = task.Name,
                 Body = "Lịch tự động đã chạy đến bước cần phê duyệt. Vào màn Phê duyệt tác vụ để xem xét — phiên sẽ tự chạy tiếp sau khi bạn quyết định.",
-                AgentRunId = run.Id
+                AgentRunId = run.Id,
+                ScheduledTaskId = task.Id
             };
             return (AwaitingApprovalStatus, null, pending);
         }
@@ -332,7 +333,8 @@ public class ScheduledTaskWorker : BackgroundService
                 Body = body + hint,
                 // Deep link: clients open the run's full detail (complete result +
                 // files + web sources) straight from the notification.
-                AgentRunId = run.Id
+                AgentRunId = run.Id,
+                ScheduledTaskId = task.Id
             };
             return (SucceededStatus, null, notification);
         }
@@ -431,7 +433,10 @@ public class ScheduledTaskWorker : BackgroundService
                 UserId = task.UserId,
                 Type = ResultNotificationType,
                 Title = task.Name,
-                Body = body
+                Body = body,
+                // Completion-mode results have no run row; the deep link goes to the
+                // task's Lịch entry instead of the Agent Runs detail.
+                ScheduledTaskId = task.Id
             };
             return (SucceededStatus, null, notification);
         }
@@ -517,13 +522,16 @@ public class ScheduledTaskWorker : BackgroundService
         return (completionSource.Task, threadCompleted.Task);
     }
 
+    /// Generic error notification: no agent-run row to link to, so the deep link goes to
+    /// the Lịch screen entry of the task that raised it (client-side only).
     private static Notification BuildErrorNotification(ScheduledTask task) => new()
     {
         TenantId = task.TenantId,
         UserId = task.UserId,
         Type = ErrorNotificationType,
         Title = task.Name,
-        Body = "Lịch tự động gặp lỗi khi thực thi. Vui lòng kiểm tra lại nội dung nhắc lệnh hoặc thử lại sau."
+        Body = "Lịch tự động gặp lỗi khi thực thi. Vui lòng kiểm tra lại nội dung nhắc lệnh hoặc thử lại sau.",
+        ScheduledTaskId = task.Id
     };
 
     private static string Truncate(string value, int maxLength) =>

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:forui/forui.dart';
 
+import 'dart:async';
+
 import '../../app/theme.dart';
 
 import '../../app/ui/app_controls.dart';
@@ -30,7 +32,12 @@ const _pageTitles = <String>[
 ];
 
 class StudioScreen extends ConsumerStatefulWidget {
-  const StudioScreen({super.key, this.onOpenSession, this.initialTab = 0});
+  const StudioScreen({
+    super.key,
+    this.onOpenSession,
+    this.initialTab = 0,
+    this.focusScheduleId,
+  });
 
   /// Mở một phiên chat vừa tạo (chat với custom agent) trong tab AI Chat.
   final void Function(String sessionId)? onOpenSession;
@@ -39,6 +46,11 @@ class StudioScreen extends ConsumerStatefulWidget {
   /// Research, 4 HITL Approvals, 5 Content Studio — dùng để deep-link từ màn
   /// "Thêm" giống các route riêng của web.
   final int initialTab;
+
+  /// Id lịch tự động cần mở thẳng form chi tiết sau khi danh sách nạp xong
+  /// (deep-link từ thông báo có scheduledTaskId). Chỉ có tác dụng khi
+  /// [initialTab] là tab Lịch.
+  final String? focusScheduleId;
 
   @override
   ConsumerState<StudioScreen> createState() => _StudioScreenState();
@@ -74,6 +86,11 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
   void initState() {
     super.initState();
     _loadAll();
+    // Deep-link từ thông báo: tab Lịch kèm id lịch cần mở form chi tiết
+    // (scheduledTaskId). Đợi _loadAll nạp xong danh sách rồi mới mở form.
+    if (widget.initialTab == 1 && widget.focusScheduleId != null) {
+      unawaited(_openScheduleFromLink(widget.focusScheduleId!));
+    }
   }
 
   @override
@@ -119,6 +136,23 @@ class _StudioScreenState extends ConsumerState<StudioScreen>
 
   String _message(Object error) =>
       error is ApiException ? error.message : error.toString();
+
+  /// Deep-link từ thông báo (?scheduledTaskId): mở form chi tiết của lịch
+  /// được chỉ định sau khi danh sách đã nạp — bấm thông báo là tới đúng lịch,
+  /// không bắt người dùng tự tìm trong danh sách.
+  Future<void> _openScheduleFromLink(String taskId) async {
+    // _loadAll đã chạy trong initState; chờ nó xong để có danh sách mới nhất.
+    while (_loading) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    if (!mounted) return;
+    final match = _schedules.where((task) => task.id == taskId).toList();
+    if (match.isEmpty) {
+      showAppSnack(context, 'Không tìm thấy lịch tác vụ này.');
+      return;
+    }
+    await _editSchedule(task: match.first);
+  }
 
   /// Nạp catalog công cụ, tài liệu và adapter LoRA rồi mở form tạo/sửa agent.
   Future<void> _openAgentForm({CustomAgentModel? existing}) async {

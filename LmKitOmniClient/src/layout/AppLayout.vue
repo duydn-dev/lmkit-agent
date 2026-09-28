@@ -125,16 +125,16 @@
                     v-for="notification in notifications"
                     :key="notification.id"
                     @click="openNotification(notification)"
-                    :title="notification.agentRunId ? 'Mở chi tiết lần chạy' : (notification.isRead ? undefined : 'Đánh dấu đã đọc')"
-                    :aria-label="notification.agentRunId ? `${notification.title} — mở chi tiết lần chạy` : undefined"
+                    :title="notification.agentRunId ? 'Mở chi tiết lần chạy' : (notification.scheduledTaskId ? 'Mở lịch tác vụ' : (notification.isRead ? undefined : 'Đánh dấu đã đọc'))"
+                    :aria-label="notification.agentRunId ? `${notification.title} — mở chi tiết lần chạy` : (notification.scheduledTaskId ? `${notification.title} — mở lịch tác vụ` : undefined)"
                     class="w-full min-h-11 flex items-start gap-3 px-4 py-3 text-left border-b border-gray-50 last:border-b-0 hover:bg-gray-50 transition-colors cursor-pointer">
                     <span class="mt-1.5 w-2 h-2 rounded-full flex-shrink-0" :class="notification.isRead ? 'bg-transparent' : 'bg-blue-600'" aria-hidden="true"></span>
                     <span class="min-w-0 flex-1">
                       <span class="block text-sm truncate" :class="notification.isRead ? 'text-gray-500' : 'font-semibold text-gray-900'">{{ notification.title }}</span>
                       <span v-if="notification.body" class="block text-xs text-gray-500 line-clamp-2 mt-0.5">{{ notification.body }}</span>
-                      <span class="block text-[11px] mt-1 flex items-center gap-1" :class="notification.agentRunId ? 'text-blue-700 font-medium' : 'text-gray-400'">
-                        <i v-if="notification.agentRunId" class="pi pi-arrow-right text-[9px]" aria-hidden="true"></i>
-                        {{ relativeTime(notification.createdAt) }}<template v-if="notification.agentRunId"> · Xem chi tiết lần chạy</template><template v-else-if="!notification.isRead"> · Nhấn để đánh dấu đã đọc</template>
+                      <span class="block text-[11px] mt-1 flex items-center gap-1" :class="notification.agentRunId || notification.scheduledTaskId ? 'text-blue-700 font-medium' : 'text-gray-400'">
+                        <i v-if="notification.agentRunId || notification.scheduledTaskId" class="pi pi-arrow-right text-[9px]" aria-hidden="true"></i>
+                        {{ relativeTime(notification.createdAt) }}<template v-if="notification.agentRunId"> · Xem chi tiết lần chạy</template><template v-else-if="notification.scheduledTaskId"> · Xem lịch tác vụ</template><template v-else-if="!notification.isRead"> · Nhấn để đánh dấu đã đọc</template>
                       </span>
                     </span>
                   </button>
@@ -344,6 +344,8 @@ interface AppNotification {
   createdAt: string;
   /** Set when the notification deep-links an agent run (scheduled runs, HITL gates). */
   agentRunId?: string | null;
+  /** Set when the notification links back to the scheduled task that raised it. */
+  scheduledTaskId?: string | null;
 }
 
 const NOTIFICATION_POLL_MS = 60_000;
@@ -416,10 +418,11 @@ const markNotificationRead = async (notification: AppNotification) => {
 };
 
 /**
- * A notification WITH an agentRunId is a deep link: clicking navigates to the run's
- * detail (scheduled-run results, HITL gates) and marks it read on the way — fire the
+ * A notification WITH a deep link is navigated on click: agentRunId opens the run's
+ * detail, scheduledTaskId opens the task's form on the Lịch screen (completion-mode
+ * results and generic errors have no run row). Marks read on the way — fire the
  * navigation first so the read request never delays it, and don't await the read
- * (best-effort, same as before). Notifications WITHOUT one keep the old behavior:
+ * (best-effort, same as before). Notifications WITHOUT a link keep the old behavior:
  * click = mark read only.
  */
 const openNotification = async (notification: AppNotification) => {
@@ -427,6 +430,12 @@ const openNotification = async (notification: AppNotification) => {
     closeNotifications();
     if (!notification.isRead) void markNotificationRead(notification);
     await router.push({ path: '/agent-mode', query: { runId: notification.agentRunId } });
+    return;
+  }
+  if (notification.scheduledTaskId) {
+    closeNotifications();
+    if (!notification.isRead) void markNotificationRead(notification);
+    await router.push({ path: '/schedules', query: { taskId: notification.scheduledTaskId } });
     return;
   }
   await markNotificationRead(notification);

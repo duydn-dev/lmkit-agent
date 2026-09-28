@@ -42,6 +42,14 @@ public sealed class Notification
     /// </summary>
     public Guid? AgentRunId { get; set; }
 
+    /// <summary>
+    /// The scheduled task that produced this notification, when it exists. Lets clients
+    /// deep-link completion-mode results (which have no agent run row) and generic errors
+    /// back to the Lịch screen entry of the task that raised them. Owner-scoped reads: a
+    /// foreign task id just 404s on the schedules endpoints.
+    /// </summary>
+    public Guid? ScheduledTaskId { get; set; }
+
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 
     public Tenant? Tenant { get; set; }

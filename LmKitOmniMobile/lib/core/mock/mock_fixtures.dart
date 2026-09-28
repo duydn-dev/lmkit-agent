@@ -647,6 +647,17 @@ Chi tiết từng trạm nằm trong tệp đính kèm bên dưới.''';
       'body': 'Báo cáo không khí hằng ngày đã chạy lúc 05:00.',
       'isRead': true,
       'createdAt': '2026-09-15T05:00:00Z',
+      // Completion-mode: không có run để mở — deep-link về tile lịch của task.
+      'scheduledTaskId': 'sch-demo-0001',
+    },
+    {
+      'id': 'n-demo-0004',
+      'title': 'Agent chờ phê duyệt',
+      'body': 'Có 2 hành động đang chờ bạn xác nhận trước khi chạy.',
+      'isRead': false,
+      'createdAt': '2026-09-15T09:30:00Z',
+      // Agent-mode: deep-link thẳng vào chi tiết lần chạy.
+      'agentRunId': 'run-demo-0001',
     },
   ];
 
