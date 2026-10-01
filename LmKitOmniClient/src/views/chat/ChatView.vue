@@ -152,6 +152,26 @@
               <!-- Render Message with Charts -->
               <GenerativeUiRenderer :content="msg.content" />
 
+              <!-- Structured clarification is stored in the message marker and replayed from history. -->
+              <div v-if="msg.clarification" class="mt-3 max-w-xl rounded-2xl border border-blue-200 bg-blue-50/70 p-4">
+                <div class="font-semibold text-gray-800">{{ msg.clarification.question }}</div>
+                <div v-if="msg.clarificationAnswer || messages[index + 1]?.role === 'user'" class="mt-2 text-sm text-gray-600">Đã trả lời câu hỏi làm rõ.</div>
+                <div v-else class="mt-3 flex flex-wrap gap-2">
+                  <button v-for="option in msg.clarification.options" :key="option.value" type="button"
+                    class="min-h-11 rounded-full border border-blue-200 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-blue-100"
+                    @click="answerClarification(msg, option.value)">
+                    {{ option.label }}<span v-if="option.recommended" class="ml-1 text-blue-700">· Đề xuất</span>
+                  </button>
+                  <button type="button" class="min-h-11 rounded-full border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    @click="msg.clarificationOtherOpen = true">Khác</button>
+                </div>
+                <div v-if="msg.clarificationOtherOpen && !msg.clarificationAnswer && messages[index + 1]?.role !== 'user'" class="mt-3 flex gap-2">
+                  <Textarea v-model="msg.clarificationOtherText" rows="2" autoResize maxlength="4000" aria-label="Câu trả lời khác" placeholder="Nhập câu trả lời của bạn" class="flex-1" />
+                  <Button label="Gửi" :disabled="!msg.clarificationOtherText?.trim() || isGenerating"
+                    @click="answerClarification(msg, msg.clarificationOtherText || '')" />
+                </div>
+              </div>
+
               <!-- Produced Files (charts / CSVs the code interpreter returned) -->
               <div v-if="msg.producedFiles && msg.producedFiles.length > 0" class="mt-2">
                 <div class="text-xs text-gray-500 mb-1.5">Tệp kết quả</div>
@@ -642,7 +662,8 @@ const loadMessages = async () => {
           webUrls: parsed.webUrls,
           thinkingSteps: parsed.thinkingSteps,
           reasoning: parsed.reasoning,
-          producedFiles: parsed.producedFiles
+          producedFiles: parsed.producedFiles,
+          clarification: parsed.clarification
         };
       });
       await scrollToBottom();
@@ -940,6 +961,38 @@ async function streamExchange(
     hooks.onSettled?.();
   }
 }
+
+const answerClarification = async (message: ChatMessage, answer: string) => {
+  const normalizedAnswer = answer.trim();
+  if (!normalizedAnswer || isGenerating.value || message.clarificationAnswer || !message.clarification) return;
+  const messageIndex = messages.value.indexOf(message);
+  if (messageIndex < 0 || messages.value[messageIndex + 1]?.role === 'user') return;
+
+  message.clarificationAnswer = normalizedAnswer;
+  message.clarificationOtherOpen = false;
+  const clarificationReply = `${message.clarification.question}\n${normalizedAnswer}`;
+  messages.value.push({ role: 'user', content: clarificationReply });
+  isGenerating.value = true;
+  const assistantMsg: ChatMessage = { role: 'assistant', content: '', isTyping: true };
+  messages.value.push(assistantMsg);
+  await scrollToBottom();
+
+  await streamExchange(
+    {
+      SessionId: currentSessionId.value,
+      Message: clarificationReply,
+      ModelId: null,
+      enableWebSearch: webSearchEnabled.value,
+      ephemeral: isEphemeral.value,
+    },
+    assistantMsg,
+    {
+      requestErrorFallback: 'Yêu cầu chat thất bại',
+      errorFallback: 'Không thể tiếp tục sau câu trả lời làm rõ.',
+      onSettled: () => window.dispatchEvent(new CustomEvent('chat-session-created')),
+    },
+  );
+};
 
 const sendMessage = async () => {
   const content = inputMessage.value.trim();

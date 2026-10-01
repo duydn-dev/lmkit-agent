@@ -16,5 +16,6 @@ namespace LmKitOmniApi.Application.Chat.Queries
         public string Role { get; set; } = string.Empty;
         public string Content { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; }
+        public LmKitOmniApi.Infrastructure.AI.ClarificationRequest? Clarification { get; set; }
     }
 }

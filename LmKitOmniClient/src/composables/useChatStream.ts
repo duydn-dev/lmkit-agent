@@ -49,6 +49,10 @@ export interface ChatMessage {
    * offers no buttons, rather than inviting a click that can only fail again.
    */
   hitlClosed?: boolean;
+  clarification?: { question: string; options: { label: string; value: string; recommended: boolean }[] };
+  clarificationAnswer?: string;
+  clarificationOtherOpen?: boolean;
+  clarificationOtherText?: string;
 }
 
 /**
@@ -100,6 +104,7 @@ export interface StoredAssistantContent {
   thinkingSteps?: string[];
   reasoning?: string;
   producedFiles?: ProducedFile[];
+  clarification?: ChatMessage['clarification'];
 }
 
 /**
@@ -179,6 +184,20 @@ export function parseStoredAssistantContent(raw: string): StoredAssistantContent
     }
   }
 
+  let clarification: ChatMessage['clarification'];
+  const clarificationMatch = content.match(/\[CLARIFICATION:(\{[^\r\n]*\})\]/);
+  if (clarificationMatch) {
+    try {
+      const parsed = JSON.parse(clarificationMatch[1]) as ChatMessage['clarification'];
+      if (parsed && typeof parsed.question === 'string' && Array.isArray(parsed.options)) {
+        clarification = parsed;
+      }
+    } catch {
+      // Ignore malformed historical metadata rather than leaking its protocol marker.
+    }
+    content = content.replace(/\[CLARIFICATION:\{[^\r\n]*\}\][\n\r]*/g, '').trimStart();
+  }
+
   if (content.includes('[WEB_SEARCH]:')) {
     const match = content.match(/\[WEB_SEARCH\]:([^\n\r]+)/);
     if (match) {
@@ -187,7 +206,7 @@ export function parseStoredAssistantContent(raw: string): StoredAssistantContent
     }
   }
 
-  return { content, webUrls, thinkingSteps, reasoning, producedFiles };
+  return { content, webUrls, thinkingSteps, reasoning, producedFiles, clarification };
 }
 
 export interface ConsumeStreamOptions {
@@ -204,6 +223,7 @@ export interface ConsumeStreamOptions {
    * skipped web-search display.
    */
   onWebSearch?: (urls: string[]) => void;
+  onClarification?: (clarification: NonNullable<ChatMessage['clarification']>) => void;
 }
 
 /**
@@ -254,7 +274,7 @@ export function useChatStream() {
   onUnmounted(abort);
 
   async function consumeStream(options: ConsumeStreamOptions): Promise<void> {
-    const { response, assistantMsg, scrollToBottom, onWebSearch } = options;
+    const { response, assistantMsg, scrollToBottom, onWebSearch, onClarification } = options;
 
     if (!response.body) throw new Error('Trình duyệt không hỗ trợ streaming response.');
 
@@ -312,6 +332,20 @@ export function useChatStream() {
               const urls = event.value.split('|').filter(isSafeWebUrl);
               onWebSearch(urls);
             }
+            continue;
+          }
+          if (event.type === 'clarification') {
+            try {
+              const parsed = JSON.parse(event.value) as ChatMessage['clarification'];
+              if (parsed && typeof parsed.question === 'string' && Array.isArray(parsed.options)) {
+                assistantMsg.clarification = parsed;
+                onClarification?.(parsed);
+              }
+            } catch {
+              // An invalid marker is ignored; it must not become visible as answer text.
+            }
+            assistantMsg.isTyping = false;
+            scheduleScroll();
             continue;
           }
           if (event.type === 'thinking') {

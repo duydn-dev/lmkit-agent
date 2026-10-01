@@ -140,7 +140,7 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         var (historyMessages, trimResult) = await LoadHistoryAsync(request, mode, cacheKey, historyCutoffUtc, cancellationToken);
 
         // Build ChatHistory with trimmed messages. Assistant rows keep [THINKING]/
-        // [WEB_SEARCH] markers IN STORAGE for the UI, but the model must never see
+        // [WEB_SEARCH]/[CLARIFICATION] markers IN STORAGE for the UI, but the model must never see
         // them: a small model treats the marker lines as part of the answer style and
         // starts imitating them mid-response (inventing its own "[THINKING]:" lines and
         // drifting into degenerate loops). Strip them to the clean answer text only.
@@ -148,7 +148,11 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         foreach (var msg in trimResult.Messages)
         {
             if (msg.Role == "user") history.AddMessage(AuthorRole.User, msg.Content);
-            else if (msg.Role == "assistant") history.AddMessage(AuthorRole.Assistant, StripProtocolMarkers(msg.Content));
+            else if (msg.Role == "assistant")
+            {
+                var cleanContent = StripProtocolMarkers(msg.Content);
+                if (!string.IsNullOrWhiteSpace(cleanContent)) history.AddMessage(AuthorRole.Assistant, cleanContent);
+            }
             // A "system" row is not a system prompt: it is the rolling conversation
             // summary ITokenManagementService splices in at the head of the trimmed
             // window when older turns had to be dropped. See AppendSummaryEndMarker
@@ -609,6 +613,9 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
     private static readonly Regex WebSearchMarker =
         new Regex(@"\[WEB_SEARCH\]:[^\n\r]+[\n\r]*", RegexOptions.Compiled);
 
+    private static readonly Regex ClarificationMarker =
+        new Regex(@"\[CLARIFICATION:(\{[^\n\r]*\})\][\n\r]*", RegexOptions.Compiled);
+
     private static readonly Regex ReasoningMarker =
         new Regex(@"\[REASONING\]:[^\n\r]+[\n\r]*", RegexOptions.Compiled);
 
@@ -633,6 +640,20 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         var stripped = AgentInvokedMarker.Replace(raw, string.Empty);
         stripped = ThinkingMarker.Replace(stripped, string.Empty);
         stripped = WebSearchMarker.Replace(stripped, string.Empty);
+        stripped = ClarificationMarker.Replace(stripped, match =>
+        {
+            try
+            {
+                var clarification = JsonSerializer.Deserialize<LmKitOmniApi.Infrastructure.AI.ClarificationRequest>(
+                    match.Groups[1].Value,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                return clarification?.Question ?? string.Empty;
+            }
+            catch (JsonException)
+            {
+                return string.Empty;
+            }
+        });
         stripped = ReasoningMarker.Replace(stripped, string.Empty);
         stripped = StripTransientProgress(stripped);
         return stripped;

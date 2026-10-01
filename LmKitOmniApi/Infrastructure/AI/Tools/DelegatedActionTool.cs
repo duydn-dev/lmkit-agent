@@ -19,6 +19,10 @@ public sealed class DelegatedActionTool : ITool
         "query": {
           "type": "string",
           "description": "The complete request or resource path needed by the tool."
+        },
+        "optionsJson": {
+          "type": "string",
+          "description": "For ask_clarification only: a JSON array of 2-3 {label,value,recommended} choices, with exactly one recommended."
         }
       },
       "required": ["query"]
@@ -26,12 +30,20 @@ public sealed class DelegatedActionTool : ITool
     """;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly Func<string, CancellationToken, Task<string>> _invoke;
+    private readonly Func<string, string?, CancellationToken, Task<string>> _invoke;
 
     public DelegatedActionTool(
         string name,
         string description,
         Func<string, CancellationToken, Task<string>> invoke)
+        : this(name, description, (query, _, ct) => invoke(query, ct))
+    {
+    }
+
+    public DelegatedActionTool(
+        string name,
+        string description,
+        Func<string, string?, CancellationToken, Task<string>> invoke)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentException.ThrowIfNullOrWhiteSpace(description);
@@ -63,12 +75,15 @@ public sealed class DelegatedActionTool : ITool
             throw new ArgumentException($"Tool '{Name}' requires a non-empty query.", nameof(arguments));
         }
 
-        return _invoke(parsed.Query.Trim(), ct);
+        return _invoke(parsed.Query.Trim(), parsed.OptionsJson, ct);
     }
 
     private sealed class DelegatedActionArguments
     {
         [JsonPropertyName("query")]
         public string? Query { get; init; }
+
+        [JsonPropertyName("optionsJson")]
+        public string? OptionsJson { get; init; }
     }
 }

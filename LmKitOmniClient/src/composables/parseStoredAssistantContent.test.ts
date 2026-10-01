@@ -75,6 +75,22 @@ describe('parseStoredAssistantContent — web references', () => {
   });
 });
 
+describe('parseStoredAssistantContent — clarification cards', () => {
+  it('restores the structured choices from a stored clarification marker', () => {
+    const parsed = parseStoredAssistantContent(
+      '[CLARIFICATION:{"question":"Which format?","options":[{"label":"Brief","value":"brief","recommended":true},{"label":"Detailed","value":"detailed","recommended":false}]}]\n'
+    );
+    expect(parsed.clarification).toEqual({
+      question: 'Which format?',
+      options: [
+        { label: 'Brief', value: 'brief', recommended: true },
+        { label: 'Detailed', value: 'detailed', recommended: false },
+      ],
+    });
+    expect(parsed.content).toBe('');
+  });
+});
+
 describe('cleanThinkingStepText — emoji stripping', () => {
   it('strips backend emoji decorations and collapses leftover spaces', () => {
     expect(cleanThinkingStepText('🛡️ Kiểm tra bảo mật đầu vào...')).toBe('Kiểm tra bảo mật đầu vào...');

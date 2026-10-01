@@ -27,6 +27,29 @@ public class DelegatedActionToolTests
         Assert.False(schema.RootElement.GetProperty("additionalProperties").GetBoolean());
     }
 
+    [Fact]
+    public async Task InvokeAsync_PassesOptionsJsonToStructuredCallback()
+    {
+        string? receivedQuery = null;
+        string? receivedOptions = null;
+        var tool = new DelegatedActionTool(
+            "ask_clarification",
+            "Ask a clarifying question",
+            (query, optionsJson, _) =>
+            {
+                receivedQuery = query;
+                receivedOptions = optionsJson;
+                return Task.FromResult("ok");
+            });
+
+        await tool.InvokeAsync("""{"query":"Which format?","optionsJson":"[{\"label\":\"Brief\"}]"}""");
+
+        Assert.Equal("Which format?", receivedQuery);
+        Assert.Equal("[{\"label\":\"Brief\"}]", receivedOptions);
+        using var schema = JsonDocument.Parse(tool.InputSchema);
+        Assert.Contains("optionsJson", schema.RootElement.GetProperty("properties").EnumerateObject().Select(property => property.Name));
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("{\"query\":\"\"}")]

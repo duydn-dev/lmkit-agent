@@ -3,6 +3,7 @@ export type ChatStreamEvent =
   | { type: 'thinking'; value: string }
   | { type: 'reasoning'; value: string }
   | { type: 'web-search'; value: string }
+  | { type: 'clarification'; value: string }
   | { type: 'approval'; value: string }
   | { type: 'saved'; value: string }
   | { type: 'file'; value: string }
@@ -73,6 +74,8 @@ function parseDataLine(line: string): ChatStreamEvent | null {
       value: markerValue.replace(/\\[rn]/g, '').replace(/[\r\n]/g, '').trim()
     };
   }
+  if (value.startsWith('[CLARIFICATION:') && value.endsWith(']'))
+    return { type: 'clarification', value: value.slice('[CLARIFICATION:'.length, -1) };
   if (value.startsWith('[HITL_APPROVAL_REQUIRED:') && value.endsWith(']'))
     return { type: 'approval', value: value.slice('[HITL_APPROVAL_REQUIRED:'.length, -1).trim() };
   if (value.startsWith('[RESEARCH_SAVED:') && value.endsWith(']'))

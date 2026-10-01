@@ -25,19 +25,37 @@ namespace LmKitOmniApi.Application.Chat.Handlers
                 
             if (!hasAccess) return null;
 
-            var messages = await _dbContext.ChatMessages
+            var rows = await _dbContext.ChatMessages
                 .Where(m => m.ChatSessionId == request.SessionId)
                 .OrderBy(m => m.CreatedAt)
-                .Select(m => new ChatMessageDto
-                {
-                    Id = m.Id,
-                    Role = m.Role,
-                    Content = m.Content,
-                    CreatedAt = m.CreatedAt
-                })
+                .Select(m => new { m.Id, m.Role, m.Content, m.CreatedAt })
                 .ToListAsync(cancellationToken);
 
-            return messages;
+            return rows.Select(m => new ChatMessageDto
+            {
+                Id = m.Id,
+                Role = m.Role,
+                Content = m.Content,
+                CreatedAt = m.CreatedAt,
+                Clarification = ExtractClarification(m.Content)
+            }).ToList();
+        }
+
+        private static LmKitOmniApi.Infrastructure.AI.ClarificationRequest? ExtractClarification(string content)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(content ?? string.Empty,
+                @"\[CLARIFICATION:(\{[^\r\n]*\})\]");
+            if (!match.Success) return null;
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<LmKitOmniApi.Infrastructure.AI.ClarificationRequest>(
+                    match.Groups[1].Value,
+                    new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return null;
+            }
         }
     }
 }

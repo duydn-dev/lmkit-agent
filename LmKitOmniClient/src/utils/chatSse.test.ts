@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { ChatSseParser } from './chatSse';
 
 describe('ChatSseParser', () => {
+  it('decodes structured clarification markers without leaking them into answer content', () => {
+    const parser = new ChatSseParser();
+    const payload = '[CLARIFICATION:{"question":"Which format?","options":[{"label":"Brief","value":"brief","recommended":true},{"label":"Detailed","value":"detailed","recommended":false}]}]';
+    const events = parser.push(`data: ${JSON.stringify(payload)}\n`);
+    expect(events).toEqual([{ type: 'clarification', value: payload.slice('[CLARIFICATION:'.length, -1) }]);
+  });
+
   it('decodes the newline-terminated web-search marker the orchestrator emits', () => {
     const parser = new ChatSseParser();
 
