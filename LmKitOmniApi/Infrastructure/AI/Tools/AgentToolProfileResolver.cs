@@ -26,7 +26,13 @@ public static partial class AgentToolProfileResolver
         return profile;
     }
 
-    [GeneratedRegex(@"\b(web|internet|online|latest|current|mới nhất|hiện tại)\b", RegexOptions.IgnoreCase)]
+    // A pasted URL (or an explicit "link"/"đường dẫn" mention) is a research request even when it
+    // carries none of the keyword triggers: "<url> đấy, tạo báo cáo giúp tôi" is a request to LOAD
+    // that page, and the resolver classified it as a plain chat turn. The words alone never matched
+    // because the URL's own path (…/gia-xang-dau-hom-nay-…) is not in the trigger list.
+    [GeneratedRegex(
+        @"\b(web|internet|online|latest|current|mới nhất|hiện tại)\b|https?://\S+|\b(link|url|đường dẫn)\b",
+        RegexOptions.IgnoreCase)]
     private static partial Regex ResearchPattern();
 
     [GeneratedRegex("\\.(jpg|jpeg|png|bmp|webp)(?:\\s|\\\"|'|$)", RegexOptions.IgnoreCase)]

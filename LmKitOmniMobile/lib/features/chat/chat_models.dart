@@ -165,6 +165,8 @@ class ChatMessageModel {
     List<String>? webUrls,
     List<ProducedFileModel>? producedFiles,
     this.approvalId,
+    this.clarification,
+    this.clarificationAnswered = false,
     this.isTyping = false,
     // Danh sách phải mutable: stream cập nhật dần vào cùng một instance.
   }) : thinkingSteps = thinkingSteps ?? [],
@@ -180,6 +182,11 @@ class ChatMessageModel {
   final List<String> webUrls;
   final List<ProducedFileModel> producedFiles;
   String? approvalId;
+
+  /// Yêu cầu hỏi lại của trợ lý — {question, options:[{label,value,recommended}]}.
+  /// Null = tin này không có thẻ chọn phương án.
+  Map<String, dynamic>? clarification;
+  bool clarificationAnswered;
   bool isTyping;
 
   bool get isUser => role.toLowerCase() == 'user';
@@ -211,6 +218,8 @@ class ChatMessageModel {
     webUrls: List<String>.from(webUrls),
     producedFiles: List<ProducedFileModel>.from(producedFiles),
     approvalId: approvalId,
+    clarification: clarification,
+    clarificationAnswered: clarificationAnswered,
     isTyping: isTyping,
   );
 }

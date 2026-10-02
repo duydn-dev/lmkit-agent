@@ -23,6 +23,7 @@ class ChatMessageView extends ConsumerWidget {
     this.isLive = false,
     this.onRegenerate,
     this.onEdit,
+    this.onClarificationAnswer,
   });
 
   final ChatMessageModel message;
@@ -37,6 +38,10 @@ class ChatMessageView extends ConsumerWidget {
 
   /// Chỉ có ở tin nhắn người dùng cuối cùng.
   final VoidCallback? onEdit;
+
+  /// Gọi khi người dùng chọn một phương án (hoặc nhập câu trả lời khác) trên
+  /// thẻ hỏi lại. Null = thẻ chỉ để đọc (tin cũ / đang gửi).
+  final ValueChanged<String>? onClarificationAnswer;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -123,6 +128,14 @@ class ChatMessageView extends ConsumerWidget {
           if (message.approvalId != null) ...[
             const SizedBox(height: 12),
             _ApprovalPanel(approvalId: message.approvalId!),
+          ],
+          if (message.clarification != null) ...[
+            const SizedBox(height: 12),
+            _ClarificationPanel(
+              data: message.clarification!,
+              answered: message.clarificationAnswered,
+              onAnswer: onClarificationAnswer,
+            ),
           ],
           if (message.isTyping && message.content.isEmpty)
             const Padding(
@@ -482,6 +495,472 @@ class _ProducedFilesState extends ConsumerState<_ProducedFiles> {
         ),
     ],
   );
+}
+
+/// Thẻ hỏi lại: trợ lý cần người dùng chọn một phương án trước khi trả lời tiếp.
+///
+/// Bám sát bản web đã duyệt: mặt giấy trắng viền hairline bo góc 16, hàng tiêu đề
+/// có icon + nhãn `CẦN LÀM RÕ` + câu hỏi, mỗi lựa chọn là một hàng full-width có
+/// số thứ tự trong vòng tròn (lựa chọn đề xuất tô đậm) kèm badge `Đề xuất` ghim
+/// bên phải, và hàng `Khác — tự nhập câu trả lời` mở ô nhập ngay tại chỗ.
+///
+/// Sau khi trả lời, danh sách lựa chọn biến mất, thay bằng dòng `ĐÃ TRẢ LỜI` +
+/// nhãn lựa chọn đã chọn (không lặp lại câu hỏi).
+class _ClarificationPanel extends StatefulWidget {
+  const _ClarificationPanel({
+    required this.data,
+    this.answered = false,
+    this.onAnswer,
+  });
+
+  final Map<String, dynamic> data;
+  final bool answered;
+  final ValueChanged<String>? onAnswer;
+
+  @override
+  State<_ClarificationPanel> createState() => _ClarificationPanelState();
+}
+
+class _ClarificationPanelState extends State<_ClarificationPanel> {
+  /// Nhãn lựa chọn người dùng vừa bấm — dùng cho dòng xác nhận.
+  String? _selectedLabel;
+  bool _showOther = false;
+  final _otherController = TextEditingController();
+
+  @override
+  void dispose() {
+    _otherController.dispose();
+    super.dispose();
+  }
+
+  void _submit(String value, String label) {
+    if (value.trim().isEmpty) return;
+    setState(() => _selectedLabel = label.trim().isEmpty ? value : label.trim());
+    widget.onAnswer?.call(value.trim());
+  }
+
+  void _submitOther() {
+    final text = _otherController.text.trim();
+    if (text.isEmpty) return;
+    _otherController.clear();
+    setState(() {
+      _showOther = false;
+      _selectedLabel = 'Câu trả lời của bạn';
+    });
+    widget.onAnswer?.call(text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final question = widget.data['question'] as String? ?? '';
+    final options = (widget.data['options'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .toList();
+    final answered = widget.answered;
+    const accent = AppTheme.infoText;
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Header: icon + nhãn + câu hỏi ───────────────────────────────
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: AppTheme.border.withValues(alpha: 0.6),
+                ),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.info_outline, size: 18, color: accent),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'CẦN LÀM RÕ',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.8,
+                          color: AppTheme.textMuted,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        question,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          height: 1.45,
+                          fontWeight: FontWeight.w500,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (answered)
+            // ── Đã trả lời ──────────────────────────────────────────────
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.check_circle_outline,
+                    size: 18,
+                    color: AppTheme.success,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'ĐÃ TRẢ LỜI',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.8,
+                            color: AppTheme.textMuted,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _selectedLabel ?? 'Đã gửi câu trả lời của bạn',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            height: 1.45,
+                            fontWeight: FontWeight.w500,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            // ── Danh sách lựa chọn + hàng Khác ───────────────────────────
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                children: [
+                  for (var i = 0; i < options.length; i++)
+                    _OptionRow(
+                      index: i + 1,
+                      label: '${options[i]['label'] ?? ''}'.trim(),
+                      recommended: options[i]['recommended'] == true,
+                      enabled: widget.onAnswer != null,
+                      onTap: () => _submit(
+                        '${options[i]['value'] ?? ''}',
+                        '${options[i]['label'] ?? ''}',
+                      ),
+                    ),
+                  _OtherRow(
+                    expanded: _showOther,
+                    enabled: widget.onAnswer != null,
+                    controller: _otherController,
+                    onTap: () => setState(() => _showOther = true),
+                    onCancel: () {
+                      _otherController.clear();
+                      setState(() => _showOther = false);
+                    },
+                    onSubmit: _submitOther,
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Một hàng lựa chọn: số thứ tự trong vòng tròn + nhãn + badge "Đề xuất" ghim phải.
+class _OptionRow extends StatefulWidget {
+  final int index;
+  final String label;
+  final bool recommended;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _OptionRow({
+    required this.index,
+    required this.label,
+    required this.recommended,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  State<_OptionRow> createState() => _OptionRowState();
+}
+
+class _OptionRowState extends State<_OptionRow> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const accent = AppTheme.infoText;
+    final active = _hovered && widget.enabled;
+
+    return Semantics(
+      button: true,
+      label: (widget.recommended ? 'Gợi ý: ' : '') + widget.label,
+      child: MouseRegion(
+        cursor: widget.enabled
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: widget.enabled ? widget.onTap : null,
+          child: Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: active
+                  ? AppTheme.infoSurface
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: active ? AppTheme.infoBorder : Colors.transparent,
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 20,
+                  height: 20,
+                  margin: const EdgeInsets.only(top: 1),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: widget.recommended ? accent : Colors.transparent,
+                    border: Border.all(
+                      color: widget.recommended
+                          ? accent
+                          : (active
+                                ? AppTheme.infoBorder
+                                : AppTheme.borderStrong),
+                    ),
+                  ),
+                  child: Text(
+                    '${widget.index}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: widget.recommended
+                          ? Colors.white
+                          : (active ? accent : AppTheme.textMuted),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    widget.label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      height: 1.45,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ),
+                if (widget.recommended) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    margin: const EdgeInsets.only(top: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppTheme.infoSurface,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'Đề xuất',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: accent,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Hàng "Khác — tự nhập câu trả lời"; khi mở, lộ khung nhập tự do ngay tại chỗ.
+class _OtherRow extends StatelessWidget {
+  final bool expanded;
+  final bool enabled;
+  final TextEditingController controller;
+  final VoidCallback onTap;
+  final VoidCallback onCancel;
+  final VoidCallback onSubmit;
+
+  const _OtherRow({
+    required this.expanded,
+    required this.enabled,
+    required this.controller,
+    required this.onTap,
+    required this.onCancel,
+    required this.onSubmit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (!expanded) {
+      return InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              const Icon(Icons.add, size: 18, color: AppTheme.textMuted),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Khác — tự nhập câu trả lời',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: AppTheme.textMuted,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 4),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceMuted,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          TextField(
+            controller: controller,
+            maxLines: 3,
+            maxLength: 4000,
+            autofocus: true,
+            textInputAction: TextInputAction.newline,
+            style: const TextStyle(
+              fontSize: 14,
+              height: 1.45,
+              color: AppTheme.textPrimary,
+            ),
+            decoration: InputDecoration(
+              hintText: 'Nhập câu trả lời khác...',
+              counterText: '',
+              filled: true,
+              fillColor: Colors.white,
+              isDense: true,
+              contentPadding: const EdgeInsets.all(10),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppTheme.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppTheme.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppTheme.infoText),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: onCancel,
+                child: const Text(
+                  'Huỷ',
+                  style: TextStyle(color: AppTheme.textMuted),
+                ),
+              ),
+              const SizedBox(width: 4),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: controller,
+                builder: (context, value, _) {
+                  final canSend = value.text.trim().isNotEmpty;
+                  return FilledButton(
+                    onPressed: canSend ? onSubmit : null,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppTheme.infoText,
+                      disabledBackgroundColor: AppTheme.infoText.withValues(
+                        alpha: 0.35,
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: const Text('Gửi'),
+                  );
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Thẻ phê duyệt HITL: agent đang chờ người dùng quyết định trước khi chạy tiếp.

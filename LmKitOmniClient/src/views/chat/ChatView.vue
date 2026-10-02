@@ -42,8 +42,30 @@
           title="Thu hồi liên kết chia sẻ (liên kết cũ sẽ ngừng hoạt động)">
           <i class="pi pi-link text-base rotate-45" aria-hidden="true"></i>
         </button>
+        <!-- Tác vụ nền: badge hiện số tác vụ ĐANG chạy nên người dùng biết có việc chạy phía sau
+             mà không phải mở panel. -->
+        <button
+          @click="backgroundTasksOpen = true"
+          :aria-expanded="backgroundTasksOpen"
+          :title="backgroundTaskCount > 0 ? `Tác vụ nền (${backgroundTaskCount} đang chạy)` : 'Tác vụ nền'"
+          aria-label="Mở panel tác vụ nền"
+          class="relative w-9 h-9 flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+          :class="backgroundTasksOpen ? 'bg-blue-50 text-blue-700' : ''">
+          <i class="pi pi-list-check text-base" aria-hidden="true"></i>
+          <span
+            v-if="backgroundTaskCount > 0"
+            class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-blue-900 text-white text-[10px] font-semibold leading-4 flex items-center justify-center">
+            {{ backgroundTaskCount > 9 ? '9+' : backgroundTaskCount }}
+          </span>
+        </button>
       </div>
     </div>
+
+    <!-- Panel tác vụ nền (agent run đang chạy / đã xong): drawer phải, tự đóng bằng nút X. -->
+    <BackgroundTasksPanel
+      v-if="backgroundTasksOpen"
+      @close="backgroundTasksOpen = false"
+      @active-count="backgroundTaskCount = $event" />
 
     <!-- Chat History -->
     <div ref="chatContainer" class="flex-1 min-h-0 overflow-y-auto scroll-smooth" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Lịch sử trò chuyện">
@@ -152,23 +174,65 @@
               <!-- Render Message with Charts -->
               <GenerativeUiRenderer :content="msg.content" />
 
-              <!-- Structured clarification is stored in the message marker and replayed from history. -->
-              <div v-if="msg.clarification" class="mt-3 max-w-xl rounded-2xl border border-blue-200 bg-blue-50/70 p-4">
-                <div class="font-semibold text-gray-800">{{ msg.clarification.question }}</div>
-                <div v-if="msg.clarificationAnswer || messages[index + 1]?.role === 'user'" class="mt-2 text-sm text-gray-600">Đã trả lời câu hỏi làm rõ.</div>
-                <div v-else class="mt-3 flex flex-wrap gap-2">
-                  <button v-for="option in msg.clarification.options" :key="option.value" type="button"
-                    class="min-h-11 rounded-full border border-blue-200 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-blue-100"
-                    @click="answerClarification(msg, option.value)">
-                    {{ option.label }}<span v-if="option.recommended" class="ml-1 text-blue-700">· Đề xuất</span>
-                  </button>
-                  <button type="button" class="min-h-11 rounded-full border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                    @click="msg.clarificationOtherOpen = true">Khác</button>
-                </div>
-                <div v-if="msg.clarificationOtherOpen && !msg.clarificationAnswer && messages[index + 1]?.role !== 'user'" class="mt-3 flex gap-2">
-                  <Textarea v-model="msg.clarificationOtherText" rows="2" autoResize maxlength="4000" aria-label="Câu trả lời khác" placeholder="Nhập câu trả lời của bạn" class="flex-1" />
-                  <Button label="Gửi" :disabled="!msg.clarificationOtherText?.trim() || isGenerating"
-                    @click="answerClarification(msg, msg.clarificationOtherText || '')" />
+              <!-- Clarification card. Marker lưu trong message nên reload vẫn dựng lại được.
+                   Bố cục theo cách ChatGPT/Claude làm câu hỏi có lựa chọn: thẻ viền trung tính,
+                   câu hỏi đậm vừa, và mỗi lựa chọn là MỘT HÀNG đầy đủ bề rộng có vòng chọn —
+                   thay cho các pill xanh dương trước đây, vốn khiến card đọc như một khối cảnh
+                   báo chứ không phải một câu hỏi đang chờ người dùng trả lời. -->
+              <div v-if="msg.clarification" class="mt-3 w-full max-w-2xl rounded-2xl border border-gray-200 bg-white shadow-sm">
+                <div class="px-4 py-3.5">
+                  <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                    <i class="pi pi-question-circle text-[12px]" aria-hidden="true"></i>
+                    <span>Cần bạn xác nhận</span>
+                  </div>
+                  <div class="mt-2 text-[15px] font-medium leading-snug text-gray-900">{{ msg.clarification.question }}</div>
+
+                  <!-- Chưa trả lời: danh sách hàng lựa chọn -->
+                  <div v-if="!isClarificationAnswered(msg, index)" class="mt-3 flex flex-col gap-1.5">
+                    <button v-for="option in msg.clarification.options" :key="option.value" type="button"
+                      class="group flex min-h-11 w-full items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left text-sm transition-colors"
+                      :class="option.recommended
+                        ? 'border-gray-300 bg-gray-50 text-gray-900 hover:border-gray-400 hover:bg-gray-100'
+                        : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'"
+                      @click="answerClarification(msg, option.value)">
+                      <span class="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border transition-colors"
+                        :class="option.recommended ? 'border-gray-900 bg-gray-900' : 'border-gray-300 group-hover:border-gray-400'">
+                        <span v-if="option.recommended" class="h-1.5 w-1.5 rounded-full bg-white"></span>
+                      </span>
+                      <span class="flex-1 leading-snug">{{ option.label }}</span>
+                      <span v-if="option.recommended"
+                        class="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-gray-500 ring-1 ring-gray-200">Đề xuất</span>
+                    </button>
+
+                    <button v-if="!msg.clarificationOtherOpen" type="button"
+                      class="group flex min-h-11 w-full items-center gap-3 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-left text-sm text-gray-700 transition-colors hover:border-gray-300 hover:bg-gray-50"
+                      @click="msg.clarificationOtherOpen = true">
+                      <span class="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border border-gray-300 group-hover:border-gray-400">
+                        <i class="pi pi-pencil text-[9px] text-gray-400" aria-hidden="true"></i>
+                      </span>
+                      <span class="flex-1 leading-snug">Khác — trả lời theo ý bạn</span>
+                    </button>
+                  </div>
+
+                  <!-- Trả lời tự do -->
+                  <div v-if="msg.clarificationOtherOpen && !isClarificationAnswered(msg, index)" class="mt-2">
+                    <Textarea v-model="msg.clarificationOtherText" rows="2" autoResize maxlength="4000"
+                      aria-label="Câu trả lời khác" placeholder="Nhập câu trả lời của bạn…" class="w-full text-sm" />
+                    <div class="mt-2 flex justify-end gap-2">
+                      <Button label="Huỷ" text size="small" severity="secondary"
+                        @click="msg.clarificationOtherOpen = false" />
+                      <Button label="Gửi" size="small" :disabled="!msg.clarificationOtherText?.trim() || isGenerating"
+                        @click="answerClarification(msg, msg.clarificationOtherText || '')" />
+                    </div>
+                  </div>
+
+                  <!-- Đã trả lời: thu gọn thành một dòng xác nhận thay vì để nguyên các nút -->
+                  <div v-else-if="isClarificationAnswered(msg, index)"
+                    class="mt-3 flex items-start gap-2 rounded-xl bg-gray-50 px-3.5 py-2.5 text-sm text-gray-600 ring-1 ring-gray-100">
+                    <i class="pi pi-check-circle mt-[2px] text-[13px] text-emerald-600" aria-hidden="true"></i>
+                    <span>Đã trả lời<template v-if="clarificationAnswerOf(msg, index)">:<span
+                      class="font-medium text-gray-900"> {{ clarificationAnswerOf(msg, index) }}</span></template></span>
+                  </div>
                 </div>
               </div>
 
@@ -437,6 +501,7 @@ import { errorMessage, readApiError } from '@/api/errors';
 import { useAuthStore } from '@/store/auth.store';
 import GenerativeUiRenderer from '@/components/chat/GenerativeUiRenderer.vue';
 import CanvasPanel from '@/components/canvas/CanvasPanel.vue';
+import BackgroundTasksPanel from './BackgroundTasksPanel.vue';
 import { largestCodeFence } from '@/components/canvas/codeFence';
 import { useVoiceInput } from '@/composables/useVoiceInput';
 import {
@@ -493,6 +558,13 @@ const insertIntoComposer = (text: string) => {
 // --- Canvas panel -------------------------------------------------------------
 
 const canvasPanelOpen = ref(false);
+
+/**
+ * Panel "Tác vụ nền" (agent run đang chạy / đã xong). Mặc định ĐÓNG để không chiếm chỗ transcript;
+ * badge trên nút mở cho biết có bao nhiêu tác vụ đang chạy mà không cần mở panel.
+ */
+const backgroundTasksOpen = ref(false);
+const backgroundTaskCount = ref(0);
 const canvasCount = ref(0);
 const canvasPanelRef = ref<InstanceType<typeof CanvasPanel> | null>(null);
 
@@ -666,6 +738,15 @@ const loadMessages = async () => {
           clarification: parsed.clarification
         };
       });
+      // Câu trả lời cho card làm rõ được LƯU kèm câu hỏi (model cần ngữ cảnh khi dựng lại
+      // lịch sử), nhưng trong transcript người dùng chỉ nên thấy câu trả lời của mình.
+      for (let i = 1; i < messages.value.length; i++) {
+        const question = messages.value[i - 1].clarification?.question;
+        const reply = messages.value[i];
+        if (!question || reply.role !== 'user') continue;
+        const prefix = `${question}\n`;
+        if (reply.content.startsWith(prefix)) reply.content = reply.content.slice(prefix.length).trim();
+      }
       await scrollToBottom();
     } else {
       if (response.status === 404) {
@@ -962,6 +1043,15 @@ async function streamExchange(
   }
 }
 
+/** Card làm rõ đã được trả lời chưa: hoặc vừa bấm trong phiên này, hoặc trong lịch sử đã có
+ * lượt người dùng ngay sau nó (câu hỏi + câu trả lời được lưu chung một message). */
+const isClarificationAnswered = (message: ChatMessage, index: number): boolean =>
+  Boolean(message.clarificationAnswer) || messages.value[index + 1]?.role === 'user';
+
+/** Câu trả lời đã chọn, để card thu gọn hiển thị đúng lựa chọn đó thay vì một dòng chung chung. */
+const clarificationAnswerOf = (message: ChatMessage, index: number): string =>
+  message.clarificationAnswer ?? messages.value[index + 1]?.content?.trim() ?? '';
+
 const answerClarification = async (message: ChatMessage, answer: string) => {
   const normalizedAnswer = answer.trim();
   if (!normalizedAnswer || isGenerating.value || message.clarificationAnswer || !message.clarification) return;
@@ -971,7 +1061,9 @@ const answerClarification = async (message: ChatMessage, answer: string) => {
   message.clarificationAnswer = normalizedAnswer;
   message.clarificationOtherOpen = false;
   const clarificationReply = `${message.clarification.question}\n${normalizedAnswer}`;
-  messages.value.push({ role: 'user', content: clarificationReply });
+  // Gửi kèm câu hỏi để model có ngữ cảnh, nhưng bong bóng chat chỉ hiển thị câu trả lời:
+  // người dùng không cần đọc lại chính câu hỏi của mình trong transcript.
+  messages.value.push({ role: 'user', content: normalizedAnswer });
   isGenerating.value = true;
   const assistantMsg: ChatMessage = { role: 'assistant', content: '', isTyping: true };
   messages.value.push(assistantMsg);

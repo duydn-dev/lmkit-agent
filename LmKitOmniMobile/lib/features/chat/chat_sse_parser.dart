@@ -78,6 +78,14 @@ class ChatSseParser {
         value.substring(24, value.length - 1).trim(),
       );
     }
+    if (value.startsWith('[CLARIFICATION:') && value.endsWith(']')) {
+      // Yêu cầu hỏi lại của trợ lý (AgentOrchestrator.FormatClarificationMarker).
+      // Payload là JSON ClarificationRequest {question, options:[{label,value,recommended}]}.
+      return ChatStreamEvent(
+        'clarification',
+        value.substring(15, value.length - 1),
+      );
+    }
     if (value.startsWith('[FILE:') && value.endsWith(']')) {
       return ChatStreamEvent('file', value.substring(6, value.length - 1));
     }

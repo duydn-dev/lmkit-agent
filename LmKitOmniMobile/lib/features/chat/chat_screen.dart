@@ -307,6 +307,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
+  /// Trả lời thẻ hỏi lại: đánh dấu đã trả lời rồi gửi lựa chọn như một tin nhắn mới.
+  Future<void> _answerClarification(
+    ChatMessageModel message,
+    String answer,
+  ) async {
+    final trimmed = answer.trim();
+    if (trimmed.isEmpty || _sending) return;
+    setState(() => message.clarificationAnswered = true);
+    _composer.text = trimmed;
+    _composer.selection = TextSelection.collapsed(offset: trimmed.length);
+    await _send();
+  }
+
   /// Chạy lại câu trả lời cuối: server bỏ qua `message` khi `regenerate = true`.
   Future<void> _regenerate() async {
     final sessionId = _sessionId;
@@ -387,6 +400,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       case 'approval':
         assistant.approvalId = event.value;
         assistant.isTyping = false;
+      case 'clarification':
+        assistant.clarification = _parseClarification(event.value);
+        assistant.isTyping = false;
       case 'file':
         final file = _parseProducedFile(event.value);
         if (file != null) assistant.producedFiles.add(file);
@@ -402,6 +418,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         assistant.thinkingSteps.add('Đã lưu vào Canvas: ${event.value}');
     }
     if (mounted) setState(() {});
+  }
+
+  Map<String, dynamic>? _parseClarification(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final data = Map<String, dynamic>.from(decoded);
+      final question = (data['question'] as String?)?.trim() ?? '';
+      if (question.isEmpty) return null;
+      return data;
+    } catch (_) {
+      return null;
+    }
   }
 
   ProducedFileModel? _parseProducedFile(String raw) {
@@ -681,6 +710,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       isLive: _sending && index == _messages.length - 1,
                       onEdit: index == lastUserIndex && !_sending
                           ? () => _startEditing(index)
+                          : null,
+                      onClarificationAnswer:
+                          !_sending &&
+                              index == _messages.length - 1 &&
+                              _messages[index].clarification != null &&
+                              !_messages[index].clarificationAnswered
+                          ? (answer) =>
+                              _answerClarification(_messages[index], answer)
                           : null,
                       onRegenerate:
                           index == lastAssistantIndex &&

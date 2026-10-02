@@ -73,6 +73,37 @@ public sealed class ReActPlannerInstructionTests
     }
 
     /// <summary>
+    /// A pasted URL is an instruction to READ that page, and the live failure behind this test is
+    /// the exact turn that motivated it: "&lt;link laodong.vn…&gt; đấy nhé, tạo báo cáo giá xăng dầu
+    /// xem nào" came back with "Tôi không thể truy cập nội dung từ đường link bạn cung cấp" plus
+    /// three prose questions — including "bạn dán nội dung bài báo vào đây". The model asked the user
+    /// to do the reading step. The rule is asserted on an ordinary turn too: the instruction is one
+    /// fixed block, so the link policy must never depend on the query looking research-shaped.
+    /// </summary>
+    [Fact]
+    public void TheInstruction_CarriesTheLinkRule_OnEveryTurn()
+    {
+        var instruction = Build(query: "https://laodong.vn/kinh-doanh/gia-xang-dau-hom-nay-210-tang-manh-hon-4-1776264.ldo đấy nhé, tạo báo cáo giá xăng dầu xem nào");
+
+        Assert.Contains("LINK RULE", instruction, StringComparison.Ordinal);
+        Assert.Contains("fetch_web", instruction, StringComparison.Ordinal);
+        Assert.Contains("open it with the fetch_web tool before answering", instruction, StringComparison.Ordinal);
+        // The two behaviours observed live, both forbidden by name.
+        Assert.Contains("never a reason to ask the user to paste the article", instruction, StringComparison.Ordinal);
+        Assert.Contains("you cannot access a link while fetch_web", instruction, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheLinkRule_NeverCrowdsOutTheRequestBlock()
+    {
+        const string url = "https://example.org/bao-cao-quy-3";
+
+        var instruction = Build(query: url);
+
+        Assert.Equal(url, RequestBlock(instruction));
+    }
+
+    /// <summary>
     /// A short, tool-less turn is exactly the shape that produced the greeting. The rule that
     /// forbids answering as if nothing arrived is the guard against that, so it is asserted on
     /// its own rather than trusted to the block's presence.
