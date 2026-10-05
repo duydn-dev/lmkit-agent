@@ -169,7 +169,7 @@ public sealed class SchemaIndexingTests : IDisposable
         }
 
         public Task<List<VectorSearchResult>> SearchSimilarWithAnyPayloadAsync(
-            string collectionName, float[] queryVector, string payloadField, IReadOnlyList<string> allowedValues, int topK, CancellationToken ct = default)
+            string collectionName, float[] queryVector, string payloadField, IReadOnlyList<string> allowedValues, int topK, RetrievalMetadataFilter? metadata = null, CancellationToken ct = default)
         {
             var matches = Points
                 .Where(p => p.Payload.TryGetValue(payloadField, out var v) && allowedValues.Contains(v))
@@ -180,8 +180,8 @@ public sealed class SchemaIndexingTests : IDisposable
         }
 
         public Task DeleteVectorsAsync(string collectionName, IReadOnlyList<Guid> ids, CancellationToken ct = default) => Task.CompletedTask;
-        public Task<List<VectorSearchResult>> SearchByPayloadFilterAsync(string collectionName, string payloadField, List<string> keywords, string tenantFilterField, string tenantId, int topK, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<List<VectorSearchResult>> SearchSimilarWithinDocumentsAsync(string collectionName, float[] queryVector, string tenantField, string tenantId, string documentIdField, IReadOnlyList<string> documentIds, int topK, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<List<VectorSearchResult>> SearchByPayloadWithinDocumentsAsync(string collectionName, string payloadField, List<string> keywords, string tenantField, string tenantId, string documentIdField, IReadOnlyList<string> documentIds, int topK, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<List<VectorSearchResult>> SearchByPayloadFilterAsync(string collectionName, string payloadField, List<string> keywords, string tenantFilterField, string tenantId, int topK, RetrievalMetadataFilter? metadata = null, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<List<VectorSearchResult>> SearchSimilarWithinDocumentsAsync(string collectionName, float[] queryVector, string tenantField, string tenantId, string documentIdField, IReadOnlyList<string> documentIds, int topK, RetrievalMetadataFilter? metadata = null, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<List<VectorSearchResult>> SearchByPayloadWithinDocumentsAsync(string collectionName, string payloadField, List<string> keywords, string tenantField, string tenantId, string documentIdField, IReadOnlyList<string> documentIds, int topK, RetrievalMetadataFilter? metadata = null, CancellationToken ct = default) => throw new NotSupportedException();
     }
 }

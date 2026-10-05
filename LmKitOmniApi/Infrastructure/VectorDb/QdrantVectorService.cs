@@ -16,10 +16,24 @@ public class QdrantVectorService : IVectorStoreService, IDisposable
     internal const string FullTextIndexField = "Keywords";
 
     /// <summary>
-    /// Payload fields used as exact-match filters (tenant/scope/document scoping).
-    /// Keyword indexes keep those filters from degrading into full scans.
+    /// Payload fields used as exact-match filters (tenant/scope/document scoping +
+    /// metadata-aware retrieval: doc type / category / tags / source). Keyword
+    /// indexes keep those filters from degrading into full scans; a keyword index on
+    /// the <see cref="VectorPayloadFields.Tags"/> ARRAY matches element-wise ("has tag X").
     /// </summary>
-    internal static readonly string[] KeywordIndexFields = ["AccessScope", "TenantId", "DocumentId"];
+    internal static readonly string[] KeywordIndexFields =
+    [
+        "AccessScope", "TenantId", "DocumentId",
+        VectorPayloadFields.DocType, VectorPayloadFields.Category,
+        VectorPayloadFields.Tags, VectorPayloadFields.Source
+    ];
+
+    /// <summary>
+    /// Integer-indexed payload fields for range filters — currently the upload time
+    /// (<see cref="VectorPayloadFields.UploadedAtUnix"/>, Unix seconds) used by
+    /// date-range metadata filtering.
+    /// </summary>
+    internal static readonly string[] IntegerIndexFields = [VectorPayloadFields.UploadedAtUnix];
 
     private readonly QdrantClient _client;
     private readonly ILogger<QdrantVectorService> _logger;
@@ -94,9 +108,18 @@ public class QdrantVectorService : IVectorStoreService, IDisposable
                     cancellationToken: ct);
             }
 
+            foreach (var field in IntegerIndexFields)
+            {
+                await _client.CreatePayloadIndexAsync(
+                    collectionName: collectionName,
+                    fieldName: field,
+                    schemaType: PayloadSchemaType.Integer,
+                    cancellationToken: ct);
+            }
+
             _logger.LogInformation(
-                "Qdrant payload indexes ensured on {Collection}: full-text '{TextField}' + keyword {KeywordFields}.",
-                collectionName, FullTextIndexField, KeywordIndexFields);
+                "Qdrant payload indexes ensured on {Collection}: full-text '{TextField}' + keyword {KeywordFields} + integer {IntegerFields}.",
+                collectionName, FullTextIndexField, KeywordIndexFields, IntegerIndexFields);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -133,9 +156,17 @@ public class QdrantVectorService : IVectorStoreService, IDisposable
             {
                 if (kvp.Value is string s) point.Payload.Add(kvp.Key, s);
                 else if (kvp.Value is int i) point.Payload.Add(kvp.Key, i);
+                else if (kvp.Value is long l) point.Payload.Add(kvp.Key, l); // e.g. UploadedAtUnix — integer-indexed for range filters
                 else if (kvp.Value is float f) point.Payload.Add(kvp.Key, f);
                 else if (kvp.Value is double d) point.Payload.Add(kvp.Key, d);
                 else if (kvp.Value is bool b) point.Payload.Add(kvp.Key, b);
+                // Keyword ARRAY (e.g. Tags): a keyword index over a list matches element-wise.
+                else if (kvp.Value is IEnumerable<string> list)
+                {
+                    var listValue = new ListValue();
+                    foreach (var item in list) listValue.Values.Add(new Value { StringValue = item });
+                    point.Payload.Add(kvp.Key, new Value { ListValue = listValue });
+                }
                 else if (kvp.Value is not null) point.Payload.Add(kvp.Key, kvp.Value.ToString()!);
             }
         }
@@ -169,11 +200,23 @@ public class QdrantVectorService : IVectorStoreService, IDisposable
         string payloadField,
         IReadOnlyList<string> allowedValues,
         int topK,
+        RetrievalMetadataFilter? metadata = null,
         CancellationToken ct = default)
     {
         if (allowedValues.Count == 0) return new List<VectorSearchResult>();
 
-        var filter = AnyKeywordMatch(payloadField, allowedValues);
+        // No metadata → keep the flat OR-group filter exactly as before. With metadata,
+        // the scope OR-group moves under Must so the metadata clauses AND against it.
+        Filter filter;
+        if (metadata is null || metadata.IsEmpty)
+        {
+            filter = AnyKeywordMatch(payloadField, allowedValues);
+        }
+        else
+        {
+            filter = new Filter { Must = { new Condition { Filter = AnyKeywordMatch(payloadField, allowedValues) } } };
+            AppendMetadataConditions(filter, metadata);
+        }
 
         var queryResult = await _client.QueryAsync(
             collectionName: collectionName,
@@ -206,6 +249,7 @@ public class QdrantVectorService : IVectorStoreService, IDisposable
         string documentIdField,
         IReadOnlyList<string> documentIds,
         int topK,
+        RetrievalMetadataFilter? metadata = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(tenantId) || documentIds.Count == 0)
@@ -219,6 +263,7 @@ public class QdrantVectorService : IVectorStoreService, IDisposable
                 new Condition { Filter = AnyKeywordMatch(documentIdField, documentIds) }
             }
         };
+        AppendMetadataConditions(filter, metadata);
 
         var queryResult = await _client.QueryAsync(
             collectionName: collectionName,
@@ -245,7 +290,8 @@ public class QdrantVectorService : IVectorStoreService, IDisposable
     /// </summary>
     public async Task<List<VectorSearchResult>> SearchByPayloadFilterAsync(
         string collectionName, string payloadField, List<string> keywords,
-        string tenantFilterField, string tenantId, int topK, CancellationToken ct = default)
+        string tenantFilterField, string tenantId, int topK,
+        RetrievalMetadataFilter? metadata = null, CancellationToken ct = default)
     {
         if (keywords.Count == 0) return new List<VectorSearchResult>();
 
@@ -262,6 +308,7 @@ public class QdrantVectorService : IVectorStoreService, IDisposable
             },
             Should = { AnyTextMatch(payloadField, keywords) } // Any keyword match
         };
+        AppendMetadataConditions(filter, metadata);
 
         return await ScrollAndScoreAsync(collectionName, filter, keywords, topK, nameof(SearchByPayloadFilterAsync), ct);
     }
@@ -284,6 +331,7 @@ public class QdrantVectorService : IVectorStoreService, IDisposable
         string documentIdField,
         IReadOnlyList<string> documentIds,
         int topK,
+        RetrievalMetadataFilter? metadata = null,
         CancellationToken ct = default)
     {
         if (keywords.Count == 0 || string.IsNullOrEmpty(tenantId) || documentIds.Count == 0)
@@ -304,6 +352,7 @@ public class QdrantVectorService : IVectorStoreService, IDisposable
             },
             Should = { AnyTextMatch(payloadField, keywords) } // Any keyword match
         };
+        AppendMetadataConditions(filter, metadata);
 
         return await ScrollAndScoreAsync(collectionName, filter, keywords, topK, nameof(SearchByPayloadWithinDocumentsAsync), ct);
     }
@@ -426,6 +475,40 @@ public class QdrantVectorService : IVectorStoreService, IDisposable
             }
         }));
         return group;
+    }
+
+    /// <summary>
+    /// ANDs the metadata-aware constraints onto an already-built filter's <c>Must</c>:
+    /// each non-empty value list becomes a nested OR-group ("field IN values"), and an
+    /// upload-time window becomes an integer <c>Range</c> on
+    /// <see cref="VectorPayloadFields.UploadedAtUnix"/>. A null/empty filter is a no-op,
+    /// so the ordinary (unfiltered) retrieval path is byte-for-byte unchanged.
+    /// </summary>
+    private static void AppendMetadataConditions(Filter filter, RetrievalMetadataFilter? metadata)
+    {
+        if (metadata is null || metadata.IsEmpty) return;
+
+        void AndAnyKeyword(string field, IReadOnlyList<string>? values)
+        {
+            if (values is { Count: > 0 })
+                filter.Must.Add(new Condition { Filter = AnyKeywordMatch(field, values) });
+        }
+
+        AndAnyKeyword(VectorPayloadFields.DocType, metadata.DocTypes);
+        AndAnyKeyword(VectorPayloadFields.Category, metadata.Categories);
+        AndAnyKeyword(VectorPayloadFields.Tags, metadata.Tags);
+        AndAnyKeyword(VectorPayloadFields.Source, metadata.Sources);
+
+        if (metadata.UploadedAfterUnix is not null || metadata.UploadedBeforeUnix is not null)
+        {
+            var range = new Qdrant.Client.Grpc.Range();
+            if (metadata.UploadedAfterUnix is long after) range.Gte = after;
+            if (metadata.UploadedBeforeUnix is long before) range.Lte = before;
+            filter.Must.Add(new Condition
+            {
+                Field = new FieldCondition { Key = VectorPayloadFields.UploadedAtUnix, Range = range }
+            });
+        }
     }
 
     /// <summary>

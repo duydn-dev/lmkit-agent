@@ -60,7 +60,7 @@ export interface SchemaDiagram {
 //  - commas are the key separator, so nothing else in a line may contain a bare comma.
 // Anything that would break the grammar is normalised here instead of producing a diagram
 // that fails to render for a whole connection.
-const STRUCTURAL = /["`:{}\[\]|<>#%\r\n\t]/g
+const STRUCTURAL = /["`:{}[\]|<>#%\r\n\t]/g
 const WHITESPACE = /\s+/g
 
 /** A Mermaid-safe entity name; quoted in the source so dots/spaces/diacritics stay readable. */

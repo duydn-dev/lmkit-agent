@@ -134,7 +134,15 @@
 
               <!-- File info -->
               <h4 class="font-semibold text-gray-800 text-sm leading-snug mb-1 line-clamp-2 group-hover:text-blue-600 transition-colors">{{ doc.fileName }}</h4>
-              <p class="text-xs text-gray-400 mb-4">{{ formatDate(doc.uploadedAt) }}</p>
+              <p class="text-xs text-gray-400 mb-2">{{ formatDate(doc.uploadedAt) }}</p>
+
+              <!-- Metadata badges: category + tags (metadata-aware retrieval) -->
+              <div v-if="doc.category || tagList(doc.tags).length" class="flex flex-wrap items-center gap-1.5 mb-4">
+                <span v-if="doc.category" class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">{{ doc.category }}</span>
+                <span v-for="tag in tagList(doc.tags).slice(0, 3)" :key="tag" class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 text-gray-600">#{{ tag }}</span>
+                <span v-if="tagList(doc.tags).length > 3" class="text-[10px] text-gray-400">+{{ tagList(doc.tags).length - 3 }}</span>
+              </div>
+              <div v-else class="mb-4"></div>
 
               <!-- Status bar -->
               <div class="flex items-center justify-between">
@@ -202,6 +210,16 @@
               <div class="flex items-center gap-2 text-sm text-gray-500">
                 <i class="pi pi-calendar text-gray-300 text-xs"></i>
                 <span>{{ formatDate(data.uploadedAt) }}</span>
+              </div>
+            </template>
+          </Column>
+
+          <Column header="Phân loại / Thẻ">
+            <template #body="{ data }">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span v-if="data.category" class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">{{ data.category }}</span>
+                <span v-for="tag in tagList(data.tags).slice(0, 3)" :key="tag" class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-gray-100 text-gray-600">#{{ tag }}</span>
+                <span v-if="!data.category && !tagList(data.tags).length" class="text-xs text-gray-300">—</span>
               </div>
             </template>
           </Column>
@@ -326,6 +344,19 @@
           </div>
         </div>
 
+        <!-- Optional metadata → powers metadata-aware retrieval (filter by category/tags). -->
+        <div class="mt-4 grid gap-3">
+          <div class="grid gap-1">
+            <label for="upload-category" class="text-xs font-medium text-gray-600">Phân loại (tùy chọn)</label>
+            <InputText id="upload-category" v-model="uploadCategory" :disabled="uploading" maxlength="100" placeholder="Ví dụ: Báo cáo quan trắc" class="!text-sm" />
+          </div>
+          <div class="grid gap-1">
+            <label for="upload-tags" class="text-xs font-medium text-gray-600">Thẻ (phân tách bằng dấu phẩy)</label>
+            <InputText id="upload-tags" v-model="uploadTags" :disabled="uploading" maxlength="500" placeholder="môi-trường, nước-thải" class="!text-sm" />
+            <span class="text-[11px] text-gray-400">Giúp lọc tài liệu khi truy vấn RAG (theo phân loại, thẻ, loại file, thời gian tải lên).</span>
+          </div>
+        </div>
+
         <!-- Validation / upload error -->
         <div v-if="uploadError" role="alert" class="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
           {{ uploadError }}
@@ -442,6 +473,16 @@ interface Document {
   vectorizationStatus: 'Pending' | 'Processing' | 'Completed' | 'Failed';
   processingAttempts: number;
   hasError: boolean;
+  // Metadata-aware retrieval fields.
+  category?: string | null;
+  tags?: string | null;
+  source?: string | null;
+  docType?: string;
+}
+
+/** Split the stored comma-separated tags into a trimmed array for display. */
+function tagList(tags?: string | null): string[] {
+  return (tags ?? '').split(',').map(t => t.trim()).filter(Boolean);
 }
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
@@ -452,6 +493,9 @@ const documentError = ref('');
 const showUploadDialog = ref(false);
 const uploading = ref(false);
 const selectedFile = ref<File | null>(null);
+// Optional metadata captured at upload for metadata-aware retrieval.
+const uploadCategory = ref('');
+const uploadTags = ref('');
 const searchQuery = ref('');
 const viewMode = ref<'grid' | 'table'>('grid');
 const isDragging = ref(false);
@@ -501,6 +545,8 @@ function clearSelectedFile() {
 
 function openUpload() {
   clearSelectedFile();
+  uploadCategory.value = '';
+  uploadTags.value = '';
   showUploadDialog.value = true;
 }
 
@@ -608,12 +654,16 @@ const uploadFile = async () => {
 
   const formData = new FormData();
   formData.append('file', selectedFile.value);
+  if (uploadCategory.value.trim()) formData.append('category', uploadCategory.value.trim());
+  if (uploadTags.value.trim()) formData.append('tags', uploadTags.value.trim());
 
   try {
     const response = await http.post(ApiFactory.DOCUMENT.UPLOAD, formData);
 
     if (response.ok) {
       selectedFile.value = null;
+      uploadCategory.value = '';
+      uploadTags.value = '';
       showUploadDialog.value = false;
       loadDocuments();
     } else {

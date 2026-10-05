@@ -20,6 +20,12 @@ public class SaveUploadedDocumentCommand : IRequest<Guid>
     /// <summary>Lower-cased file extension including the leading dot (e.g. ".pdf").</summary>
     public string Extension { get; set; } = string.Empty;
 
+    /// <summary>Optional user-assigned category for metadata-aware retrieval.</summary>
+    public string? Category { get; set; }
+
+    /// <summary>Optional comma-separated tags for metadata-aware retrieval.</summary>
+    public string? Tags { get; set; }
+
     /// <summary>Upload payload. Owned and disposed by the caller.</summary>
     public Stream Content { get; set; } = Stream.Null;
 }

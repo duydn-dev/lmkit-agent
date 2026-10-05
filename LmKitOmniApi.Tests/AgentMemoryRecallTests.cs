@@ -279,7 +279,8 @@ public sealed class AgentMemoryRecallTests : IDisposable
 
         public Task<List<VectorSearchResult>> SearchSimilarWithAnyPayloadAsync(
             string collectionName, float[] queryVector, string payloadField,
-            IReadOnlyList<string> allowedValues, int topK, CancellationToken ct = default)
+            IReadOnlyList<string> allowedValues, int topK,
+            RetrievalMetadataFilter? metadata = null, CancellationToken ct = default)
             => Task.FromResult(new List<VectorSearchResult>());
 
         public Task EnsureCollectionExistsAsync(string collectionName, ulong vectorSize, CancellationToken ct = default)
@@ -293,18 +294,21 @@ public sealed class AgentMemoryRecallTests : IDisposable
 
         public Task<List<VectorSearchResult>> SearchByPayloadFilterAsync(
             string collectionName, string payloadField, List<string> keywords,
-            string tenantFilterField, string tenantId, int topK, CancellationToken ct = default)
+            string tenantFilterField, string tenantId, int topK,
+            RetrievalMetadataFilter? metadata = null, CancellationToken ct = default)
             => Task.FromResult(new List<VectorSearchResult>());
 
         public Task<List<VectorSearchResult>> SearchSimilarWithinDocumentsAsync(
             string collectionName, float[] queryVector, string tenantField, string tenantId,
-            string documentIdField, IReadOnlyList<string> documentIds, int topK, CancellationToken ct = default)
+            string documentIdField, IReadOnlyList<string> documentIds, int topK,
+            RetrievalMetadataFilter? metadata = null, CancellationToken ct = default)
             => Task.FromResult(new List<VectorSearchResult>());
 
         public Task<List<VectorSearchResult>> SearchByPayloadWithinDocumentsAsync(
             string collectionName, string payloadField, List<string> keywords,
             string tenantField, string tenantId, string documentIdField,
-            IReadOnlyList<string> documentIds, int topK, CancellationToken ct = default)
+            IReadOnlyList<string> documentIds, int topK,
+            RetrievalMetadataFilter? metadata = null, CancellationToken ct = default)
             => Task.FromResult(new List<VectorSearchResult>());
     }
 }

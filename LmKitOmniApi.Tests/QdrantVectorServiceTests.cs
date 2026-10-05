@@ -97,7 +97,7 @@ public sealed class QdrantVectorServiceTests
         using var service = DeadService();
 
         await Assert.ThrowsAnyAsync<Exception>(() => service.SearchByPayloadFilterAsync(
-            "collection", "Keywords", ["alpha", "beta"], "AccessScope", "tenant", 20, Timeout()));
+            "collection", "Keywords", ["alpha", "beta"], "AccessScope", "tenant", 20, ct: Timeout()));
     }
 
     [Fact]
@@ -106,7 +106,7 @@ public sealed class QdrantVectorServiceTests
         using var service = DeadService();
 
         await Assert.ThrowsAnyAsync<Exception>(() => service.SearchByPayloadWithinDocumentsAsync(
-            "collection", "Keywords", ["alpha"], "TenantId", "tenant", "DocumentId", ["doc-1"], 20, Timeout()));
+            "collection", "Keywords", ["alpha"], "TenantId", "tenant", "DocumentId", ["doc-1"], 20, ct: Timeout()));
     }
 
     /// <summary>Guard clauses still short-circuit before any network call.</summary>
@@ -116,11 +116,11 @@ public sealed class QdrantVectorServiceTests
         using var service = DeadService();
 
         Assert.Empty(await service.SearchByPayloadFilterAsync(
-            "collection", "Keywords", [], "AccessScope", "tenant", 20, Timeout()));
+            "collection", "Keywords", [], "AccessScope", "tenant", 20, ct: Timeout()));
         Assert.Empty(await service.SearchByPayloadWithinDocumentsAsync(
-            "collection", "Keywords", ["alpha"], "TenantId", "tenant", "DocumentId", [], 20, Timeout()));
+            "collection", "Keywords", ["alpha"], "TenantId", "tenant", "DocumentId", [], 20, ct: Timeout()));
         Assert.Empty(await service.SearchByPayloadWithinDocumentsAsync(
-            "collection", "Keywords", ["alpha"], "TenantId", "", "DocumentId", ["doc-1"], 20, Timeout()));
+            "collection", "Keywords", ["alpha"], "TenantId", "", "DocumentId", ["doc-1"], 20, ct: Timeout()));
     }
 
     /// <summary>A port nothing listens on: the gRPC call fails fast (connection refused).</summary>
@@ -172,6 +172,9 @@ public sealed class QdrantVectorServiceTests
                 $"No payload index on '{QdrantVectorService.FullTextIndexField}'; Match.Text filters cannot work.");
             foreach (var field in QdrantVectorService.KeywordIndexFields)
                 Assert.True(info.PayloadSchema.ContainsKey(field), $"No payload index on '{field}'.");
+            // Metadata-aware retrieval also needs the integer index(es) for range filters.
+            foreach (var field in QdrantVectorService.IntegerIndexFields)
+                Assert.True(info.PayloadSchema.ContainsKey(field), $"No integer payload index on '{field}'.");
 
             // Idempotent: a FRESH service (empty per-process index cache) must be
             // able to re-ensure an existing collection without failing.

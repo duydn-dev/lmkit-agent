@@ -96,7 +96,8 @@ public class OCRKnowledgeIngestionService
                     userId,
                     $"ChatAttachment_{fileName}",
                     extractedText,
-                    timeout.Token);
+                    source: "ocr",
+                    ct: timeout.Token);
             }
 
             return new FileProcessingResult

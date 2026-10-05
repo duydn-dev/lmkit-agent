@@ -30,4 +30,11 @@ public class DocumentListItemDto
     public string VectorizationStatus { get; set; } = string.Empty;
     public int ProcessingAttempts { get; set; }
     public bool HasError { get; set; }
+
+    /// <summary>Metadata-aware retrieval fields surfaced for the UI (badges + filters).</summary>
+    public string? Category { get; set; }
+    public string? Tags { get; set; }
+    public string? Source { get; set; }
+    /// <summary>Coarse doc type derived from the file name (same vocabulary as the retrieval filter).</summary>
+    public string DocType { get; set; } = string.Empty;
 }

@@ -20,6 +20,9 @@ public class IngestKnowledgeCommandHandler : IRequestHandler<IngestKnowledgeComm
             request.UserId,
             request.FileName,
             request.Content,
-            cancellationToken);
+            source: "knowledgebase",
+            category: request.Category,
+            tags: request.Tags,
+            ct: cancellationToken);
     }
 }

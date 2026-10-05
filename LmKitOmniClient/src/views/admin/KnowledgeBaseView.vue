@@ -98,6 +98,55 @@
             />
           </div>
 
+          <!-- Metadata-aware retrieval filters -->
+          <div class="rounded-xl border border-gray-100 bg-gray-50/60 p-4 grid gap-3">
+            <div class="flex items-center gap-2">
+              <i class="pi pi-filter text-indigo-600 text-xs" aria-hidden="true"></i>
+              <span class="text-sm font-medium text-gray-700">Lọc theo metadata (tùy chọn)</span>
+            </div>
+
+            <div class="grid gap-1">
+              <span class="text-xs font-medium text-gray-600">Loại tài liệu</span>
+              <div class="flex flex-wrap gap-1.5">
+                <button
+                  v-for="opt in DOC_TYPE_OPTIONS"
+                  :key="opt.value"
+                  type="button"
+                  :disabled="querying"
+                  @click="toggleDocType(opt.value)"
+                  :class="filters.docTypes.includes(opt.value)
+                    ? '!bg-blue-900 !text-white border-blue-900'
+                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-100'"
+                  class="px-2.5 py-1 rounded-full border text-xs font-medium transition-colors">
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div class="grid gap-1">
+                <label for="kb-filter-category" class="text-xs font-medium text-gray-600">Phân loại</label>
+                <InputText id="kb-filter-category" v-model="filters.category" :disabled="querying" maxlength="100" placeholder="Ví dụ: Báo cáo quan trắc" class="w-full !text-sm" />
+              </div>
+              <div class="grid gap-1">
+                <label for="kb-filter-tags" class="text-xs font-medium text-gray-600">Thẻ (phân tách bằng dấu phẩy)</label>
+                <InputText id="kb-filter-tags" v-model="filters.tags" :disabled="querying" maxlength="500" placeholder="môi-trường, nước-thải" class="w-full !text-sm" />
+              </div>
+              <div class="grid gap-1">
+                <label for="kb-filter-after" class="text-xs font-medium text-gray-600">Tải lên từ ngày</label>
+                <input id="kb-filter-after" type="date" v-model="filters.uploadedAfter" :disabled="querying" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+              </div>
+              <div class="grid gap-1">
+                <label for="kb-filter-before" class="text-xs font-medium text-gray-600">Tải lên đến ngày</label>
+                <input id="kb-filter-before" type="date" v-model="filters.uploadedBefore" :disabled="querying" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+              </div>
+            </div>
+
+            <div v-if="hasActiveFilters" class="flex justify-end">
+              <Button label="Xóa bộ lọc" icon="pi pi-filter-slash" text size="small" :disabled="querying" @click="clearFilters" />
+            </div>
+          </div>
+
           <div class="flex flex-col sm:flex-row sm:items-end gap-3">
             <div class="grid gap-1">
               <label for="kb-topk" class="text-sm font-medium text-gray-700">Số đoạn ngữ cảnh (TopK)</label>
@@ -148,10 +197,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { http } from '@/api/http';
 import { ApiFactory } from '@/api/api.factory';
 import { errorMessage, readApiError } from '@/api/errors';
+
+// Doc-type vocabulary mirrors the backend DocumentTypeClassifier.
+const DOC_TYPE_OPTIONS = [
+  { value: 'pdf', label: 'PDF' },
+  { value: 'word', label: 'Word' },
+  { value: 'excel', label: 'Excel' },
+  { value: 'powerpoint', label: 'PowerPoint' },
+  { value: 'image', label: 'Hình ảnh' },
+  { value: 'text', label: 'Văn bản' },
+  { value: 'markdown', label: 'Markdown' }
+];
 
 // --- Section A: ingest ------------------------------------------------------
 const ingestForm = ref<{ fileName: string; content: string }>({ fileName: '', content: '' });
@@ -195,6 +255,28 @@ const answer = ref('');
 // Distinguishes "no query run yet" from "query returned an empty answer".
 const hasAnswer = ref(false);
 
+// Metadata-aware retrieval filters.
+const filters = ref<{ docTypes: string[]; category: string; tags: string; uploadedAfter: string; uploadedBefore: string }>({
+  docTypes: [], category: '', tags: '', uploadedAfter: '', uploadedBefore: ''
+});
+
+const toggleDocType = (value: string) => {
+  const i = filters.value.docTypes.indexOf(value);
+  if (i >= 0) filters.value.docTypes.splice(i, 1);
+  else filters.value.docTypes.push(value);
+};
+
+const hasActiveFilters = computed(() =>
+  filters.value.docTypes.length > 0
+  || !!filters.value.category.trim()
+  || !!filters.value.tags.trim()
+  || !!filters.value.uploadedAfter
+  || !!filters.value.uploadedBefore);
+
+const clearFilters = () => {
+  filters.value = { docTypes: [], category: '', tags: '', uploadedAfter: '', uploadedBefore: '' };
+};
+
 const runQuery = async () => {
   const query = queryForm.value.query.trim();
   if (!query) {
@@ -204,10 +286,16 @@ const runQuery = async () => {
   queryError.value = '';
   querying.value = true;
   try {
-    const response = await http.post(ApiFactory.KNOWLEDGE.QUERY, {
-      query,
-      topK: queryForm.value.topK ?? 3
-    });
+    const body: Record<string, unknown> = { query, topK: queryForm.value.topK ?? 3 };
+    if (filters.value.docTypes.length) body.docTypes = filters.value.docTypes;
+    const category = filters.value.category.trim();
+    if (category) body.categories = [category];
+    const tags = filters.value.tags.split(',').map(t => t.trim()).filter(Boolean);
+    if (tags.length) body.tags = tags;
+    if (filters.value.uploadedAfter) body.uploadedAfter = filters.value.uploadedAfter;
+    if (filters.value.uploadedBefore) body.uploadedBefore = filters.value.uploadedBefore;
+
+    const response = await http.post(ApiFactory.KNOWLEDGE.QUERY, body);
     if (!response.ok) {
       queryError.value = await readApiError(response, 'Không thể truy vấn tri thức');
       return;

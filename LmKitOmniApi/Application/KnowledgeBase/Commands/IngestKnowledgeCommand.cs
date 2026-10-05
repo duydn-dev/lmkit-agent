@@ -14,4 +14,8 @@ public class IngestKnowledgeCommand : IRequest<string>
     public Guid UserId { get; set; }
     public string FileName { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
+
+    /// <summary>Optional category + tags for metadata-aware retrieval.</summary>
+    public string? Category { get; set; }
+    public List<string>? Tags { get; set; }
 }

@@ -289,6 +289,10 @@ public sealed class AgentActionDispatcher
     private async Task<string> ExecuteRagQueryAsync(
         Guid tenantId, Guid? userId, string query, IReadOnlyCollection<Guid>? documentIds, CancellationToken ct)
     {
+        // Mức 3: let the agent narrow retrieval by metadata it can infer from the question
+        // (file type / explicit upload-year). Conservative — null when no clear signal.
+        var metadata = RagQueryFilterExtractor.FromQuery(query);
+
         var ragResult = await _ragService.QueryKnowledgeBaseAsync(
             tenantId,
             userId ?? Guid.Empty,
@@ -296,7 +300,8 @@ public sealed class AgentActionDispatcher
             topK: KnowledgeBaseTopK,
             ct: ct,
             chatInferenceLeaseAlreadyHeld: true,
-            documentIds: documentIds);
+            documentIds: documentIds,
+            metadata: metadata);
         await _toolPermission.RecordToolInvocationAsync(tenantId, userId, "QueryKnowledgeBase", query, ct);
         return ragResult;
     }

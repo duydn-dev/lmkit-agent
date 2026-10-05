@@ -32,6 +32,9 @@ public class SaveUploadedDocumentCommandHandler : IRequestHandler<SaveUploadedDo
             FileName = request.FileName,
             FilePath = filePath,
             UserId = request.UserId,
+            Category = string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim(),
+            Tags = NormalizeTags(request.Tags),
+            Source = "upload",
             IsVectorized = false
         };
 
@@ -39,5 +42,16 @@ public class SaveUploadedDocumentCommandHandler : IRequestHandler<SaveUploadedDo
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return doc.Id;
+    }
+
+    /// <summary>Trim, drop blanks, de-duplicate (case-insensitive) and re-join tags as CSV; null when empty.</summary>
+    private static string? NormalizeTags(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var tags = raw
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return tags.Length == 0 ? null : string.Join(",", tags);
     }
 }

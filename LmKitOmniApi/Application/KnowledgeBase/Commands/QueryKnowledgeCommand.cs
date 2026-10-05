@@ -14,4 +14,12 @@ public class QueryKnowledgeCommand : IRequest<string>
     public Guid UserId { get; set; }
     public string Query { get; set; } = string.Empty;
     public int TopK { get; set; } = 3;
+
+    // --- Optional metadata-aware retrieval filters (bound from the request body) ---
+    public List<string>? DocTypes { get; set; }
+    public List<string>? Categories { get; set; }
+    public List<string>? Tags { get; set; }
+    public List<string>? Sources { get; set; }
+    public DateTime? UploadedAfter { get; set; }
+    public DateTime? UploadedBefore { get; set; }
 }

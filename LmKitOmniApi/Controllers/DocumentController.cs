@@ -55,7 +55,8 @@ public class DocumentController : ApiControllerBase
 
     [Authorize]
     [HttpPost("upload")]
-    public async Task<IActionResult> UploadDocument(IFormFile file)
+    public async Task<IActionResult> UploadDocument(
+        IFormFile file, [FromForm] string? category = null, [FromForm] string? tags = null)
     {
         if (file == null || file.Length == 0) return BadRequest("No file uploaded.");
         if (file.Length > MaxUploadBytes) return BadRequest("File exceeds the 50 MB limit.");
@@ -80,6 +81,8 @@ public class DocumentController : ApiControllerBase
             UserId = currentUserId,
             FileName = safeFileName,
             Extension = ext,
+            Category = category,
+            Tags = tags,
             Content = content
         }, HttpContext.RequestAborted);
 

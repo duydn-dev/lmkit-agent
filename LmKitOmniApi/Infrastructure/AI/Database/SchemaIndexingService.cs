@@ -85,7 +85,7 @@ public sealed class SchemaIndexingService : ISchemaRetriever
         var collection = CollectionName(tenantId, connectionId);
         var queryVector = await _embedder.EmbedAsync(nlQuery, ct);
         var results = await _vectorStore.SearchSimilarWithAnyPayloadAsync(
-            collection, queryVector, ConnectionIdField, new[] { connectionId.ToString() }, topK, ct);
+            collection, queryVector, ConnectionIdField, new[] { connectionId.ToString() }, topK, ct: ct);
 
         var cards = results
             .Select(r => r.Payload.TryGetValue("Card", out var card) ? card : null)

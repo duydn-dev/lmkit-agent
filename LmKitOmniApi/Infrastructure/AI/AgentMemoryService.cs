@@ -252,7 +252,7 @@ public class AgentMemoryService : IAgentMemoryService
                 "UserId",
                 scopes,
                 Math.Max(maxResults * 4, 20),
-                ct);
+                ct: ct);
             semanticScores = vectorMatches.ToDictionary(match => match.Id.ToString(), match => match.Score);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace LmKitOmniApi.Domain.Entities;
 
 public class Document
@@ -11,6 +13,19 @@ public class Document
     public string FileName { get; set; } = string.Empty;
     public string FilePath { get; set; } = string.Empty;
     public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>User-assigned category for metadata-aware retrieval (null = none).</summary>
+    [MaxLength(100)]
+    public string? Category { get; set; }
+
+    /// <summary>User-assigned tags, stored comma-separated; mirrored to the vector payload as an array.</summary>
+    [MaxLength(500)]
+    public string? Tags { get; set; }
+
+    /// <summary>Provenance tag written to the vector payload (defaults to "upload" for the worker path).</summary>
+    [MaxLength(50)]
+    public string? Source { get; set; }
+
     public bool IsVectorized { get; set; } = false;
     public string VectorizationStatus { get; set; } = PendingStatus;
     public int ProcessingAttempts { get; set; }

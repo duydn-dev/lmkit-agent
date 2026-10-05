@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using LmKitOmniApi.Infrastructure.Data;
 using LmKitOmniApi.Application.Abstractions;
+using LmKitOmniApi.Application.Documents;
 using LmKitOmniApi.Services;
 using LMKit.Document.Conversion;
 using LmKitOmniApi.Domain.Entities;
@@ -98,6 +99,14 @@ public class DocumentVectorizationWorker : BackgroundService
                         var conversionResult = converter.Convert(doc.FilePath, new DocumentToMarkdownOptions());
                         var chunks = chunkingService.ChunkText(conversionResult.Markdown);
 
+                        // Metadata-aware retrieval: classify + stamp the same metadata on every chunk.
+                        var docType = DocumentTypeClassifier.FromFileName(doc.FileName);
+                        var uploadedAtUnix = new DateTimeOffset(
+                            DateTime.SpecifyKind(doc.UploadedAt, DateTimeKind.Utc)).ToUnixTimeSeconds();
+                        var docSource = string.IsNullOrWhiteSpace(doc.Source) ? "upload" : doc.Source!.Trim();
+                        var docTags = doc.Tags?
+                            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
                         for (var chunkIndex = 0; chunkIndex < chunks.Count; chunkIndex++)
                         {
                             var textChunk = chunks[chunkIndex];
@@ -123,8 +132,15 @@ public class DocumentVectorizationWorker : BackgroundService
                                 { "AccessScope", doc.User is null ? "denied" : $"private:{doc.User.TenantId:N}:{doc.UserId:N}" },
                                 { "FileName", doc.FileName },
                                 { "ChunkIndex", chunkIndex },
-                                { "Content", textChunk }
+                                { "Content", textChunk },
+                                { VectorPayloadFields.DocType, docType },
+                                { VectorPayloadFields.Source, docSource },
+                                { VectorPayloadFields.UploadedAtUnix, uploadedAtUnix }
                             };
+                            if (!string.IsNullOrWhiteSpace(doc.Category))
+                                payload[VectorPayloadFields.Category] = doc.Category!.Trim();
+                            if (docTags is { Length: > 0 })
+                                payload[VectorPayloadFields.Tags] = docTags;
                             await vectorStore.UpsertVectorAsync(collectionName, vectorId, vector, payload, stoppingToken);
                         }
 

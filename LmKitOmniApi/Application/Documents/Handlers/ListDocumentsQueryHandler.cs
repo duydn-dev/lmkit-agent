@@ -16,7 +16,7 @@ public class ListDocumentsQueryHandler : IRequestHandler<ListDocumentsQuery, Lis
 
     public async Task<List<DocumentListItemDto>> Handle(ListDocumentsQuery request, CancellationToken cancellationToken)
     {
-        return await _dbContext.Documents
+        var items = await _dbContext.Documents
             .Include(d => d.User)
             .Where(d => d.User != null
                 && d.User.TenantId == request.TenantId
@@ -30,8 +30,17 @@ public class ListDocumentsQueryHandler : IRequestHandler<ListDocumentsQuery, Lis
                 IsVectorized = d.IsVectorized,
                 VectorizationStatus = d.VectorizationStatus,
                 ProcessingAttempts = d.ProcessingAttempts,
-                HasError = d.LastProcessingError != null
+                HasError = d.LastProcessingError != null,
+                Category = d.Category,
+                Tags = d.Tags,
+                Source = d.Source
             })
             .ToListAsync(cancellationToken);
+
+        // DocType is derived from the file name (not a column), so compute it after materialization.
+        foreach (var item in items)
+            item.DocType = DocumentTypeClassifier.FromFileName(item.FileName);
+
+        return items;
     }
 }

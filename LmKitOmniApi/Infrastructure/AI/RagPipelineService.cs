@@ -1,5 +1,6 @@
 using LMKit.TextGeneration;
 using LmKitOmniApi.Application.Abstractions;
+using LmKitOmniApi.Application.Documents;
 using LmKitOmniApi.Services;
 using Microsoft.Extensions.Logging;
 
@@ -47,6 +48,9 @@ public class RagPipelineService : IRagPipelineService
         Guid userId,
         string fileName,
         string content,
+        string source = "knowledgebase",
+        string? category = null,
+        IReadOnlyList<string>? tags = null,
         CancellationToken ct = default)
     {
         var embeddingModel = await _modelManager.GetEmbeddingModelAsync(ct: ct);
@@ -56,16 +60,25 @@ public class RagPipelineService : IRagPipelineService
         var chunks = _chunkingService.ChunkText(content);
         int totalChunks = 0;
 
+        // Metadata applied uniformly to every chunk of this ingest (enables metadata-aware retrieval).
+        var docType = DocumentTypeClassifier.FromFileName(fileName);
+        var uploadedAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var normalizedCategory = string.IsNullOrWhiteSpace(category) ? null : category.Trim();
+        var normalizedTags = tags?
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t.Trim())
+            .ToArray();
+
         for (var chunkIndex = 0; chunkIndex < chunks.Count; chunkIndex++)
         {
             var chunk = chunks[chunkIndex];
             float[] vector;
             await using (var inferenceLease = await _modelManager.AcquireEmbeddingInferenceAsync(ct))
                 vector = embedder.GetEmbeddings(chunk);
-            
+
             // Extract keywords for sparse search support
             var keywords = _queryExpansion.ExtractKeywords(chunk);
-            
+
             var payload = new Dictionary<string, object>
             {
                 { "TenantId", tenantId.ToString() },
@@ -74,9 +87,16 @@ public class RagPipelineService : IRagPipelineService
                 { "FileName", fileName },
                 { "Content", chunk },
                 { "ChunkIndex", chunkIndex },
-                { "Keywords", string.Join(" ", keywords) } // Sparse search field
+                { "Keywords", string.Join(" ", keywords) }, // Sparse search field
+                { VectorPayloadFields.DocType, docType },
+                { VectorPayloadFields.Source, source },
+                { VectorPayloadFields.UploadedAtUnix, uploadedAtUnix }
             };
-            
+            if (normalizedCategory is not null)
+                payload[VectorPayloadFields.Category] = normalizedCategory;
+            if (normalizedTags is { Length: > 0 })
+                payload[VectorPayloadFields.Tags] = normalizedTags;
+
             await _vectorStore.UpsertVectorAsync(_collectionName, Guid.NewGuid(), vector, payload, ct);
             totalChunks++;
         }
@@ -93,8 +113,11 @@ public class RagPipelineService : IRagPipelineService
         int topK = 3,
         CancellationToken ct = default,
         bool chatInferenceLeaseAlreadyHeld = false,
-        IReadOnlyCollection<Guid>? documentIds = null)
+        IReadOnlyCollection<Guid>? documentIds = null,
+        RetrievalMetadataFilter? metadata = null)
     {
+        // Normalize to null when empty so every downstream filter is a clean no-op.
+        var metadataFilter = metadata is { IsEmpty: false } ? metadata : null;
         _logger.LogInformation("Hybrid search starting for tenant {TenantId}; query length {QueryLength}",
             tenantId, query.Length);
 
@@ -158,6 +181,7 @@ public class RagPipelineService : IRagPipelineService
                     "AccessScope",
                     new[] { BuildPrivateAccessScope(tenantId, userId) },
                     initialTopK,
+                    metadataFilter,
                     ct)
                 : await _vectorStore.SearchSimilarWithinDocumentsAsync(
                     _collectionName,
@@ -167,6 +191,7 @@ public class RagPipelineService : IRagPipelineService
                     "DocumentId",
                     documentIdAllowlist.ToList(),
                     initialTopK,
+                    metadataFilter,
                     ct);
 
             foreach (var r in tenantResults)
@@ -180,7 +205,7 @@ public class RagPipelineService : IRagPipelineService
         }
 
         // === Stage 3: Sparse Retrieval (Keyword Matching — BM25-like) ===
-        var sparseResults = await PerformKeywordSearchAsync(tenantId, userId, query, documentIdAllowlist, ct);
+        var sparseResults = await PerformKeywordSearchAsync(tenantId, userId, query, documentIdAllowlist, metadataFilter, ct);
 
         // === Stage 4: Reciprocal Rank Fusion (RRF) ===
         var fusedResults = ReciprocalRankFusion(allDenseResults, sparseResults, topK * 3);
@@ -248,6 +273,7 @@ public class RagPipelineService : IRagPipelineService
         Guid userId,
         string query,
         IReadOnlySet<string>? documentIdAllowlist,
+        RetrievalMetadataFilter? metadata,
         CancellationToken ct)
     {
         var results = new List<(string Content, float Score, string Source)>();
@@ -269,6 +295,7 @@ public class RagPipelineService : IRagPipelineService
                     tenantFilterField: "AccessScope",
                     tenantId: BuildPrivateAccessScope(tenantId, userId),
                     topK: 20,
+                    metadata: metadata,
                     ct: ct)
                 : await _vectorStore.SearchByPayloadWithinDocumentsAsync(
                     _collectionName,
@@ -279,6 +306,7 @@ public class RagPipelineService : IRagPipelineService
                     documentIdField: "DocumentId",
                     documentIds: documentIdAllowlist.ToList(),
                     topK: 20,
+                    metadata: metadata,
                     ct: ct);
 
             foreach (var r in payloadResults)
@@ -304,7 +332,7 @@ public class RagPipelineService : IRagPipelineService
             _logger.LogWarning(ex, "Keyword (sparse) search failed; falling back to vector+filter retrieval.");
 
             // Fallback: original vector-based keyword filtering (graceful degradation)
-            results = await PerformKeywordSearchFallbackAsync(tenantId, userId, query, documentIdAllowlist, ct);
+            results = await PerformKeywordSearchFallbackAsync(tenantId, userId, query, documentIdAllowlist, metadata, ct);
         }
 
         return results;
@@ -335,6 +363,7 @@ public class RagPipelineService : IRagPipelineService
         Guid userId,
         string query,
         IReadOnlySet<string>? documentIdAllowlist,
+        RetrievalMetadataFilter? metadata,
         CancellationToken ct)
     {
         var results = new List<(string Content, float Score, string Source)>();
@@ -354,6 +383,7 @@ public class RagPipelineService : IRagPipelineService
                 "AccessScope",
                 new[] { BuildPrivateAccessScope(tenantId, userId) },
                 50,
+                metadata,
                 ct)
             : await _vectorStore.SearchSimilarWithinDocumentsAsync(
                 _collectionName,
@@ -363,6 +393,7 @@ public class RagPipelineService : IRagPipelineService
                 "DocumentId",
                 documentIdAllowlist.ToList(),
                 50,
+                metadata,
                 ct);
 
         foreach (var r in tenantResults)
