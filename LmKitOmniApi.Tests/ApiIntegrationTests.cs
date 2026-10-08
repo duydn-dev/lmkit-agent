@@ -368,6 +368,10 @@ public sealed class LmKitApiFactory : WebApplicationFactory<Program>
                     && (implementation == typeof(DocumentVectorizationWorker)
                         || implementation == typeof(DataRetentionWorker)
                         || implementation == typeof(ModelWarmupWorker)
+                        // Chạy NGAY khi host khởi động (khác các worker theo nhịp ở đây) và ghi
+                        // thẳng vào notifications: để nó chạy trong host test là tự tạo ra
+                        // tranh chấp dữ liệu với chính test đang chạy.
+                        || implementation == typeof(QuotaThresholdWorker)
                         || implementation == typeof(SchemaVectorizationWorker)))
                 .ToList())
             {

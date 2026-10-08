@@ -452,6 +452,9 @@ builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.DataRetent
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ModelWarmupWorker>();
 // Tier 2: user-defined recurring prompts delivered as notifications.
 builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.ScheduledTaskWorker>();
+// Cảnh báo CHỦ ĐỘNG khi đơn vị chạm 80% hạn mức token tháng (và khi vượt 100%): biến con số nằm
+// im trong danh sách cảnh báo của dashboard thành thông báo đẩy tới Admin của đơn vị đó.
+builder.Services.AddHostedService<LmKitOmniApi.Infrastructure.Workers.QuotaThresholdWorker>();
 // Expires unanswered HITL approvals so a run parked on one reaches a terminal state
 // instead of hanging forever, and a weeks-old gated tool call can never be executed.
 LmKitOmniApi.Application.Approvals.ApprovalExpiryServiceCollectionExtensions.AddApprovalExpiry(builder.Services, builder.Configuration);
