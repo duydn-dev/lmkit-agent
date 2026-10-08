@@ -23,6 +23,7 @@ const PAGE_TITLES: Record<string, string> = {
   AdminKnowledge: 'Cơ sở tri thức',
   AdminDatabases: 'Kết nối CSDL',
   AdminTenants: 'Quản lý Tenant',
+  AdminQuota: 'Hạn mức & Token',
   AdminLora: 'LoRA Adapters',
   AdminAudit: 'Nhật ký hoạt động',
   AdminWidget: 'Widget nhúng',
@@ -151,6 +152,12 @@ const router = createRouter({
           path: '/admin/tenants',
           name: 'AdminTenants',
           component: () => import('../views/admin/TenantsView.vue'),
+          meta: { requiresAuth: true, requiresAdmin: true }
+        },
+        {
+          path: '/admin/quota',
+          name: 'AdminQuota',
+          component: () => import('../views/admin/QuotaAdminView.vue'),
           meta: { requiresAuth: true, requiresAdmin: true }
         },
         {

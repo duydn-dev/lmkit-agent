@@ -6,6 +6,7 @@ import '../../core/network/api_client.dart';
 import '../../core/network/api_exception.dart';
 import 'admin_models.dart';
 import 'dashboard_models.dart';
+import 'quota_admin_models.dart';
 
 /// API quản trị: tenant, MCP server, knowledge base, kết nối CSDL, LoRA, widget.
 ///
@@ -454,6 +455,103 @@ class AdminRepository {
       throw ApiException.fromDio(error);
     }
   }
+
+  // ---------------------------------------------------------------- hạn mức (Admin)
+
+  /// Gói hạn mức (kể cả gói đã ngừng dùng, để biết gói nào còn gán được).
+  Future<List<PlanModel>> quotaPlans() async {
+    final response = await _client.get('/api/admin/quota/plans');
+    return quotaRows(response.data).map(PlanModel.fromJson).toList();
+  }
+
+  /// Hạn mức hiện tại của MỌI đơn vị: gói đang gán, đã dùng/tháng, grant còn lại và số dư.
+  Future<List<TenantQuotaModel>> tenantQuotas() async {
+    final response = await _client.get('/api/admin/quota/tenants');
+    return quotaRows(response.data).map(TenantQuotaModel.fromJson).toList();
+  }
+
+  Future<void> createQuotaPlan({
+    required String name,
+    required int monthlyTokenLimit,
+    required bool isActive,
+  }) => _client
+      .post(
+        '/api/admin/quota/plans',
+        data: {
+          'name': name.trim(),
+          'monthlyTokenLimit': monthlyTokenLimit,
+          'isActive': isActive,
+        },
+      )
+      .then((_) {});
+
+  Future<void> updateQuotaPlan({
+    required String id,
+    required String name,
+    required int monthlyTokenLimit,
+    required bool isActive,
+  }) => _client
+      .put(
+        '/api/admin/quota/plans/$id',
+        data: {
+          'name': name.trim(),
+          'monthlyTokenLimit': monthlyTokenLimit,
+          'isActive': isActive,
+        },
+      )
+      .then((_) {});
+
+  /// Ngừng dùng gói (soft). Server từ chối nếu vẫn còn đơn vị đang dùng gói đó.
+  Future<void> deactivateQuotaPlan(String id) =>
+      _client.delete('/api/admin/quota/plans/$id').then((_) {});
+
+  Future<void> assignQuotaPlan({
+    required String tenantId,
+    required String planId,
+    DateTime? renewalAtUtc,
+  }) => _client
+      .put(
+        '/api/admin/quota/tenants/$tenantId/plan',
+        data: {
+          'planId': planId,
+          'renewalAtUtc': renewalAtUtc?.toUtc().toIso8601String(),
+        },
+      )
+      .then((_) {});
+
+  Future<void> removeQuotaPlan(String tenantId) =>
+      _client.delete('/api/admin/quota/tenants/$tenantId/plan').then((_) {});
+
+  Future<void> setQuotaCredit({
+    required String tenantId,
+    required int balance,
+  }) => _client
+      .put('/api/admin/quota/tenants/$tenantId/credit', data: {'balance': balance})
+      .then((_) {});
+
+  Future<List<GrantModel>> tenantGrants(String tenantId) async {
+    final response = await _client.get('/api/admin/quota/tenants/$tenantId/grants');
+    return quotaRows(response.data).map(GrantModel.fromJson).toList();
+  }
+
+  Future<void> createGrant({
+    required String tenantId,
+    required int tokens,
+    DateTime? expiresAtUtc,
+    String? reason,
+  }) => _client
+      .post(
+        '/api/admin/quota/tenants/$tenantId/grants',
+        data: {
+          'tokens': tokens,
+          'expiresAtUtc': expiresAtUtc?.toUtc().toIso8601String(),
+          'reason': (reason == null || reason.trim().isEmpty) ? null : reason.trim(),
+        },
+      )
+      .then((_) {});
+
+  Future<void> deleteGrant(String grantId) =>
+      _client.delete('/api/admin/quota/grants/$grantId').then((_) {});
 
   // ----------------------------------------------------------------- helpers
 

@@ -10,6 +10,7 @@ import 'database_connections_screen.dart';
 import 'knowledge_base_screen.dart';
 import 'lora_adapters_screen.dart';
 import 'mcp_servers_screen.dart';
+import 'quota_admin_screen.dart';
 import 'tenants_screen.dart';
 import 'users_screen.dart';
 import 'widget_settings_screen.dart';
@@ -46,6 +47,12 @@ class AdminHubScreen extends ConsumerWidget {
             subtitle: 'Tạo, sửa, xoá tenant và logo thương hiệu',
             icon: Icons.apartment_outlined,
             build: (_) => const TenantsScreen(),
+          ),
+          (
+            title: 'Hạn mức & Token',
+            subtitle: 'Gán gói, cấp thêm token (grant) và số dư cho từng đơn vị',
+            icon: Icons.account_balance_wallet_outlined,
+            build: (_) => const QuotaAdminScreen(),
           ),
           (
             title: 'MCP Servers',

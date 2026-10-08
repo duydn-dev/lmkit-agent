@@ -126,6 +126,16 @@ export const ApiFactory = {
     // Admin logo (xem/tải/xóa) cho MỘT tenant bất kỳ — dùng ở form quản lý tenant.
     LOGO: (id: string) => `/api/tenants/${id}/logo`
   },
+  // Quản trị hạn mức (Admin): gói, gán gói/grant/số dư cho từng đơn vị. Thay cho insert SQL tay.
+  QUOTA: {
+    PLANS: '/api/admin/quota/plans',
+    PLAN_BY_ID: (id: string) => `/api/admin/quota/plans/${id}`,
+    TENANTS: '/api/admin/quota/tenants',
+    TENANT_PLAN: (tenantId: string) => `/api/admin/quota/tenants/${tenantId}/plan`,
+    TENANT_CREDIT: (tenantId: string) => `/api/admin/quota/tenants/${tenantId}/credit`,
+    TENANT_GRANTS: (tenantId: string) => `/api/admin/quota/tenants/${tenantId}/grants`,
+    GRANT_BY_ID: (grantId: string) => `/api/admin/quota/grants/${grantId}`
+  },
   LORA: {
     BASE: '/api/lora-adapters',
     BY_ID: (id: string) => `/api/lora-adapters/${id}`
