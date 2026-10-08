@@ -18,9 +18,18 @@ String dashboardCsvFileName(int days, DateTime now) {
   return 'bao-cao-dashboard-$days-ngay-$stamp.csv';
 }
 
-/// Nội dung tệp: UTF-8, giữ NGUYÊN VĂN chuỗi server trả về — chuỗi đó đã bắt đầu bằng BOM
-/// (U+FEFF) để Excel nhận đúng tiếng Việt, nên encode lại từ Dart vẫn ra đúng BOM đó.
-List<int> dashboardCsvBytes(String csv) => utf8.encode(csv);
+/// Nội dung tệp: UTF-8 và **luôn** bắt đầu bằng BOM để Excel nhận đúng tiếng Việt.
+///
+/// Server CÓ gửi BOM, nhưng nó không tới được tầng này: bộ giải mã UTF-8 của Dart bỏ ký tự
+/// BOM ở đầu khi `Dio` biến thân phản hồi thành `String`, nên chuỗi mà [saveDashboardCsv]
+/// nhận được bắt đầu ngay ở dòng tiêu đề. Giả định "chuỗi vào đã có BOM" là thứ đã làm tệp
+/// xuất ra thiếu BOM mà không có tầng nào báo lỗi — chỉ người mở bằng Excel mới thấy sai phông.
+///
+/// Hàm này vì thế tự bảo đảm BOM và **không nhân đôi** nếu đầu vào đã có sẵn.
+List<int> dashboardCsvBytes(String csv) {
+  final body = csv.startsWith('\uFEFF') ? csv.substring(1) : csv;
+  return utf8.encode('\uFEFF$body');
+}
 
 /// Ghi báo cáo thành tệp trong thư mục do [resolveDirectory] trả về, và trả về tệp đã ghi để
 /// màn hình hiển thị đường dẫn cho người dùng.

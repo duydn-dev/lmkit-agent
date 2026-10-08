@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -21,14 +22,29 @@ void main() {
   });
 
   group('dashboardCsvBytes', () {
-    test('giu nguyen van, khong tu chen them BOM', () {
-      // Server đã chèn BOM vào chính chuỗi CSV. Thêm một BOM nữa ở đây sẽ làm Excel hiện
-      // "﻿Mã đơn vị" ở cột đầu.
-      expect(dashboardCsvBytes('a,b'), [0x61, 0x2C, 0x62]);
+    test('luon them BOM du chuoi vao khong co', () {
+      // Chuỗi vào KHÔNG có BOM mới là hình dạng thật ở tầng này: server gửi BOM, nhưng bộ giải
+      // mã UTF-8 của Dart bỏ nó khi Dio biến thân phản hồi thành String. Vì vậy lớp xuất phải
+      // tự thêm — trước đây nó tin "chuỗi vào đã có BOM" và tệp ra thiếu BOM mà không ai báo.
+      expect(utf8.decode(utf8.encode('\uFEFFMã')), 'Mã');
 
-      final withBom = dashboardCsvBytes('\uFEFFMã');
-      expect(withBom.sublist(0, 3), [0xEF, 0xBB, 0xBF]);
-      expect(withBom.length, 6); // 3 byte BOM + "M"(1) + "ã"(2)
+      final bytes = dashboardCsvBytes('Mã đơn vị,Tên đơn vị');
+      expect(bytes.sublist(0, 3), [0xEF, 0xBB, 0xBF]);
+      // So BẰNG BYTES: `utf8.decode` ở đây lại bỏ luôn BOM vừa kiểm nên không dùng được để
+      // chứng minh BOM còn — và đó chính là cơ chế đã làm lỗi này lọt lưới trước đây.
+      expect(bytes.sublist(3), utf8.encode('Mã đơn vị,Tên đơn vị'));
+      expect(utf8.decode(bytes), 'Mã đơn vị,Tên đơn vị');
+    });
+
+    test('khong nhan doi BOM khi chuoi vao da co san', () {
+      final bytes = dashboardCsvBytes('\uFEFFMã');
+      expect(bytes.sublist(0, 3), [0xEF, 0xBB, 0xBF]);
+      expect(
+        bytes.length,
+        6, // 3 byte BOM + "M"(1) + "ã"(2) — KHÔNG phải 9
+        reason: 'BOM thừa làm Excel hiện "﻿Mã đơn vị" ở cột đầu',
+      );
+      expect(bytes.sublist(3), utf8.encode('Mã'));
     });
   });
 
@@ -44,7 +60,8 @@ void main() {
     });
 
     test('ghi mot tep that trong bo nho may va giu nguyen BOM cho Excel', () async {
-      const csv = '\uFEFFMã đơn vị,Tên đơn vị\r\n11111111,Cục Trồng trọt\r\n';
+      // Dạng THẬT của chuỗi tới từ repository: không có BOM ở đầu.
+      const csv = 'Mã đơn vị,Tên đơn vị\r\n11111111,Cục Trồng trọt\r\n';
 
       final file = await saveDashboardCsv(
         csv: csv,
@@ -61,11 +78,12 @@ void main() {
       final bytes = await File(file.path).readAsBytes();
       expect(bytes.sublist(0, 3), [0xEF, 0xBB, 0xBF]);
 
-      // Bộ giải mã UTF-8 của Dart TIÊU THỤ ký tự BOM ở đầu chuỗi, nên đọc thành String sẽ thiếu
-      // U+FEFF. Bytes ở trên mới là bằng chứng tệp giữ đúng BOM cho Excel — đây là lý do test
-      // phải kiểm cả hai: bytes (BOM còn) và chuỗi (nội dung không bị đổi).
+      // Bộ giải mã UTF-8 của Dart TIÊU THỤ ký tự BOM ở đầu chuỗi, nên đọc lại thành String sẽ
+      // mất U+FEFF dù tệp có BOM. Bytes ở trên mới là bằng chứng tệp giữ đúng BOM cho Excel;
+      // phép so chuỗi dưới đây kiểm phần nội dung không bị đổi (không nhân đôi BOM, không mất
+      // dấu tiếng Việt).
       expect(bytes, dashboardCsvBytes(csv));
-      expect(await File(file.path).readAsString(), csv.substring(1));
+      expect(await File(file.path).readAsString(), csv);
     });
 
     test('tao thu muc neu chua co, va hai lan xuat khong ghi de nhau', () async {
@@ -86,8 +104,9 @@ void main() {
       );
 
       expect(first.path, isNot(second.path));
-      expect(await first.readAsString(), 'lan-1');
+      expect(await first.readAsString(), 'lan-1'); // đọc chuỗi đã bỏ BOM
       expect(await second.readAsString(), 'lan-2');
+      expect((await first.readAsBytes()).sublist(0, 3), [0xEF, 0xBB, 0xBF]);
       expect((await nested.list().toList()).length, 2);
     });
   });
