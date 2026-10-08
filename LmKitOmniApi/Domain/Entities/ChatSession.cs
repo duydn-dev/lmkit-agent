@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace LmKitOmniApi.Domain.Entities;
 
 public class ChatSession
@@ -48,6 +50,25 @@ public class ChatMessage
     public string Role { get; set; } = "user"; // "system", "user", "assistant"
     public string Content { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Token của lượt GỬI LÊN model (lịch sử đã cắt + câu hỏi), và token model sinh ra.
+    /// Ghi lúc lưu row assistant — CHỈ trên row assistant, vì đây là chi phí của một lần
+    /// suy luận; row user luôn để 0 để mọi tổng hợp theo token không đếm hai lần cùng một lượt.
+    /// Là ƯỚC LƯỢNG (<c>ITokenManagementService.EstimateTokenCount</c>), không phải usage
+    /// do model trả về — LM-Kit chạy in-process nên không có object usage như API HTTP.
+    /// </summary>
+    public int PromptTokens { get; set; }
+
+    /// <summary>Token model đã sinh cho lượt này (cũng là ước lượng). 0 trên row user.</summary>
+    public int CompletionTokens { get; set; }
+
+    /// <summary>Model id đã phục vụ lượt này (vd. "gemma4:e4b"); null trên row user.</summary>
+    [MaxLength(100)]
+    public string? ModelName { get; set; }
+
+    /// <summary>Thời gian từ lúc bắt đầu gọi model tới khi stream xong (ms). 0 = không đo được.</summary>
+    public int LatencyMs { get; set; }
 
     public ChatSession? ChatSession { get; set; }
 }

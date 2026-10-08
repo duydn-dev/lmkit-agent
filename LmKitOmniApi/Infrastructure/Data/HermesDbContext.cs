@@ -33,6 +33,12 @@ public class HermesDbContext : DbContext
     public DbSet<UserPreference> UserPreferences { get; set; } = null!;
     public DbSet<LoraAdapterRegistration> LoraAdapterRegistrations { get; set; } = null!;
 
+    // Hạn mức token: gói + gán gói theo đơn vị + cấp thêm + số dư mua trước.
+    public DbSet<Plan> Plans { get; set; } = null!;
+    public DbSet<Subscription> Subscriptions { get; set; } = null!;
+    public DbSet<TokenGrant> TokenGrants { get; set; } = null!;
+    public DbSet<TenantCredit> TenantCredits { get; set; } = null!;
+
     public HermesDbContext(DbContextOptions<HermesDbContext> options) : base(options)
     {
     }
@@ -88,6 +94,14 @@ public class HermesDbContext : DbContext
             .WithMany(s => s.Messages)
             .HasForeignKey(m => m.ChatSessionId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // Dashboard cộng token/đếm lượt theo CỬA SỔ THỜI GIAN và chỉ trên row assistant:
+        // WHERE Role = 'assistant' AND CreatedAt >= cutoff, GROUP BY ngày. Role đứng trước
+        // (đẳng thức) rồi CreatedAt (khoảng + sắp xếp) là thứ tự cột để một index phục vụ
+        // đồng thời cả lọc lẫn lấy dải ngày — mỗi lần mở dashboard là một index scan có
+        // biên thay vì quét toàn bộ bảng chat_messages vốn lớn dần theo thời gian.
+        modelBuilder.Entity<ChatMessage>()
+            .HasIndex(m => new { m.Role, m.CreatedAt });
 
         modelBuilder.Entity<CustomAgent>()
             .HasOne(a => a.Tenant).WithMany().HasForeignKey(a => a.TenantId).OnDelete(DeleteBehavior.Cascade);
@@ -282,5 +296,36 @@ public class HermesDbContext : DbContext
             .HasIndex(a => new { a.TenantId, a.Name }).IsUnique();
         modelBuilder.Entity<LoraAdapterRegistration>()
             .HasIndex(a => new { a.TenantId, a.IsActive });
+
+        // ─── Hạn mức token ────────────────────────────────────────────────────────────
+        // Tên gói phải tra được duy nhất (dropdown/quản trị); case-insensitive qua collation
+        // mặc định của Postgres nên chỉ cần unique trên cột.
+        modelBuilder.Entity<Plan>()
+            .HasIndex(p => p.Name).IsUnique();
+
+        // Một đơn vị chỉ có MỘT gói đang hoạt động: dashboard cộng hạn mức theo gói nên hai
+        // dòng active sẽ làm hạn mức bị đếm hai lần. Đây là bất biến ở tầng ứng dụng (đổi gói
+        // = tắt dòng cũ rồi thêm dòng mới) — khoá ngoại không diễn đạt được "duy nhất khi
+        // IsActive = true" nên index chỉ tăng tốc truy vấn theo (TenantId, IsActive).
+        modelBuilder.Entity<Subscription>()
+            .HasOne(s => s.Tenant).WithMany().HasForeignKey(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<Subscription>()
+            .HasOne(s => s.Plan).WithMany().HasForeignKey(s => s.PlanId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<Subscription>()
+            .HasIndex(s => new { s.TenantId, s.IsActive });
+
+        // Grant là nguồn hạn mức có hạn: dashboard quét theo (TenantId, ExpiresAtUtc) để
+        // biết phần còn hiệu lực và tìm các grant sắp hết hạn.
+        modelBuilder.Entity<TokenGrant>()
+            .HasOne(g => g.Tenant).WithMany().HasForeignKey(g => g.TenantId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<TokenGrant>()
+            .HasIndex(g => new { g.TenantId, g.ExpiresAtUtc });
+
+        // Đúng một dòng số dư cho mỗi đơn vị — unique index làm phép upsert "đọc rồi ghi"
+        // an toàn ở tầng DB, cùng lý do đã dùng cho UserPreference/TenantWidgetSettings.
+        modelBuilder.Entity<TenantCredit>()
+            .HasOne(c => c.Tenant).WithMany().HasForeignKey(c => c.TenantId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<TenantCredit>()
+            .HasIndex(c => c.TenantId).IsUnique();
     }
 }

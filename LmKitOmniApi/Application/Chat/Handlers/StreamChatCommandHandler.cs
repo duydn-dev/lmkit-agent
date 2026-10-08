@@ -202,6 +202,20 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
 
         var options = await BuildAgentOptionsAsync(request, session, cancellationToken);
 
+        // Token ước lượng của lượt GỬI LÊN model: lịch sử đã cắt (kèm bản tóm tắt nếu có)
+        // cộng câu hỏi hiệu lực. Tách khỏi completion vì "đọc lịch sử" và "viết câu trả lời"
+        // là hai chi phí khác hẳn nhau khi hội thoại dài.
+        var promptTokens = trimResult.EstimatedTokenCount + _tokenManagement.EstimateTokenCount(effectiveMessage);
+
+        // Model THẬT SỰ phục vụ lượt này. ChatController từ chối ModelId từ client (xem
+        // StreamChatCommand.ModelId), nên model luôn là mặc định của server — ghi lại đúng
+        // giá trị đó để dashboard nhóm theo model không bao giờ lệch với hạ tầng.
+        var servedModelName = _modelManager.DefaultChatModelId;
+
+        // Đồng hồ đo độ trễ suy luận. Đọc lúc LƯU row (không đọc sau vòng stream) để cả đường
+        // hủy giữa chừng — vốn lưu trong finally — cũng có số đo thay vì 0.
+        var inferenceStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
         var fullResponseBuilder = new System.Text.StringBuilder();
         ChatMessage? botMsg = null;
         var assistantPersisted = false;
@@ -213,12 +227,19 @@ public class StreamChatCommandHandler : IStreamRequestHandler<StreamChatCommand,
         {
             if (botMsg == null)
             {
+                var content = fullResponseBuilder.ToString();
                 botMsg = new ChatMessage
                 {
                     ChatSessionId = request.SessionId,
                     Role = "assistant",
-                    Content = fullResponseBuilder.ToString(),
-                    CreatedAt = DateTime.UtcNow
+                    Content = content,
+                    CreatedAt = DateTime.UtcNow,
+                    PromptTokens = promptTokens,
+                    CompletionTokens = _tokenManagement.EstimateTokenCount(content),
+                    ModelName = servedModelName,
+                    // Một lượt stream có thể chạy rất lâu trên máy yếu; kẹp về int để cột
+                    // không tràn khi một lần suy luận treo quá ~24 ngày.
+                    LatencyMs = (int)Math.Min(inferenceStopwatch.ElapsedMilliseconds, int.MaxValue)
                 };
                 _dbContext.ChatMessages.Add(botMsg);
             }
