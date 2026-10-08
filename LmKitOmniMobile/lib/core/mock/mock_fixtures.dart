@@ -13,6 +13,14 @@ library;
 String _ago(Duration duration) =>
     DateTime.now().toUtc().subtract(duration).toIso8601String();
 
+/// Ngày `yyyy-MM-dd` cách hôm nay [days] ngày — chuỗi theo ngày của dashboard dùng
+/// định dạng này (backend cũng trả đúng dạng đó).
+String _dateDaysAgo(int days) {
+  final date = DateTime.now().toUtc().subtract(Duration(days: days));
+  return '${date.year}-${date.month.toString().padLeft(2, '0')}'
+      '-${date.day.toString().padLeft(2, '0')}';
+}
+
 class MockFixtures {
   const MockFixtures._();
 
@@ -1433,6 +1441,369 @@ Chi tiết từng trạm nằm trong tệp đính kèm bên dưới.''';
     ],
     'entityTypes': ['Session', 'User', 'Document', 'ApiKey', 'AgentRun'],
   };
+
+  // --------------------------------------------------------------- dashboard
+
+  /// `GET /api/dashboard/stats` — đúng hợp đồng `DashboardStats` mà web cũng đọc.
+  ///
+  /// Dữ liệu cố tình chứa các ca khó thay vì toàn số đẹp: một đơn vị **vượt** hạn mức,
+  /// một đơn vị **sắp chạm** ngưỡng cảnh báo 80%, một đơn vị gói **không giới hạn** và
+  /// một đơn vị **chưa gán gói**. Nhờ vậy mọi nhánh màu của thanh tiến độ và mọi nhánh
+  /// chữ của phần hạn mức đều có dữ liệu để chạy qua khi render.
+  static Map<String, dynamic> dashboardStats({int days = 30}) => {
+    'periodDays': days,
+    'totalUsers': 18,
+    'totalTenants': 4,
+    'totalSessions': 342,
+    'totalDocuments': 57,
+    'myUsage': const {
+      'questions': 128,
+      'answers': 126,
+      'promptTokens': 486320,
+      'completionTokens': 271480,
+      'sessions': 24,
+    },
+    'cockpit': {
+      'tokens': {
+        'promptTokens': 4820640,
+        'completionTokens': 2310980,
+        'messages': 3412,
+        // Token agent-run để RIÊNG: một lần chạy gồm nhiều lượt suy luận nối tiếp nên
+        // là nguồn chi phí lớn nhất, gộp chung vào lượt chat là giấu mất nó.
+        'agentRunPromptTokens': 1240500,
+        'agentRunCompletionTokens': 512300,
+        'agentRuns': 63,
+        'daily': [
+          for (var i = days - 1; i >= 0; i--)
+            {
+              'date': _dateDaysAgo(i),
+              'promptTokens': 118000 + (days - 1 - i) * 1450,
+              'completionTokens': 61000 + (days - 1 - i) * 830,
+              'messages': 88 + (days - 1 - i),
+            },
+        ],
+        'byModel': const [
+          {
+            'modelName': 'qwen2.5:14b-instruct-q4_K_M',
+            'promptTokens': 2980000,
+            'completionTokens': 1420000,
+            'messages': 1980,
+          },
+          {
+            'modelName': 'llama3.1:8b-instruct-q8_0',
+            'promptTokens': 1340640,
+            'completionTokens': 620980,
+            'messages': 1120,
+          },
+          {
+            'modelName': 'bge-m3',
+            'promptTokens': 500000,
+            'completionTokens': 270000,
+            'messages': 312,
+          },
+        ],
+      },
+      'users': {
+        'dailyActive': 7,
+        'weeklyActive': 12,
+        'monthlyActive': 18,
+        'totalUsers': 18,
+        'newUsers': 3,
+        'adoptionPct': 100,
+        // Chuỗi theo ngày ở khối người dùng CỐ ĐỊNH 7 ngày — DAU/WAU/MAU luôn tính
+        // trên 1/7/30 ngày gần nhất, không theo kỳ đang chọn.
+        'daily': [
+          for (var i = 6; i >= 0; i--)
+            {'date': _dateDaysAgo(i), 'count': 4 + i % 5},
+        ],
+        'topUsers': const [
+          {
+            'userId': 'u-0001',
+            'name': 'Nguyễn Văn Duy',
+            'email': 'admin@cila.gov.vn',
+            'questions': 128,
+            'answers': 126,
+            'promptTokens': 486320,
+            'completionTokens': 271480,
+          },
+          {
+            'userId': 'u-0002',
+            'name': 'Phạm Thị Lan',
+            'email': 'lan.pham@cila.gov.vn',
+            'questions': 96,
+            'answers': 94,
+            'promptTokens': 351200,
+            'completionTokens': 198640,
+          },
+        ],
+      },
+      'spend': const {
+        'totalTokens': 7131620,
+        'totalAgentRunTokens': 1752800,
+        'top3SharePct': 96,
+        'topTenantSharePct': 74,
+        'topTenantName': tenantName,
+        'byTenant': [
+          {
+            'tenantId': tenantId,
+            'tenantName': tenantName,
+            'promptTokens': 3520000,
+            'completionTokens': 1680000,
+            'messages': 2410,
+            'agentRunPromptTokens': 1240500,
+            'agentRunCompletionTokens': 512300,
+            'agentRuns': 63,
+          },
+          {
+            'tenantId': 'tenant-demo-0002',
+            'tenantName': 'Sở Tài nguyên và Môi trường tỉnh Bắc Ninh',
+            'promptTokens': 1300640,
+            'completionTokens': 630980,
+            'messages': 1002,
+            'agentRunPromptTokens': 0,
+            'agentRunCompletionTokens': 0,
+            'agentRuns': 0,
+          },
+        ],
+      },
+      'quota': const {
+        'tenantsOnPlan': 3,
+        'tenantsOverThreshold': 1,
+        'tenantsOverLimit': 1,
+        'tenantsWithoutPlan': 1,
+        'totalMonthlyLimit': 10000000,
+        'totalMonthlyUsed': 11186600,
+        'totalCreditBalance': 1250000,
+        'byTenant': [
+          {
+            'tenantId': tenantId,
+            'tenantName': tenantName,
+            'planName': 'Gói cơ quan — 5 triệu token',
+            'monthlyLimit': 5000000,
+            'usedTokens': 5240000,
+            'utilizationPct': 104,
+            'creditBalance': 250000,
+            'isUnlimited': false,
+          },
+          {
+            'tenantId': 'tenant-demo-0002',
+            'tenantName': 'Sở Tài nguyên và Môi trường tỉnh Bắc Ninh',
+            'planName': 'Gói địa phương — 5 triệu token',
+            'monthlyLimit': 5000000,
+            'usedTokens': 4120400,
+            'utilizationPct': 82,
+            'creditBalance': 1000000,
+            'isUnlimited': false,
+          },
+          {
+            'tenantId': 'tenant-demo-0003',
+            'tenantName': 'Trung tâm Dữ liệu và Hạ tầng số',
+            'planName': 'Gói nội bộ không giới hạn',
+            'monthlyLimit': 0,
+            'usedTokens': 1820400,
+            'utilizationPct': 0,
+            'creditBalance': 0,
+            'isUnlimited': true,
+          },
+          {
+            'tenantId': 'tenant-demo-0004',
+            'tenantName': 'Chi cục Bảo vệ môi trường tỉnh Hải Dương',
+            'planName': null,
+            // Backend đặt `isUnlimited = !hasPlan || limit <= 0`, nên đơn vị CHƯA GÁN GÓI
+            // cũng là "không giới hạn" (không có trần nào để tính %). Khác với đơn vị có
+            // gói không giới hạn chỉ ở `planName` — màn phải đọc đúng cả hai.
+            'monthlyLimit': 0,
+            'usedTokens': 46200,
+            'utilizationPct': 0,
+            'creditBalance': 0,
+            'isUnlimited': true,
+          },
+        ],
+      },
+      'documents': const {
+        'total': 57,
+        'indexed': 51,
+        'pending': 4,
+        'failed': 2,
+        'totalChunks': 12840,
+        'byStatus': [
+          {'key': 'Indexed', 'count': 51},
+          {'key': 'Pending', 'count': 4},
+          {'key': 'Failed', 'count': 2},
+        ],
+      },
+      'activity': const {
+        'total': 1842,
+        'topActions': [
+          {'key': 'Login', 'count': 640},
+          {'key': 'ChatCompletion', 'count': 512},
+          {'key': 'RunAgentTask', 'count': 63},
+        ],
+      },
+      'performance': const {
+        'samples': 3412,
+        'avgLatencyMs': 1840,
+        'p95LatencyMs': 6120,
+        // Lần chạy agent được đo riêng: một lần chạy là nhiều lượt suy luận cộng lại.
+        'agentRunSamples': 63,
+        'agentRunAvgLatencyMs': 42800,
+        'agentRunP95LatencyMs': 96500,
+      },
+      'alerts': const {
+        'nearLimitTenants': 1,
+        'overLimitTenants': 1,
+        'expiringGrantCount': 2,
+        'expiringGrants': [
+          {
+            'tenantId': tenantId,
+            'tenantName': tenantName,
+            'remainingTokens': 380000,
+            'daysLeft': 9,
+          },
+          {
+            'tenantId': 'tenant-demo-0002',
+            'tenantName': 'Sở Tài nguyên và Môi trường tỉnh Bắc Ninh',
+            'remainingTokens': 120000,
+            'daysLeft': 3,
+          },
+        ],
+      },
+    },
+  };
+
+  /// `GET /api/dashboard/export.csv` — nội dung tệp báo cáo (đơn vị × model).
+  ///
+  /// Bám đúng dạng backend phát ra: BOM UTF-8 (Excel cần để đọc đúng tiếng Việt),
+  /// phân cách bằng dấu `,`, xuống dòng `\r\n`, và **ba cột agent-run nằm cuối** để
+  /// người đang đọc theo 7 cột đầu không bị lệch. Màn dashboard ghi thẳng chuỗi này
+  /// xuống tệp, nên dữ liệu mẫu phải khớp — nếu không thì đường ghi tệp được kiểm
+  /// trên một chuỗi khác với thứ backend thật trả về.
+  static final String dashboardCsv =
+      '\uFEFF'
+      'Mã đơn vị,Tên đơn vị,Model,Số câu trả lời,Prompt tokens,Completion tokens,'
+      'Tổng token,Số lần chạy agent,Prompt tokens agent,Completion tokens agent\r\n'
+      '$tenantId,$tenantName,qwen2.5:14b-instruct-q4_K_M,1980,2980000,1420000,'
+      '4400000,41,824500,341200\r\n'
+      '$tenantId,$tenantName,llama3.1:8b-instruct-q8_0,430,360640,190980,'
+      '551620,12,148000,84200\r\n'
+      'tenant-demo-0002,Sở Tài nguyên và Môi trường tỉnh Bắc Ninh,bge-m3,'
+      '312,500000,270000,770000,10,268000,87000\r\n';
+
+  // ---------------------------------------------------- hạn mức (quota admin)
+
+  /// `GET /api/admin/quota/plans` — endpoint trả list TRẮNG (không envelope).
+  ///
+  /// Có đủ ba trạng thái mà màn quản trị phân biệt: gói đang dùng, gói KHÔNG GIỚI HẠN
+  /// (`monthlyTokenLimit == 0`, khác hẳn gói 0 token) và gói đã ngừng (không gán được).
+  static const List<Map<String, dynamic>> quotaPlans = [
+    {
+      'id': 'plan-demo-0001',
+      'name': 'Gói cơ quan — 5 triệu token',
+      'monthlyTokenLimit': 5000000,
+      'isActive': true,
+      'tenantCount': 1,
+    },
+    {
+      'id': 'plan-demo-0002',
+      'name': 'Gói nội bộ không giới hạn',
+      'monthlyTokenLimit': 0,
+      'isActive': true,
+      'tenantCount': 1,
+    },
+    {
+      'id': 'plan-demo-0003',
+      'name': 'Gói dùng thử 2025',
+      'monthlyTokenLimit': 500000,
+      'isActive': false,
+      'tenantCount': 0,
+    },
+  ];
+
+  /// `GET /api/admin/quota/tenants` — trạng thái hạn mức của mọi đơn vị.
+  ///
+  /// Bốn ca để mọi nhánh chữ của màn chạy qua: vượt trần (104%), sắp chạm ngưỡng
+  /// (82%), gói không giới hạn, và chưa gán gói (`planId == null`).
+  static final List<Map<String, dynamic>> tenantQuotas = [
+    {
+      'tenantId': tenantId,
+      'tenantName': tenantName,
+      'planId': 'plan-demo-0001',
+      'planName': 'Gói cơ quan — 5 triệu token',
+      'monthlyTokenLimit': 5000000,
+      'renewalAtUtc': _ago(const Duration(days: -21)),
+      'usedTokens': 5240000,
+      'utilizationPct': 104,
+      'isUnlimited': false,
+      'creditBalance': 250000,
+      'activeGrantCount': 2,
+      'grantRemainingTokens': 380000,
+    },
+    {
+      'tenantId': 'tenant-demo-0002',
+      'tenantName': 'Sở Tài nguyên và Môi trường tỉnh Bắc Ninh',
+      'planId': 'plan-demo-0002',
+      'planName': 'Gói nội bộ không giới hạn',
+      'monthlyTokenLimit': 0,
+      'renewalAtUtc': null,
+      'usedTokens': 4120400,
+      'utilizationPct': 0,
+      'isUnlimited': true,
+      'creditBalance': 1000000,
+      'activeGrantCount': 0,
+      'grantRemainingTokens': 0,
+    },
+    {
+      'tenantId': 'tenant-demo-0003',
+      'tenantName': 'Trung tâm Dữ liệu và Hạ tầng số',
+      'planId': null,
+      'planName': null,
+      // `isUnlimited` CŨNG đúng cho đơn vị chưa gán gói (server đặt `!hasPlan || limit <= 0`):
+      // không có trần thì không có gì để tính %. Màn phân biệt "chưa gán gói" bằng
+      // `planId == null`, không bằng cờ này.
+      'monthlyTokenLimit': 0,
+      'renewalAtUtc': null,
+      'usedTokens': 0,
+      'utilizationPct': 0,
+      'isUnlimited': true,
+      'creditBalance': 0,
+      'activeGrantCount': 0,
+      'grantRemainingTokens': 0,
+    },
+  ];
+
+  /// `GET /api/admin/quota/tenants/{id}/grants` — token cấp thêm của một đơn vị.
+  ///
+  /// Ba ca quyết định giao diện: còn nguyên (gỡ được), đã tiêu một phần (server chặn
+  /// gỡ nên màn không hiện nút) và đã hết hạn (tô cảnh báo).
+  static final List<Map<String, dynamic>> tenantGrants = [
+    {
+      'id': 'grant-demo-0001',
+      'tokens': 500000,
+      'usedTokens': 120000,
+      'remainingTokens': 380000,
+      'expiresAtUtc': _ago(const Duration(days: -9)),
+      'reason': 'Bù hạn mức quý IV',
+      'isExpired': false,
+    },
+    {
+      'id': 'grant-demo-0002',
+      'tokens': 250000,
+      'usedTokens': 0,
+      'remainingTokens': 250000,
+      'expiresAtUtc': null,
+      'reason': 'Thử nghiệm trợ lý pháp chế',
+      'isExpired': false,
+    },
+    {
+      'id': 'grant-demo-0003',
+      'tokens': 100000,
+      'usedTokens': 100000,
+      'remainingTokens': 0,
+      'expiresAtUtc': _ago(const Duration(days: 30)),
+      'reason': 'Đợt tập huấn tháng 6',
+      'isExpired': true,
+    },
+  ];
 
   // ----------------------------------------------------------------- speech
 

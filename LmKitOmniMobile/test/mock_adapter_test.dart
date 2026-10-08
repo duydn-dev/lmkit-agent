@@ -13,6 +13,7 @@ import 'package:lmkit_omni_mobile/core/network/dio_factory.dart';
 import 'package:lmkit_omni_mobile/core/network/dio_image.dart';
 import 'package:lmkit_omni_mobile/core/auth/secure_session_store.dart';
 import 'package:lmkit_omni_mobile/features/admin/admin_repository.dart';
+import 'package:lmkit_omni_mobile/features/admin/dashboard_csv_export.dart';
 import 'package:lmkit_omni_mobile/features/canvas/canvas_repository.dart';
 import 'package:lmkit_omni_mobile/features/chat/chat_repository.dart';
 import 'package:lmkit_omni_mobile/features/chat/generative_ui.dart';
@@ -351,6 +352,127 @@ void main() {
     );
   });
 
+  test(
+    'admin: dashboard đọc đúng, kể cả token agent-run và kỳ đang chọn',
+    () async {
+      final admin = AdminRepository(client);
+
+      final week = await admin.dashboard(days: 7);
+      expect(week.periodDays, 7, reason: 'kỳ đang chọn phải tới được server');
+      final cockpit = week.cockpit;
+      expect(
+        cockpit,
+        isNotNull,
+        reason: 'phiên dữ liệu mẫu là Admin nên server phải trả khối cockpit',
+      );
+      expect(week.myUsage.totalTokens, 757800);
+      expect(cockpit!.tokens.daily.length, 7, reason: 'chuỗi ngày bám theo kỳ');
+      expect(cockpit.tokens.agentRuns, 63);
+      expect(
+        cockpit.tokens.totalAgentRunTokens,
+        1752800,
+        reason: 'token agent-run đọc RIÊNG khỏi lượt chat',
+      );
+      expect(
+        cockpit.spend.totalAgentRunTokens,
+        1752800,
+        reason: 'token agent-run là một dòng chi phí riêng trong khối chi tiêu',
+      );
+      expect(cockpit.quota.byTenant.length, 4);
+      expect(cockpit.alerts.nearLimitTenants, 1);
+      expect(cockpit.alerts.overLimitTenants, 1);
+      expect(
+        cockpit.alerts.expiringGrants.map((grant) => grant.daysLeft),
+        [9, 3],
+      );
+      expect(
+        cockpit.quota.limited.length,
+        2,
+        reason: 'chỉ đơn vị có gói VÀ có hạn mức thật mới có % để so',
+      );
+    },
+  );
+
+  test(
+    'admin: hạn mức đọc đủ bốn trạng thái (vượt trần, không giới hạn, chưa gán gói)',
+    () async {
+      final admin = AdminRepository(client);
+
+      final plans = await admin.quotaPlans();
+      expect(plans.length, 3);
+      final unlimitedPlan = plans.singleWhere((plan) => plan.isUnlimited);
+      expect(
+        unlimitedPlan.monthlyTokenLimit,
+        0,
+        reason: '0 là KHÔNG GIỚI HẠN, không phải gói 0 token',
+      );
+      expect(unlimitedPlan.isActive, isTrue);
+      expect(plans.where((plan) => !plan.isActive).length, 1);
+
+      final quotas = await admin.tenantQuotas();
+      expect(quotas.length, 3);
+      final overLimit = quotas.singleWhere(
+        (tenant) => tenant.utilizationPct > 100,
+      );
+      expect(overLimit.hasPlan, isTrue);
+      expect(overLimit.grantRemainingTokens, 380000);
+      expect(overLimit.renewalAtUtc, isNotNull);
+      // Đơn vị chưa gán gói cũng mang `isUnlimited == true` (không có trần thì không có gì
+      // để tính %): hai đơn vị "không giới hạn", phân biệt với nhau bằng `hasPlan`.
+      final unlimited = quotas.where((tenant) => tenant.isUnlimited).toList();
+      expect(unlimited.length, 2);
+      expect(
+        unlimited.singleWhere((tenant) => tenant.hasPlan).usedTokens,
+        4120400,
+        reason: 'gói không giới hạn vẫn đếm được token đã dùng',
+      );
+      expect(
+        unlimited.singleWhere((tenant) => !tenant.hasPlan).planName,
+        isNull,
+      );
+
+      final grants = await admin.tenantGrants(MockFixtures.tenantId);
+      expect(grants.length, 3);
+      expect(
+        grants.where((grant) => grant.canBeRemoved).length,
+        1,
+        reason: 'grant đã tiêu một phần không gỡ được — server chặn',
+      );
+      expect(grants.where((grant) => grant.isExpired).length, 1);
+      expect(
+        grants.singleWhere((grant) => grant.canBeRemoved).remainingTokens,
+        250000,
+      );
+    },
+  );
+
+  test('dashboard: báo cáo CSV giữ nguyên dạng tệp backend phát ra', () async {
+    final admin = AdminRepository(client);
+    final csv = await admin.dashboardCsv(days: 30);
+
+    // Server gửi BOM, nhưng chuỗi ở tầng này KHÔNG còn BOM: bộ giải mã UTF-8 của Dart bỏ nó
+    // khi Dio biến thân phản hồi thành String. Chốt lại đúng thực tế đó — nếu ai tin "chuỗi
+    // vào đã có BOM" thì tệp xuất ra thiếu BOM mà không tầng nào báo lỗi (lỗi đã từng xảy ra).
+    expect(
+      csv.codeUnitAt(0),
+      isNot(0xFEFF),
+      reason: 'Dio đã bỏ BOM — việc thêm lại thuộc lớp xuất tệp',
+    );
+    // Bắc qua ranh giới: chuỗi repository nhận được, đi qua lớp xuất, PHẢI thành bytes có BOM.
+    expect(
+      dashboardCsvBytes(csv).sublist(0, 3),
+      [0xEF, 0xBB, 0xBF],
+      reason: 'thiếu BOM là Excel đọc sai tiếng Việt',
+    );
+
+    final lines = csv.split('\r\n').where((line) => line.isNotEmpty).toList();
+    expect(lines.length, 4, reason: 'một dòng tiêu đề + ba dòng (đơn vị × model)');
+    expect(lines.first.split(',').length, 10, reason: 'ba cột agent-run nằm cuối');
+    expect(lines.first.startsWith('Mã đơn vị,Tên đơn vị,Model'), isTrue);
+    expect(lines.first.endsWith('Completion tokens agent'), isTrue);
+    expect(lines.last.startsWith('tenant-demo-0002,'), isTrue);
+  });
+
   test('canvas: danh sách, chi tiết và lịch sử phiên bản', () async {
     final repository = CanvasRepository(client);
     final artifacts = await repository.artifacts();
@@ -547,6 +669,40 @@ void main() {
       await admin.toggleUserStatus('u-0002');
       await admin.auditLogs();
       await admin.auditFacets();
+      await admin.dashboard(days: 7);
+      await admin.dashboardCsv(days: 30);
+      await admin.quotaPlans();
+      await admin.tenantQuotas();
+      await admin.tenantGrants(MockFixtures.tenantId);
+      await admin.createQuotaPlan(
+        name: 'Gói mới',
+        monthlyTokenLimit: 1000000,
+        isActive: true,
+      );
+      await admin.updateQuotaPlan(
+        id: 'plan-demo-0001',
+        name: 'Sửa tên gói',
+        monthlyTokenLimit: 6000000,
+        isActive: true,
+      );
+      await admin.deactivateQuotaPlan('plan-demo-0003');
+      await admin.assignQuotaPlan(
+        tenantId: 'tenant-demo-0003',
+        planId: 'plan-demo-0001',
+        renewalAtUtc: DateTime.utc(2027, 1, 31, 23, 59, 59),
+      );
+      await admin.removeQuotaPlan('tenant-demo-0003');
+      await admin.setQuotaCredit(
+        tenantId: 'tenant-demo-0003',
+        balance: 500000,
+      );
+      await admin.createGrant(
+        tenantId: MockFixtures.tenantId,
+        tokens: 250000,
+        expiresAtUtc: DateTime.utc(2027, 1, 31, 23, 59, 59),
+        reason: 'Bù hạn mức quý IV',
+      );
+      await admin.deleteGrant('grant-demo-0002');
 
       await canvas.artifacts();
       await canvas.artifact(rootId: 'cv-demo-0001');

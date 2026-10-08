@@ -167,6 +167,21 @@ class MockHttpAdapter implements HttpClientAdapter {
           return _json(MockFixtures.loraAdaptersPage());
         case '/api/admin/widget/settings':
           return _json(MockFixtures.widgetSettings);
+        case '/api/dashboard/stats':
+          return _json(
+            MockFixtures.dashboardStats(
+              days: _int(options.queryParameters['days'], 30),
+            ),
+          );
+        // Endpoint CSV trả **văn bản thô**, không phải JSON: jsonEncode ở đây sẽ biến
+        // cả tệp thành một chuỗi JSON có dấu ngoặc kép và thoát dòng, và màn dashboard
+        // ghi đúng thứ đó xuống tệp — tệp mở ra sẽ hỏng dù không có lỗi nào ném ra.
+        case '/api/dashboard/export.csv':
+          return _text(MockFixtures.dashboardCsv, 'text/csv; charset=utf-8');
+        case '/api/admin/quota/plans':
+          return _json(MockFixtures.quotaPlans);
+        case '/api/admin/quota/tenants':
+          return _json(MockFixtures.tenantQuotas);
         case '/api/users':
           return _json(
             MockFixtures.usersPage(
@@ -187,6 +202,14 @@ class MockHttpAdapter implements HttpClientAdapter {
       }
 
       // Sơ đồ schema của một kết nối CSDL (màn `DatabaseDiagramScreen`).
+      final grantTenantId = _group(
+        r'^/api/admin/quota/tenants/([^/]+)/grants$',
+        path,
+      );
+      if (grantTenantId != null) {
+        return _json(MockFixtures.tenantGrants);
+      }
+
       final schemaConnectionId = _group(
         r'^/api/database-connections/([^/]+)/schema$',
         path,
@@ -418,6 +441,17 @@ class MockHttpAdapter implements HttpClientAdapter {
 
   static ResponseBody _json(Object? body) =>
       ResponseBody.fromString(jsonEncode(body), 200, headers: _jsonHeaders);
+
+  /// Thân phản hồi văn bản thô (endpoint báo cáo CSV) — xuống nguyên văn, gồm cả BOM
+  /// UTF-8 ở đầu tệp.
+  static ResponseBody _text(String body, String contentType) =>
+      ResponseBody.fromString(
+        body,
+        200,
+        headers: {
+          Headers.contentTypeHeader: [contentType],
+        },
+      );
 
   /// Stream SSE giống backend: `data: <json string>` từng sự kiện một.
   static ResponseBody _sse(

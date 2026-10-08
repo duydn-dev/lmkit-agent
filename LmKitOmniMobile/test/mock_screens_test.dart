@@ -21,11 +21,13 @@ import 'package:lmkit_omni_mobile/core/config/app_config_provider.dart';
 import 'package:lmkit_omni_mobile/features/admin/admin_hub_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/api_keys_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/audit_log_screen.dart';
+import 'package:lmkit_omni_mobile/features/admin/dashboard_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/database_connections_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/database_diagram_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/knowledge_base_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/lora_adapters_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/mcp_servers_screen.dart';
+import 'package:lmkit_omni_mobile/features/admin/quota_admin_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/tenants_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/users_screen.dart';
 import 'package:lmkit_omni_mobile/features/admin/widget_settings_screen.dart';
@@ -98,6 +100,8 @@ final _screens = <String, Widget Function()>{
   'LoRA Adapters': () => const LoraAdaptersScreen(),
   'Widget Settings': () => const WidgetSettingsScreen(),
   'Nhật ký kiểm toán': () => const AuditLogScreen(),
+  'Dashboard vận hành': () => const DashboardScreen(),
+  'Hạn mức & Token': () => const QuotaAdminScreen(),
   'Đoạn chat được chia sẻ': () =>
       const SharedChatScreen(initialToken: 'demo-share-token'),
   'Chi tiết agent run': () =>
