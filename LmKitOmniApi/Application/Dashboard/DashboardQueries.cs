@@ -1,5 +1,6 @@
-using System.Text;
+﻿using System.Text;
 using LmKitOmniApi.Infrastructure.Data;
+using LmKitOmniApi.Application.Quotas;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 
@@ -69,13 +70,20 @@ public sealed class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboard
         var windowAssistant = _dbContext.ChatMessages.AsNoTracking()
             .Where(m => m.Role == "assistant" && m.CreatedAt >= fromUtc && m.CreatedAt < toUtc);
 
-        cockpit.Tokens = await BuildTokensAsync(windowAssistant, fromUtc, periodDays, cancellationToken);
+        // Cua so cua AGENT-RUN trong ky. Day la nguon chi phi lon nhat ma bang chat khong thay
+        // duoc: mot lan chay agent la nhieu luot suy luan noi tiep nhau, moi luot lai gui lai
+        // tich luy. Dem theo CreatedAtUtc cua lan chay (luc BAT DAU) nen mot lan chay keo dai
+        // qua nua dem van chi thuoc ve dung mot ky.
+        var windowAgentRuns = _dbContext.AgentRuns.AsNoTracking()
+            .Where(r => r.CreatedAtUtc >= fromUtc && r.CreatedAtUtc < toUtc);
+
+        cockpit.Tokens = await BuildTokensAsync(windowAssistant, windowAgentRuns, fromUtc, periodDays, cancellationToken);
         cockpit.Users = await BuildUsersAsync(windowAssistant, dto.TotalUsers, today, fromUtc, toUtc, periodDays, cancellationToken);
-        cockpit.Spend = await BuildSpendAsync(windowAssistant, cancellationToken);
+        cockpit.Spend = await BuildSpendAsync(windowAssistant, windowAgentRuns, cancellationToken);
         cockpit.Quota = await BuildQuotaAsync(cancellationToken);
         cockpit.Documents = await BuildDocumentsAsync(cancellationToken);
         cockpit.Activity = await BuildActivityAsync(fromUtc, toUtc, periodDays, cancellationToken);
-        cockpit.Performance = await BuildPerformanceAsync(windowAssistant, cancellationToken);
+        cockpit.Performance = await BuildPerformanceAsync(windowAssistant, windowAgentRuns, cancellationToken);
         cockpit.Alerts = await BuildAlertsAsync(cockpit.Quota, cancellationToken);
 
         dto.Cockpit = cockpit;
@@ -83,7 +91,11 @@ public sealed class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboard
     }
 
     private async Task<DashboardTokensDto> BuildTokensAsync(
-        IQueryable<Domain.Entities.ChatMessage> windowAssistant, DateTime fromUtc, int periodDays, CancellationToken ct)
+        IQueryable<Domain.Entities.ChatMessage> windowAssistant,
+        IQueryable<Domain.Entities.AgentRun> windowAgentRuns,
+        DateTime fromUtc,
+        int periodDays,
+        CancellationToken ct)
     {
         var tokens = new DashboardTokensDto
         {
@@ -91,6 +103,13 @@ public sealed class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboard
             CompletionTokens = await windowAssistant.SumAsync(m => (int?)m.CompletionTokens, ct) ?? 0,
             Messages = await windowAssistant.CountAsync(ct)
         };
+
+        // Agent-run: cong tren cot rieng, va chi DEM nhung lan chay that su goi model (lan bi
+        // hang doi tu choi de lai hai cot bang 0 -- dem no se thanh mot lan chay mien phi).
+        tokens.AgentRunPromptTokens = await windowAgentRuns.SumAsync(r => (int?)r.PromptTokens, ct) ?? 0;
+        tokens.AgentRunCompletionTokens = await windowAgentRuns.SumAsync(r => (int?)r.CompletionTokens, ct) ?? 0;
+        tokens.AgentRuns = await windowAgentRuns
+            .CountAsync(r => r.PromptTokens > 0 || r.CompletionTokens > 0, ct);
 
         // Gom theo năm/tháng/ngày thay vì <c>CreatedAt.Date</c>: Npgsql dịch .Date trên cột
         // timestamptz thành phép cast phụ thuộc timezone phiên, còn date_part là xác định.
@@ -254,7 +273,9 @@ public sealed class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboard
     }
 
     private async Task<DashboardSpendDto> BuildSpendAsync(
-        IQueryable<Domain.Entities.ChatMessage> windowAssistant, CancellationToken ct)
+        IQueryable<Domain.Entities.ChatMessage> windowAssistant,
+        IQueryable<Domain.Entities.AgentRun> windowAgentRuns,
+        CancellationToken ct)
     {
         var byTenant = await windowAssistant
             .GroupBy(m => m.ChatSession!.TenantId)
@@ -267,24 +288,60 @@ public sealed class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboard
             })
             .ToListAsync(ct);
 
-        var spend = new DashboardSpendDto();
-        if (byTenant.Count == 0) return spend;
+        var agentByTenant = await windowAgentRuns
+            .Where(r => r.PromptTokens > 0 || r.CompletionTokens > 0)
+            .GroupBy(r => r.TenantId)
+            .Select(g => new
+            {
+                TenantId = g.Key,
+                Prompt = g.Sum(x => x.PromptTokens),
+                Completion = g.Sum(x => x.CompletionTokens),
+                Runs = g.Count()
+            })
+            .ToListAsync(ct);
 
-        var tenantIds = byTenant.Select(t => t.TenantId).ToList();
+        var spend = new DashboardSpendDto();
+        if (byTenant.Count == 0 && agentByTenant.Count == 0) return spend;
+
+        // Mot dong cho moi don vi, ba cot agent-run de rieng: don vi nao chi chay agent (khong
+        // chat) van phai xuat hien, neu khong thi phan chi phi lon nhat vo hinh tren bang.
+        var rows = new Dictionary<Guid, TenantSpendRow>();
+        foreach (var t in byTenant)
+        {
+            rows[t.TenantId] = new TenantSpendRow(t.TenantId, t.Prompt, t.Completion, t.Count, 0, 0, 0);
+        }
+        foreach (var a in agentByTenant)
+        {
+            rows.TryGetValue(a.TenantId, out var existing);
+            var baseRow = existing ?? new TenantSpendRow(a.TenantId, 0, 0, 0, 0, 0, 0);
+            rows[a.TenantId] = baseRow with
+            {
+                AgentRunPromptTokens = a.Prompt,
+                AgentRunCompletionTokens = a.Completion,
+                AgentRuns = a.Runs
+            };
+        }
+
+        var tenantIds = rows.Keys.ToList();
         var names = await _dbContext.Tenants.AsNoTracking()
             .Where(t => tenantIds.Contains(t.Id))
             .Select(t => new { t.Id, t.Name })
             .ToDictionaryAsync(t => t.Id, t => t.Name, ct);
 
-        var ordered = byTenant
-            .OrderByDescending(t => t.Prompt + t.Completion)
+        // Xep hang va ti le tap trung tinh tren TONG chi phi AI (chat + agent-run): mot don vi
+        // dot token qua agent ma khong chat van la don vi dot nhieu nhat, va bo no ra khoi
+        // "top 3 chiem bao nhieu %" se lam con so do sai lech theo huong lac quan.
+        var ordered = rows.Values
+            .OrderByDescending(t => t.ChatTokens + t.AgentTokens)
             .ThenBy(t => t.TenantId)
             .ToList();
 
         // Cộng bằng long rồi mới kẹp: tổng token của một kỳ dài có thể vượt int, và một tổng
         // bị tràn sẽ biến mọi tỉ lệ phần trăm phía dưới thành số vô nghĩa.
-        var totalTokens = ordered.Sum(t => (long)(t.Prompt + t.Completion));
-        spend.TotalTokens = (int)Math.Min(totalTokens, int.MaxValue);
+        var totalChatTokens = ordered.Sum(t => (long)t.ChatTokens);
+        var totalAllTokens = ordered.Sum(t => (long)(t.ChatTokens + t.AgentTokens));
+        spend.TotalTokens = (int)Math.Min(totalChatTokens, int.MaxValue);
+        spend.TotalAgentRunTokens = (int)Math.Min(totalAllTokens - totalChatTokens, int.MaxValue);
 
         spend.ByTenant = ordered
             .Take(DashboardPeriod.TopLimit)
@@ -294,18 +351,39 @@ public sealed class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboard
                 TenantName = names.TryGetValue(t.TenantId, out var name) ? name : "(không xác định)",
                 PromptTokens = t.Prompt,
                 CompletionTokens = t.Completion,
-                Messages = t.Count
+                Messages = t.Count,
+                AgentRunPromptTokens = t.AgentRunPromptTokens,
+                AgentRunCompletionTokens = t.AgentRunCompletionTokens,
+                AgentRuns = t.AgentRuns
             })
             .ToList();
 
-        if (totalTokens > 0)
+        if (totalAllTokens > 0)
         {
-            spend.Top3SharePct = Percent(ordered.Take(3).Sum(t => (long)(t.Prompt + t.Completion)), totalTokens);
-            spend.TopTenantSharePct = Percent(ordered[0].Prompt + ordered[0].Completion, totalTokens);
+            spend.Top3SharePct = Percent(ordered.Take(3).Sum(t => (long)(t.ChatTokens + t.AgentTokens)), totalAllTokens);
+            spend.TopTenantSharePct = Percent(ordered[0].ChatTokens + ordered[0].AgentTokens, totalAllTokens);
         }
         spend.TopTenantName = spend.ByTenant.Count > 0 ? spend.ByTenant[0].TenantName : string.Empty;
 
         return spend;
+    }
+
+    /// <summary>
+    /// Mot dong cua bang chi tieu theo don vi: chat va agent-run o cot rieng nhung doc ra tong thi
+    /// cong ca hai. <see cref="ChatTokens"/>/<see cref="AgentTokens"/> khai bao mot lan de khong
+    /// noi nao tu cong lai roi quen mot ve.
+    /// </summary>
+    private sealed record TenantSpendRow(
+        Guid TenantId,
+        int Prompt,
+        int Completion,
+        int Count,
+        int AgentRunPromptTokens,
+        int AgentRunCompletionTokens,
+        int AgentRuns)
+    {
+        public int ChatTokens => Prompt + Completion;
+        public int AgentTokens => AgentRunPromptTokens + AgentRunCompletionTokens;
     }
 
     private async Task<DashboardQuotaDto> BuildQuotaAsync(CancellationToken ct)
@@ -320,13 +398,12 @@ public sealed class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboard
         // phải cửa sổ 7/30/90 của dashboard — nếu lấy theo cửa sổ thì đổi bộ lọc sẽ làm % hạn
         // mức nhảy múa dù hạn mức không hề thay đổi.
         var now = DateTime.UtcNow;
-        var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var monthStart = TenantQuotaUsage.MonthStartUtc(now);
 
-        var usedByTenant = await _dbContext.ChatMessages.AsNoTracking()
-            .Where(m => m.Role == "assistant" && m.CreatedAt >= monthStart)
-            .GroupBy(m => m.ChatSession!.TenantId)
-            .Select(g => new { TenantId = g.Key, Used = g.Sum(x => x.PromptTokens + x.CompletionTokens) })
-            .ToDictionaryAsync(x => x.TenantId, x => x.Used, ct);
+        // "Đã dùng" đến từ TenantQuotaUsage — CÙNG nguồn với worker cảnh báo chủ động, và gồm CẢ
+        // lượt chat lẫn lần chạy agent. Agent-run là nguồn đốt token lớn nhất; khi nó vô hình với
+        // cột hạn mức thì cảnh báo 80% không bao giờ bắn đúng lúc.
+        var usedByTenant = await TenantQuotaUsage.GetMonthlyUsedByTenantAsync(_dbContext, monthStart, ct);
 
         var subscriptions = await _dbContext.Subscriptions.AsNoTracking()
             .Where(s => s.IsActive)
@@ -517,7 +594,9 @@ public sealed class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboard
     }
 
     private static async Task<DashboardPerformanceDto> BuildPerformanceAsync(
-        IQueryable<Domain.Entities.ChatMessage> windowAssistant, CancellationToken ct)
+        IQueryable<Domain.Entities.ChatMessage> windowAssistant,
+        IQueryable<Domain.Entities.AgentRun> windowAgentRuns,
+        CancellationToken ct)
     {
         // Chỉ lấy mẫu CÓ số đo: row cũ (0 ms) không phải "nhanh tức thì" mà là CHƯA ĐO, gộp
         // chúng vào trung bình sẽ kéo độ trễ xuống một cách giả tạo.
@@ -526,16 +605,33 @@ public sealed class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboard
             .Select(m => m.LatencyMs)
             .ToListAsync(ct);
 
-        if (latencies.Count == 0) return new DashboardPerformanceDto();
+        // Cung ly do cho agent-run: lan chay truoc khi co tinh nang do do tre co LatencyMs = 0.
+        var runLatencies = await windowAgentRuns
+            .Where(r => r.LatencyMs > 0)
+            .Select(r => r.LatencyMs)
+            .ToListAsync(ct);
 
-        latencies.Sort();
-        return new DashboardPerformanceDto
+        var performance = new DashboardPerformanceDto();
+        if (latencies.Count > 0)
         {
-            Samples = latencies.Count,
-            AvgLatencyMs = (int)Math.Round(latencies.Average()),
-            P95LatencyMs = latencies[(int)Math.Floor((latencies.Count - 1) * 0.95)]
-        };
+            latencies.Sort();
+            performance.Samples = latencies.Count;
+            performance.AvgLatencyMs = (int)Math.Round(latencies.Average());
+            performance.P95LatencyMs = P95(latencies);
+        }
+        if (runLatencies.Count > 0)
+        {
+            runLatencies.Sort();
+            performance.AgentRunSamples = runLatencies.Count;
+            performance.AgentRunAvgLatencyMs = (int)Math.Round(runLatencies.Average());
+            performance.AgentRunP95LatencyMs = P95(runLatencies);
+        }
+        return performance;
     }
+
+    /// <summary>p95 = phan tu tai floor((n-1) * 0.95) cua danh sach DA sap xep tang dan.</summary>
+    private static int P95(List<int> sortedLatencies)
+        => sortedLatencies[(int)Math.Floor((sortedLatencies.Count - 1) * 0.95)];
 
     private async Task<DashboardSelfDto> ComputeSelfAsync(Guid userId, DateTime fromUtc, DateTime toUtc, CancellationToken ct)
     {
@@ -612,7 +708,46 @@ public sealed class GetDashboardCsvQueryHandler : IRequestHandler<GetDashboardCs
             })
             .ToListAsync(cancellationToken);
 
-        var tenantIds = rows.Select(r => r.TenantId).Distinct().ToList();
+        // Agent-run là nguồn chi phí lớn nhất và KHÔNG nằm trong bảng chat, nên bỏ nó khỏi báo
+        // cáo là báo cáo nói thiếu. Cột riêng (không trộn vào cột chat) để người đọc biết tiền đi
+        // đâu: cùng model, cùng đơn vị, nhưng một bên là lượt hỏi đáp và một bên là lần chạy tự
+        // động nhiều bước.
+        var agentRows = await _dbContext.AgentRuns.AsNoTracking()
+            .Where(r => r.CreatedAtUtc >= fromUtc && r.CreatedAtUtc < toUtc
+                && (r.PromptTokens > 0 || r.CompletionTokens > 0))
+            .GroupBy(r => new { r.TenantId, r.ModelName })
+            .Select(g => new
+            {
+                g.Key.TenantId,
+                g.Key.ModelName,
+                Runs = g.Count(),
+                Prompt = g.Sum(x => x.PromptTokens),
+                Completion = g.Sum(x => x.CompletionTokens)
+            })
+            .ToListAsync(cancellationToken);
+
+        // Gộp hai nguồn theo đúng một khóa (đơn vị × model): model chỉ xuất hiện ở một trong hai
+        // nguồn vẫn phải có dòng, với cột của nguồn kia bằng 0.
+        var merged = new Dictionary<(Guid TenantId, string Model), CsvUsageRow>();
+        foreach (var row in rows)
+        {
+            var key = (row.TenantId, row.ModelName ?? "(unknown)");
+            merged[key] = new CsvUsageRow(row.TenantId, key.Item2, row.Answers, row.Prompt, row.Completion, 0, 0, 0);
+        }
+        foreach (var row in agentRows)
+        {
+            var key = (row.TenantId, row.ModelName ?? "(unknown)");
+            merged.TryGetValue(key, out var existing);
+            var baseRow = existing ?? new CsvUsageRow(row.TenantId, key.Item2, 0, 0, 0, 0, 0, 0);
+            merged[key] = baseRow with
+            {
+                AgentRuns = row.Runs,
+                AgentPrompt = row.Prompt,
+                AgentCompletion = row.Completion
+            };
+        }
+
+        var tenantIds = merged.Keys.Select(k => k.TenantId).Distinct().ToList();
         var tenants = await _dbContext.Tenants.AsNoTracking()
             .Where(t => tenantIds.Contains(t.Id))
             .Select(t => new { t.Id, t.Name })
@@ -620,25 +755,41 @@ public sealed class GetDashboardCsvQueryHandler : IRequestHandler<GetDashboardCs
 
         var csv = new StringBuilder();
         csv.Append('\uFEFF'); // BOM: Excel cần nó để đọc đúng tiếng Việt.
-        csv.Append("Mã đơn vị,Tên đơn vị,Model,Số câu trả lời,Prompt tokens,Completion tokens,Tổng token\r\n");
+        // Ba cột agent-run nằm CUỐI: người đang đọc file theo 7 cột đầu không bị lệch.
+        csv.Append("Mã đơn vị,Tên đơn vị,Model,Số câu trả lời,Prompt tokens,Completion tokens,Tổng token,"
+            + "Số lần chạy agent,Prompt tokens agent,Completion tokens agent\r\n");
 
-        foreach (var row in rows
+        foreach (var row in merged.Values
                      .OrderBy(r => tenants.TryGetValue(r.TenantId, out var n) ? n : string.Empty, StringComparer.Ordinal)
-                     .ThenBy(r => r.ModelName ?? string.Empty, StringComparer.Ordinal))
+                     .ThenBy(r => r.Model, StringComparer.Ordinal))
         {
             var name = tenants.TryGetValue(row.TenantId, out var tenantName) ? tenantName : "(không xác định)";
             csv.Append(CsvField(row.TenantId.ToString())).Append(',')
                 .Append(CsvField(name)).Append(',')
-                .Append(CsvField(row.ModelName ?? "(unknown)")).Append(',')
+                .Append(CsvField(row.Model)).Append(',')
                 .Append(row.Answers).Append(',')
                 .Append(row.Prompt).Append(',')
                 .Append(row.Completion).Append(',')
-                .Append(row.Prompt + row.Completion).Append("\r\n");
+                .Append(row.Prompt + row.Completion).Append(',')
+                .Append(row.AgentRuns).Append(',')
+                .Append(row.AgentPrompt).Append(',')
+                .Append(row.AgentCompletion).Append("\r\n");
         }
 
         var fileName = $"bao-cao-su-dung-{periodDays}ngay-{DateTime.UtcNow:yyyyMMdd}.csv";
         return new DashboardCsvResult(fileName, Encoding.UTF8.GetBytes(csv.ToString()));
     }
+
+    /// <summary>Một dòng của file CSV: lượt chat và lượt agent-run của cùng (đơn vị × model).</summary>
+    private sealed record CsvUsageRow(
+        Guid TenantId,
+        string Model,
+        int Answers,
+        int Prompt,
+        int Completion,
+        int AgentRuns,
+        int AgentPrompt,
+        int AgentCompletion);
 
     /// <summary>Bọc trường CSV trong dấu nháy kép khi có dấu phẩy/nháy/xuống dòng — tên đơn vị
     /// tiếng Việt hoàn toàn có thể chứa dấu phẩy và làm lệch mọi cột phía sau.</summary>

@@ -1,4 +1,4 @@
-namespace LmKitOmniApi.Application.Dashboard;
+﻿namespace LmKitOmniApi.Application.Dashboard;
 
 /// <summary>
 /// Cửa sổ thời gian của dashboard. Chỉ nhận 7/30/90 ngày — mọi giá trị khác (kể cả null,
@@ -65,6 +65,20 @@ public sealed class DashboardTokensDto
     /// thoại không bị tính hai lần chi phí.</summary>
     public int Messages { get; set; }
 
+    /// <summary>
+    /// Token ước lượng của các lượt AGENT-RUN trong kỳ, để RIÊNG khỏi lượt chat: một lần chạy
+    /// agent là nhiều lượt suy luận liên tiếp nên tốn gấp nhiều lần một lượt chat, gộp chung sẽ
+    /// giấu mất nguồn đốt token lớn nhất. Đây là số của cả lần chạy (cộng dồn mọi lần chạy lại
+    /// sau phê duyệt), không phải của từng lượt.
+    /// </summary>
+    public int AgentRunPromptTokens { get; set; }
+
+    /// <summary>Xem <see cref="AgentRunPromptTokens"/>.</summary>
+    public int AgentRunCompletionTokens { get; set; }
+
+    /// <summary>Số lần chạy THẬT SỰ gọi model trong kỳ (lần bị hàng đợi từ chối không tính).</summary>
+    public int AgentRuns { get; set; }
+
     public List<DashboardDailyTokenDto> Daily { get; set; } = [];
     public List<DashboardModelUsageDto> ByModel { get; set; } = [];
 }
@@ -113,7 +127,11 @@ public sealed class DashboardTopUserDto
 
 public sealed class DashboardSpendDto
 {
+    /// <summary>Tổng token của LƯỢT CHAT trong kỳ (không gồm agent-run — xem <see cref="TotalAgentRunTokens"/>).</summary>
     public int TotalTokens { get; set; }
+
+    /// <summary>Tổng token của agent-run trong kỳ. Tách riêng, nhưng vẫn vào tỉ lệ tập trung chi tiêu.</summary>
+    public int TotalAgentRunTokens { get; set; }
 
     /// <summary>Phần trăm token của 3 đơn vị đứng đầu trên tổng kỳ ("spend concentration").</summary>
     public int Top3SharePct { get; set; }
@@ -130,6 +148,11 @@ public sealed class DashboardTenantUsageDto
     public int PromptTokens { get; set; }
     public int CompletionTokens { get; set; }
     public int Messages { get; set; }
+
+    /// <summary>Phần agent-run của đơn vị, tách khỏi lượt chat (xem DashboardTokensDto).</summary>
+    public int AgentRunPromptTokens { get; set; }
+    public int AgentRunCompletionTokens { get; set; }
+    public int AgentRuns { get; set; }
 }
 
 public sealed class DashboardQuotaDto
@@ -204,6 +227,14 @@ public sealed class DashboardPerformanceDto
     public int Samples { get; set; }
     public int AvgLatencyMs { get; set; }
     public int P95LatencyMs { get; set; }
+
+    /// <summary>
+    /// Độ trễ của các lần chạy agent trong kỳ, đo riêng vì một lần chạy gồm nhiều lượt suy luận
+    /// cộng lại — trộn với lượt chat sẽ ra một con số không mô tả cái gì cả.
+    /// </summary>
+    public int AgentRunSamples { get; set; }
+    public int AgentRunAvgLatencyMs { get; set; }
+    public int AgentRunP95LatencyMs { get; set; }
 }
 
 public sealed class DashboardAlertsDto

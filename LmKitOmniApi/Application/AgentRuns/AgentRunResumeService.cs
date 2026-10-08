@@ -1,4 +1,4 @@
-using LmKitOmniApi.Services;
+﻿using LmKitOmniApi.Services;
 using System.Text;
 using System.Text.Json;
 using LmKitOmniApi.Application.Abstractions;
@@ -54,6 +54,8 @@ public sealed class AgentRunResumeService
     private readonly IAgentRunHistoryFactory _historyFactory;
     private readonly AgentRunResumeOptions _options;
     private readonly ILogger<AgentRunResumeService> _logger;
+    private readonly ITokenManagementService _tokenManagement;
+    private readonly LmModelManager _modelManager;
 
     /// <summary><see cref="AgentRun.Error"/> is <c>MaxLength(2000)</c>.</summary>
     private const int MaxErrorChars = 2000;
@@ -76,13 +78,17 @@ public sealed class AgentRunResumeService
         IAgentOrchestrator orchestrator,
         IAgentRunHistoryFactory historyFactory,
         AgentRunResumeQueue queue,
-        ILogger<AgentRunResumeService> logger)
+        ILogger<AgentRunResumeService> logger,
+        ITokenManagementService tokenManagement,
+        LmModelManager modelManager)
     {
         _db = db;
         _orchestrator = orchestrator;
         _historyFactory = historyFactory;
         _options = queue.Options;
         _logger = logger;
+        _tokenManagement = tokenManagement;
+        _modelManager = modelManager;
     }
 
     /// <summary>
@@ -310,6 +316,9 @@ public sealed class AgentRunResumeService
         var cancelled = false;
         var capacityRefused = false;
         string? failure = null;
+        // Đồng hồ của RIÊNG lần chạy lại này; cộng dồn vào run ở FinishAsync nên tổng độ trễ
+        // của một lần chạy phản ánh cả lần gốc lẫn mọi lần chạy lại sau phê duyệt.
+        var inferenceStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         try
         {
@@ -353,6 +362,15 @@ public sealed class AgentRunResumeService
         // again and its citations must survive into the run's history view.
         var passWebSources = AgentRunMarkers.ExtractWebSourceUrls(content.ToString());
 
+        // Chi phí của lần chạy lại này. Đo bằng cùng bộ ước lượng với lượt chạy đầu (xem
+        // AgentRunTokenUsage) và chỉ ghi khi model thật sự đã chạy: một lần bị hàng đợi suy
+        // luận từ chối hết chỗ không được đội thêm token chưa từng tốn.
+        var elapsedMs = inferenceStopwatch.ElapsedMilliseconds;
+        var inferIsReal = AgentRunTokenUsage.HasModelWork(sink, completed, gated);
+        var usage = inferIsReal
+            ? AgentRunTokenUsage.Estimate(_tokenManagement, query, sink, answer)
+            : new AgentRunTokenUsage.Usage(0, 0);
+
         if ((cancelled || capacityRefused) && !gated)
         {
             // Steps that really happened are kept; the pass is re-queued and replays them
@@ -367,7 +385,7 @@ public sealed class AgentRunResumeService
             await FinishAsync(runId, token, AgentRunStatuses.Running, progress,
                 appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer,
                 error: null, requeue: true, producedFilePayloads: passFilePayloads,
-                webSources: passWebSources);
+                webSources: passWebSources, usage: usage, elapsedMs: elapsedMs);
             return capacityRefused;
         }
 
@@ -379,7 +397,8 @@ public sealed class AgentRunResumeService
             // it. Approving again queues another continuation, budget permitting.
             await FinishAsync(runId, token, AgentRunStatuses.AwaitingApproval, sink,
                 appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer, error: null,
-                producedFilePayloads: passFilePayloads, webSources: passWebSources);
+                producedFilePayloads: passFilePayloads, webSources: passWebSources,
+                usage: usage, elapsedMs: elapsedMs);
             return false;
         }
 
@@ -387,13 +406,15 @@ public sealed class AgentRunResumeService
         {
             await FinishAsync(runId, token, AgentRunStatuses.Failed, sink,
                 appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer, error: failure,
-                producedFilePayloads: passFilePayloads, webSources: passWebSources);
+                producedFilePayloads: passFilePayloads, webSources: passWebSources,
+                usage: usage, elapsedMs: elapsedMs);
             return false;
         }
 
         await FinishAsync(runId, token, AgentRunStatuses.Completed, sink,
             appendToResult: string.IsNullOrWhiteSpace(answer) ? null : answer, error: null,
-            producedFilePayloads: passFilePayloads, webSources: passWebSources);
+            producedFilePayloads: passFilePayloads, webSources: passWebSources,
+            usage: usage, elapsedMs: elapsedMs);
         return false;
     }
 
@@ -444,7 +465,9 @@ public sealed class AgentRunResumeService
         string? error,
         bool requeue = false,
         IReadOnlyList<string>? producedFilePayloads = null,
-        IReadOnlyList<string>? webSources = null)
+        IReadOnlyList<string>? webSources = null,
+        AgentRunTokenUsage.Usage usage = default,
+        long elapsedMs = 0)
     {
         var ct = CancellationToken.None;
 
@@ -480,6 +503,17 @@ public sealed class AgentRunResumeService
                 Input = step.Input,
                 Observation = step.Observation
             });
+        }
+
+        // Cộng dồn chi phí của lần chạy lại vào dòng của lần chạy: dashboard đọc một dòng là ra
+        // tổng chi phí thật, không phải ghép nhiều lượt rời rạc. Model giữ nguyên giá trị của
+        // lần chạy đầu (host không đổi model giữa các lần chạy lại).
+        if (usage.PromptTokens > 0 || usage.CompletionTokens > 0)
+        {
+            run.PromptTokens += usage.PromptTokens;
+            run.CompletionTokens += usage.CompletionTokens;
+            run.ModelName ??= _modelManager.DefaultChatModelId;
+            run.LatencyMs = (int)Math.Min(run.LatencyMs + elapsedMs, int.MaxValue);
         }
 
         run.Status = status;

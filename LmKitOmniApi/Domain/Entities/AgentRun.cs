@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace LmKitOmniApi.Domain.Entities;
@@ -54,6 +54,30 @@ public sealed class AgentRun
     /// orchestrator's MaxWebReferenceCount (12) — the marker already enforces it.
     /// </summary>
     public string? WebSourcesJson { get; set; }
+
+    /// <summary>
+    /// Token ƯỚC LƯỢNG của lượt gửi lên model trong cả vòng ReAct (goal + mọi observation
+    /// được nạp lại). Cùng bộ ước lượng tiktoken với chat nên so sánh được với lượt chat;
+    /// KHÔNG phải usage thật của model. Cộng dồn qua các lần resume sau phê duyệt để
+    /// dashboard thấy được tổng chi phí thật của đúng một lần chạy.
+    /// </summary>
+    public int PromptTokens { get; set; }
+
+    /// <summary>Token ƯỚC LƯỢNG model sinh ra: payload gọi tool (step Input) + câu trả lời cuối.</summary>
+    public int CompletionTokens { get; set; }
+
+    /// <summary>
+    /// Model thật sự phục vụ lần chạy (mặc định của server — client không chọn được), ghi lại
+    /// để nhóm theo model không lệch với hạ tầng.
+    /// </summary>
+    [MaxLength(100)]
+    public string? ModelName { get; set; }
+
+    /// <summary>
+    /// Tổng số mili-giây suy luận của lần chạy (mọi lần chạy lại sau phê duyệt cộng vào).
+    /// Kẹp về int để một lần treo quá ~24 ngày không tràn cột.
+    /// </summary>
+    public int LatencyMs { get; set; }
 
     /// <summary>A short, user-safe error summary when the run failed.</summary>
     [MaxLength(2000)]

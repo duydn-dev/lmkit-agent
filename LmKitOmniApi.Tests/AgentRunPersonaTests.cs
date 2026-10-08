@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Application.AgentRuns;
 using LmKitOmniApi.Application.AgentRuns.Commands;
@@ -6,9 +6,12 @@ using LmKitOmniApi.Application.AgentRuns.Handlers;
 using LmKitOmniApi.Domain.Entities;
 using LmKitOmniApi.Infrastructure.AI;
 using LmKitOmniApi.Infrastructure.Data;
+using LmKitOmniApi.Services;
 using LMKit.TextGeneration.Chat;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LmKitOmniApi.Tests;
 
@@ -79,7 +82,13 @@ public sealed class AgentRunPersonaTests : IDisposable
     {
         await using var db = CreateContext();
         var orchestrator = new OptionsCapturingOrchestrator();
-        var handler = new StreamAgentRunCommandHandler(orchestrator, db, new StubHistoryFactory());
+        // Chi phí token của lần chạy cần bộ ước lượng + tên model; test này chỉ quan tâm
+        // persona nên dùng cấu hình rỗng (DefaultChatModelId rơi về mặc định của server).
+        using var modelManager = new LmModelManager(new ConfigurationBuilder().Build());
+        var handler = new StreamAgentRunCommandHandler(
+            orchestrator, db, new StubHistoryFactory(),
+            new TokenManagementService(modelManager, NullLogger<TokenManagementService>.Instance),
+            modelManager);
         var command = new StreamAgentRunCommand
         {
             TenantId = TenantId,

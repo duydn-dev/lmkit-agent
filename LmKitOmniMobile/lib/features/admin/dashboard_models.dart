@@ -110,6 +110,9 @@ class DashboardTokens {
     required this.promptTokens,
     required this.completionTokens,
     required this.messages,
+    required this.agentRunPromptTokens,
+    required this.agentRunCompletionTokens,
+    required this.agentRuns,
     required this.daily,
     required this.byModel,
   });
@@ -117,16 +120,31 @@ class DashboardTokens {
   final int promptTokens;
   final int completionTokens;
   final int messages;
+
+  /// Token của các lần chạy AGENT trong kỳ, tách khỏi lượt chat: một lần chạy gồm nhiều lượt
+  /// suy luận nối tiếp nên tốn gấp nhiều lần một lượt chat, gộp chung sẽ giấu mất nguồn chi phí
+  /// lớn nhất. Cộng dồn mọi lần chạy lại sau phê duyệt.
+  final int agentRunPromptTokens;
+  final int agentRunCompletionTokens;
+
+  /// Số lần chạy THẬT SỰ gọi model (lần bị hàng đợi từ chối không tính).
+  final int agentRuns;
+
   final List<DashboardDailyToken> daily;
   final List<DashboardModelUsage> byModel;
 
   int get totalTokens => promptTokens + completionTokens;
+
+  int get totalAgentRunTokens => agentRunPromptTokens + agentRunCompletionTokens;
 
   factory DashboardTokens.fromJson(Map<String, dynamic> json) =>
       DashboardTokens(
         promptTokens: dashInt(json['promptTokens']),
         completionTokens: dashInt(json['completionTokens']),
         messages: dashInt(json['messages']),
+        agentRunPromptTokens: dashInt(json['agentRunPromptTokens']),
+        agentRunCompletionTokens: dashInt(json['agentRunCompletionTokens']),
+        agentRuns: dashInt(json['agentRuns']),
         daily: dashList(json['daily'], DashboardDailyToken.fromJson),
         byModel: dashList(json['byModel'], DashboardModelUsage.fromJson),
       );
@@ -259,20 +277,32 @@ class DashboardSpend {
     required this.topTenantSharePct,
     required this.topTenantName,
     required this.byTenant,
+    this.totalAgentRunTokens = 0,
   });
 
+  /// Token của LƯỢT CHAT trong kỳ (không gồm agent-run).
   final int totalTokens;
+
+  /// Token của agent-run trong kỳ.
+  final int totalAgentRunTokens;
+
   final int top3SharePct;
   final int topTenantSharePct;
   final String topTenantName;
   final List<DashboardTenantUsage> byTenant;
 
-  int sharePct(DashboardTenantUsage usage) => totalTokens <= 0
-      ? 0
-      : ((usage.totalTokens * 100) / totalTokens).round();
+  /// Mẫu số dùng CHUNG với backend: backend tính "top 3 chiếm bao nhiêu %" trên tổng token
+  /// chat + agent-run, nên thanh % ở đây cũng phải cộng cả hai — lệch mẫu số là thanh dài hơn
+  /// con số ngay cạnh nó.
+  int sharePct(DashboardTenantUsage usage) {
+    final total = totalTokens + totalAgentRunTokens;
+    if (total <= 0) return 0;
+    return ((usage.allTokens * 100) / total).round();
+  }
 
   factory DashboardSpend.fromJson(Map<String, dynamic> json) => DashboardSpend(
     totalTokens: dashInt(json['totalTokens']),
+    totalAgentRunTokens: dashInt(json['totalAgentRunTokens']),
     top3SharePct: dashInt(json['top3SharePct']),
     topTenantSharePct: dashInt(json['topTenantSharePct']),
     topTenantName: dashString(json['topTenantName']),
@@ -288,6 +318,9 @@ class DashboardTenantUsage {
     required this.promptTokens,
     required this.completionTokens,
     required this.messages,
+    this.agentRunPromptTokens = 0,
+    this.agentRunCompletionTokens = 0,
+    this.agentRuns = 0,
   });
 
   final String tenantId;
@@ -296,7 +329,17 @@ class DashboardTenantUsage {
   final int completionTokens;
   final int messages;
 
+  /// Phần agent-run của đơn vị, để riêng khỏi lượt chat.
+  final int agentRunPromptTokens;
+  final int agentRunCompletionTokens;
+  final int agentRuns;
+
   int get totalTokens => promptTokens + completionTokens;
+
+  int get agentTokens => agentRunPromptTokens + agentRunCompletionTokens;
+
+  /// Tổng chi phí AI của đơn vị trong kỳ (chat + agent-run).
+  int get allTokens => totalTokens + agentTokens;
 
   factory DashboardTenantUsage.fromJson(Map<String, dynamic> json) =>
       DashboardTenantUsage(
@@ -305,6 +348,9 @@ class DashboardTenantUsage {
         promptTokens: dashInt(json['promptTokens']),
         completionTokens: dashInt(json['completionTokens']),
         messages: dashInt(json['messages']),
+        agentRunPromptTokens: dashInt(json['agentRunPromptTokens']),
+        agentRunCompletionTokens: dashInt(json['agentRunCompletionTokens']),
+        agentRuns: dashInt(json['agentRuns']),
       );
 }
 
@@ -449,6 +495,9 @@ class DashboardPerformance {
     required this.samples,
     required this.avgLatencyMs,
     required this.p95LatencyMs,
+    this.agentRunSamples = 0,
+    this.agentRunAvgLatencyMs = 0,
+    this.agentRunP95LatencyMs = 0,
   });
 
   /// Số mẫu có ghi độ trễ; 0 nghĩa là chưa lượt nào được đo.
@@ -456,11 +505,19 @@ class DashboardPerformance {
   final int avgLatencyMs;
   final int p95LatencyMs;
 
+  /// Độ trễ của các lần chạy agent, đo riêng: một lần chạy gồm nhiều lượt suy luận cộng lại.
+  final int agentRunSamples;
+  final int agentRunAvgLatencyMs;
+  final int agentRunP95LatencyMs;
+
   factory DashboardPerformance.fromJson(Map<String, dynamic> json) =>
       DashboardPerformance(
         samples: dashInt(json['samples']),
         avgLatencyMs: dashInt(json['avgLatencyMs']),
         p95LatencyMs: dashInt(json['p95LatencyMs']),
+        agentRunSamples: dashInt(json['agentRunSamples']),
+        agentRunAvgLatencyMs: dashInt(json['agentRunAvgLatencyMs']),
+        agentRunP95LatencyMs: dashInt(json['agentRunP95LatencyMs']),
       );
 }
 

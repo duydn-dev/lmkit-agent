@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using LmKitOmniApi.Domain.Entities;
 
 namespace LmKitOmniApi.Infrastructure.Data;
@@ -272,6 +272,11 @@ public class HermesDbContext : DbContext
         // a table scan every few seconds.
         modelBuilder.Entity<AgentRun>()
             .HasIndex(r => new { r.ResumeState, r.ResumeLeaseUntilUtc });
+        // Cửa sổ thời gian của dashboard agent-run: tổng hợp theo CreatedAtUtc trên MỌI đơn vị
+        // (góc nhìn Admin), nên index phải bắt đầu bằng chính CreatedAtUtc — index
+        // (TenantId, UserId, CreatedAtUtc) ở trên không dùng được cho truy vấn này.
+        modelBuilder.Entity<AgentRun>()
+            .HasIndex(r => r.CreatedAtUtc);
         modelBuilder.Entity<AgentRunStep>()
             .HasOne(s => s.AgentRun).WithMany(r => r.Steps).HasForeignKey(s => s.AgentRunId).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<AgentRunStep>()

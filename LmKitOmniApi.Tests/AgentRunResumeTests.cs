@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using LmKitOmniApi.Application.Abstractions;
 using LmKitOmniApi.Application.AgentRuns;
 using LmKitOmniApi.Application.Approvals;
@@ -605,7 +605,16 @@ public sealed class AgentRunResumeTests : IDisposable
     private AgentRunResumeService ResumeService(AgentRunResumeOptions? options = null)
         => new(NewContext(), _orchestrator, new StubHistoryFactory(),
             new AgentRunResumeQueue(Microsoft.Extensions.Options.Options.Create(options ?? Options())),
-            NullLogger<AgentRunResumeService>.Instance);
+            NullLogger<AgentRunResumeService>.Instance,
+            new TokenManagementService(ModelManager, NullLogger<TokenManagementService>.Instance),
+            ModelManager);
+
+    /// <summary>
+    /// Bộ ước lượng token + tên model cho chi phí của lần chạy lại. Cấu hình rỗng: test này
+    /// không tải model, chỉ cần DefaultChatModelId rơi về mặc định của server.
+    /// </summary>
+    private static LmModelManager ModelManager
+        => new(new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
 
     private HermesDbContext NewContext()
         => new(new DbContextOptionsBuilder<HermesDbContext>().UseSqlite(_connection).Options);

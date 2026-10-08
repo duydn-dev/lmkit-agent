@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using LmKitOmniApi.Application.AgentRuns.Commands;
@@ -25,13 +25,21 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
     private readonly IAgentOrchestrator _orchestrator;
     private readonly HermesDbContext _dbContext;
     private readonly IAgentRunHistoryFactory _historyFactory;
+    private readonly ITokenManagementService _tokenManagement;
+    private readonly LmModelManager _modelManager;
 
     public StreamAgentRunCommandHandler(
-        IAgentOrchestrator orchestrator, HermesDbContext dbContext, IAgentRunHistoryFactory historyFactory)
+        IAgentOrchestrator orchestrator,
+        HermesDbContext dbContext,
+        IAgentRunHistoryFactory historyFactory,
+        ITokenManagementService tokenManagement,
+        LmModelManager modelManager)
     {
         _orchestrator = orchestrator;
         _dbContext = dbContext;
         _historyFactory = historyFactory;
+        _tokenManagement = tokenManagement;
+        _modelManager = modelManager;
     }
 
     public async IAsyncEnumerable<string> Handle(
@@ -117,6 +125,9 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
         var history = await _historyFactory.CreateAsync(cancellationToken);
         var completed = false;
         var awaitingApproval = false;
+        // Đồng hồ đo độ trễ suy luận của CẢ vòng ReAct. Đọc lúc LƯU (trong finally) nên cả
+        // đường hủy giữa chừng cũng có số đo thật thay vì 0.
+        var inferenceStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         try
         {
@@ -134,12 +145,19 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
         {
             // Persist steps + outcome even on cancellation/error (None token: the
             // request token may already be canceled, same rationale as the chat handler).
-            await FinalizeAsync(run, steps, contentBuilder.ToString(), completed, awaitingApproval);
+            await FinalizeAsync(
+                run, steps, contentBuilder.ToString(), completed, awaitingApproval,
+                inferenceStopwatch.ElapsedMilliseconds);
         }
     }
 
     private async Task FinalizeAsync(
-        AgentRun run, IReadOnlyList<AgentRunStepData> steps, string rawContent, bool completed, bool awaitingApproval)
+        AgentRun run,
+        IReadOnlyList<AgentRunStepData> steps,
+        string rawContent,
+        bool completed,
+        bool awaitingApproval,
+        long elapsedMs)
     {
         for (var i = 0; i < steps.Count; i++)
         {
@@ -187,6 +205,18 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
             run.Error = string.IsNullOrWhiteSpace(refusal) ? "Thực thi bị dừng hoặc thất bại." : refusal;
         }
         run.CompletedAtUtc = awaitingApproval ? null : DateTime.UtcNow;
+
+        // Chi phí của lần chạy (ước lượng tiktoken, xem AgentRunTokenUsage). Ghi ở đây — chứ
+        // không ghi thành ChatMessage của phiên ẩn — để dashboard tách được "token chat" khỏi
+        // "token agent-run", và lần chạy lại sau phê duyệt cộng dồn vào cùng một dòng.
+        if (AgentRunTokenUsage.HasModelWork(steps, completed, awaitingApproval))
+        {
+            var usage = AgentRunTokenUsage.Estimate(_tokenManagement, run.Goal, steps, rawContent);
+            run.PromptTokens = usage.PromptTokens;
+            run.CompletionTokens = usage.CompletionTokens;
+            run.ModelName = _modelManager.DefaultChatModelId;
+            run.LatencyMs = (int)Math.Min(elapsedMs, int.MaxValue);
+        }
 
         await _dbContext.SaveChangesAsync(CancellationToken.None);
     }

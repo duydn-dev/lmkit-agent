@@ -174,6 +174,14 @@
               Top 3 đơn vị chiếm {{ cockpit.spend.top3SharePct }}% · đơn vị lớn nhất chiếm
               {{ cockpit.spend.topTenantSharePct }}%
             </p>
+            <p class="text-xs text-gray-500 mt-1">
+              Cộng thêm {{ nf(cockpit.spend.totalAgentRunTokens) }} token của các lần chạy
+              agent ({{ nf(cockpit.tokens.agentRuns) }} lần) — chiếm
+              {{ cockpit.spend.totalTokens + cockpit.spend.totalAgentRunTokens > 0
+                ? Math.round((cockpit.spend.totalAgentRunTokens * 100) /
+                    (cockpit.spend.totalTokens + cockpit.spend.totalAgentRunTokens))
+                : 0 }}% tổng chi phí AI trong kỳ.
+            </p>
             <p v-if="cockpit.spend.topTenantName" class="text-xs text-gray-500 mt-1">
               Nhiều nhất: <span class="text-gray-700">{{ cockpit.spend.topTenantName }}</span>
             </p>
@@ -185,6 +193,10 @@
                     {{ nf(tenant.promptTokens + tenant.completionTokens) }} · {{ sharePct(tenant) }}%
                   </span>
                 </div>
+                <p v-if="tenant.agentRuns" class="text-xs text-gray-500">
+                  trong đó {{ nf(tenantAgentTokens(tenant)) }} token agent-run
+                  ({{ nf(tenant.agentRuns) }} lần chạy)
+                </p>
                 <div class="mt-1 h-1.5 w-full rounded-full bg-gray-100">
                   <div class="h-1.5 rounded-full bg-blue-600" :style="{ width: `${sharePct(tenant)}%` }"></div>
                 </div>
@@ -275,6 +287,11 @@
             <p class="mt-3 text-xs text-gray-500">
               p95 {{ cockpit.performance.samples ? `${nf(cockpit.performance.p95LatencyMs)} ms` : '—' }}
               trên {{ nf(cockpit.performance.samples) }} mẫu có đo độ trễ.
+            </p>
+            <p class="mt-1 text-xs text-gray-500">
+              Agent-run: {{ cockpit.performance.agentRunSamples ? `${nf(cockpit.performance.agentRunAvgLatencyMs)} ms` : '—' }}
+              · p95 {{ cockpit.performance.agentRunSamples ? `${nf(cockpit.performance.agentRunP95LatencyMs)} ms` : '—' }}
+              trên {{ nf(cockpit.performance.agentRunSamples) }} lần chạy có đo độ trễ.
             </p>
             <h4 class="mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">Hành động nhiều nhất</h4>
             <ul class="mt-2 space-y-1.5 text-sm">
@@ -377,6 +394,9 @@ interface DashboardStats {
       promptTokens: number;
       completionTokens: number;
       messages: number;
+      agentRunPromptTokens: number;
+      agentRunCompletionTokens: number;
+      agentRuns: number;
       daily: { date: string; promptTokens: number; completionTokens: number; messages: number }[];
       byModel: { modelName: string; promptTokens: number; completionTokens: number; messages: number }[];
     };
@@ -392,10 +412,20 @@ interface DashboardStats {
     };
     spend: {
       totalTokens: number;
+      totalAgentRunTokens: number;
       top3SharePct: number;
       topTenantSharePct: number;
       topTenantName: string;
-      byTenant: { tenantId: string; tenantName: string; promptTokens: number; completionTokens: number; messages: number }[];
+      byTenant: {
+        tenantId: string;
+        tenantName: string;
+        promptTokens: number;
+        completionTokens: number;
+        messages: number;
+        agentRunPromptTokens: number;
+        agentRunCompletionTokens: number;
+        agentRuns: number;
+      }[];
     };
     quota: {
       tenantsOnPlan: number;
@@ -409,7 +439,14 @@ interface DashboardStats {
     };
     documents: { total: number; indexed: number; pending: number; failed: number; totalChunks: number };
     activity: { total: number; daily: { date: string; count: number }[]; topActions: { key: string; count: number }[] };
-    performance: { samples: number; avgLatencyMs: number; p95LatencyMs: number };
+    performance: {
+      samples: number;
+      avgLatencyMs: number;
+      p95LatencyMs: number;
+      agentRunSamples: number;
+      agentRunAvgLatencyMs: number;
+      agentRunP95LatencyMs: number;
+    };
     alerts: {
       nearLimitTenants: number;
       overLimitTenants: number;
@@ -448,6 +485,14 @@ const kpiCards = computed(() => {
     { key: 'tokens', label: `Token ${days.value} ngày`, value: tokens, icon: 'pi pi-chart-bar', accent: 'bg-gradient-to-br from-indigo-500 to-blue-600', hint: 'Ước lượng, chỉ tính lượt trả lời' },
     { key: 'messages', label: 'Lượt trả lời', value: cockpit.value?.tokens.messages ?? 0, icon: 'pi pi-sparkles', accent: 'bg-gradient-to-br from-sky-500 to-cyan-600', hint: '' },
     { key: 'adoption', label: 'Độ phổ cập', value: cockpit.value?.users.adoptionPct ?? 0, icon: 'pi pi-percentage', accent: 'bg-gradient-to-br from-amber-500 to-orange-600', hint: 'MAU / tổng người dùng' },
+    {
+      key: 'agentTokens',
+      label: `Token agent-run ${days.value} ngày`,
+      value: agentRunTokens.value,
+      icon: 'pi pi-bolt',
+      accent: 'bg-gradient-to-br from-fuchsia-500 to-purple-600',
+      hint: cockpit.value ? `${nf(cockpit.value.tokens.agentRuns)} lần chạy có gọi model` : ''
+    },
     { key: 'latency', label: 'Độ trễ TB (ms)', value: cockpit.value?.performance.avgLatencyMs ?? 0, icon: 'pi pi-clock', accent: 'bg-gradient-to-br from-slate-500 to-slate-600', hint: cockpit.value ? `p95 ${nf(cockpit.value.performance.p95LatencyMs)} ms` : '' }
   ];
 });
@@ -477,11 +522,33 @@ const indexRatePct = computed(() => {
 // Chỉ đơn vị có gói VÀ có hạn mức thật mới vẽ thanh % — gói không giới hạn không có gì để so.
 const limitedTenants = computed(() => cockpit.value?.quota.byTenant.filter((t) => !t.isUnlimited) ?? []);
 
-const sharePct = (tenant: { promptTokens: number; completionTokens: number }) => {
-  const total = cockpit.value?.spend.totalTokens ?? 0;
+// Tỉ lệ của một đơn vị phải dùng CÙNG mẫu số với backend: backend tính "top 3 chiếm bao
+// nhiêu %" trên tổng token chat + agent-run, nên thanh % ở đây cũng cộng cả hai — lệch mẫu số
+// sẽ cho ra thanh dài hơn con số ngay bên cạnh nó.
+const sharePct = (tenant: {
+  promptTokens: number;
+  completionTokens: number;
+  agentRunPromptTokens: number;
+  agentRunCompletionTokens: number;
+}) => {
+  const spend = cockpit.value?.spend;
+  if (!spend) return 0;
+  const total = spend.totalTokens + spend.totalAgentRunTokens;
   if (total <= 0) return 0;
-  return Math.round(((tenant.promptTokens + tenant.completionTokens) * 100) / total);
+  const own = tenant.promptTokens + tenant.completionTokens + tenant.agentRunPromptTokens + tenant.agentRunCompletionTokens;
+  return Math.round((own * 100) / total);
 };
+
+// Token của các lần chạy agent trong kỳ — tách khỏi lượt chat vì một lần chạy gồm nhiều lượt
+// suy luận nối tiếp, gộp chung sẽ giấu mất nguồn chi phí lớn nhất.
+const agentRunTokens = computed(() => {
+  const tokens = cockpit.value?.tokens;
+  if (!tokens) return 0;
+  return tokens.agentRunPromptTokens + tokens.agentRunCompletionTokens;
+});
+
+const tenantAgentTokens = (tenant: { agentRunPromptTokens: number; agentRunCompletionTokens: number }) =>
+  tenant.agentRunPromptTokens + tenant.agentRunCompletionTokens;
 
 const tokenChartData = computed(() => {
   const daily = cockpit.value?.tokens.daily ?? [];
@@ -541,6 +608,7 @@ const navCards = [
   { to: '/admin/knowledge', icon: 'pi pi-database', accent: 'bg-gradient-to-br from-violet-500 to-violet-600', title: 'Cơ sở tri thức', description: 'Quản lý nguồn tri thức dùng chung cho tenant.' },
   { to: '/admin/databases', icon: 'pi pi-table', accent: 'bg-gradient-to-br from-indigo-500 to-blue-600', title: 'Kết nối CSDL', description: 'Kết nối cơ sở dữ liệu ngoài để agent truy vấn và lập chỉ mục lược đồ.' },
   { to: '/admin/tenants', icon: 'pi pi-building', accent: 'bg-gradient-to-br from-rose-500 to-red-600', title: 'Quản lý Tenant', description: 'Quản lý đơn vị/tổ chức sử dụng hệ thống.' },
+  { to: '/admin/quota', icon: 'pi pi-wallet', accent: 'bg-gradient-to-br from-teal-500 to-emerald-600', title: 'Hạn mức & Token', description: 'Gán gói, cấp thêm token (grant) và số dư cho từng đơn vị.' },
   { to: '/admin/lora', icon: 'pi pi-sliders-h', accent: 'bg-gradient-to-br from-fuchsia-500 to-purple-600', title: 'LoRA Adapters', description: 'Đăng ký adapter tinh chỉnh hot-swap cho model chat.' },
   { to: '/admin/audit', icon: 'pi pi-shield', accent: 'bg-gradient-to-br from-slate-500 to-slate-600', title: 'Nhật ký hoạt động', description: 'Theo dõi hoạt động của agent và hệ thống.' },
   { to: '/admin/widget', icon: 'pi pi-objects-column', accent: 'bg-gradient-to-br from-blue-500 to-blue-700', title: 'Widget nhúng', description: 'Bật widget chat công khai, cho phép origin và quản lý khóa.' },
