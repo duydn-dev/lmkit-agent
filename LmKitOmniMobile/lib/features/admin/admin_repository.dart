@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_exception.dart';
 import 'admin_models.dart';
+import 'dashboard_models.dart';
 
 /// API quản trị: tenant, MCP server, knowledge base, kết nối CSDL, LoRA, widget.
 ///
@@ -422,6 +423,36 @@ class AdminRepository {
   Future<AuditFacetsModel> auditFacets() async {
     final response = await _client.get('/api/audit/facets');
     return AuditFacetsModel.fromJson(_map(response.data));
+  }
+
+  // --------------------------------------------------------------- dashboard
+
+  /// Dashboard vận hành. `days` chỉ nhận 7/30/90 — backend tự chuẩn hoá giá trị khác về 30.
+  Future<DashboardStats> dashboard({int days = 30}) async {
+    final response = await _client.get(
+      '/api/dashboard/stats',
+      queryParameters: {'days': days},
+    );
+    return DashboardStats.fromJson(_map(response.data));
+  }
+
+  /// Báo cáo CSV (đơn vị × model) — chỉ Admin gọi được.
+  ///
+  /// Trả CHUỖI CSV thô để màn gọi tự quyết định cách đưa cho người dùng (màn dashboard
+  /// sao chép vào clipboard, vì app chưa có gói lưu/chia sẻ tệp nào). Ép
+  /// `ResponseType.plain` vì endpoint trả `text/csv`; để Dio tự thử `jsonDecode` thân
+  /// phản hồi là cách chắc chắn nhất để mất dữ liệu.
+  Future<String> dashboardCsv({int days = 30}) async {
+    try {
+      final response = await _client.dio.get<String>(
+        '/api/dashboard/export.csv',
+        queryParameters: {'days': days},
+        options: Options(responseType: ResponseType.plain),
+      );
+      return response.data ?? '';
+    } on DioException catch (error) {
+      throw ApiException.fromDio(error);
+    }
   }
 
   // ----------------------------------------------------------------- helpers

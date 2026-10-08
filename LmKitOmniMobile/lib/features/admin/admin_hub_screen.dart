@@ -5,6 +5,7 @@ import '../../app/theme.dart';
 import '../../app/ui/app_controls.dart';
 import 'api_keys_screen.dart';
 import 'audit_log_screen.dart';
+import 'dashboard_screen.dart';
 import 'database_connections_screen.dart';
 import 'knowledge_base_screen.dart';
 import 'lora_adapters_screen.dart';
@@ -21,6 +22,13 @@ class AdminHubScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final entries =
         <({String title, String subtitle, IconData icon, WidgetBuilder build})>[
+          (
+            title: 'Dashboard vận hành',
+            subtitle:
+                'Token, hạn mức, người dùng hoạt động và cảnh báo toàn hệ thống',
+            icon: Icons.insights_outlined,
+            build: (_) => const DashboardScreen(),
+          ),
           (
             title: 'Người dùng',
             subtitle: 'Tạo tài khoản, phân quyền và khoá/mở khoá người dùng',

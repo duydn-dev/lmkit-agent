@@ -2,6 +2,12 @@ export const ApiFactory = {
   AUTH: {
     LOGIN: '/api/auth/login'
   },
+  DASHBOARD: {
+    // `days` chỉ nhận 7/30/90; backend tự chuẩn hoá giá trị khác về 30 nên client
+    // không cần chặn trước.
+    STATS: (days: number) => `/api/dashboard/stats?days=${days}`,
+    EXPORT_CSV: (days: number) => `/api/dashboard/export.csv?days=${days}`
+  },
   CHAT: {
     STREAM: '/api/chat/stream',
     STREAM_WITH_FILES: '/api/chat/stream-with-files',
