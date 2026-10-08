@@ -7,6 +7,7 @@ import '../../app/ui/app_controls.dart';
 import 'admin_provider.dart';
 import 'admin_repository.dart';
 import 'admin_widgets.dart';
+import 'dashboard_csv_export.dart';
 import 'dashboard_models.dart';
 
 /// Dashboard vận hành trên mobile — cùng dữ liệu và cùng luật phân quyền với trang
@@ -65,19 +66,28 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     _load();
   }
 
-  /// App chưa có gói lưu/chia sẻ tệp, nên báo cáo CSV đi qua clipboard — đúng cách các
-  /// màn API key / widget settings trong app vẫn đưa khoá cho người dùng.
+  /// Báo cáo CSV giờ được ghi RA MỘT TỆP trong bộ nhớ máy — trước đây chỉ vào clipboard: dán
+  /// được một lần rồi mất, không mở lại được và không gửi đi được.
+  ///
+  /// Vẫn sao chép vào clipboard sau khi ghi tệp: đường cũ không gãy cho ai đang dùng nó, và
+  /// clipboard là phương án dự phòng khi thiết bị không cho ghi tệp.
   Future<void> _exportCsv() async {
     setState(() => _exporting = true);
     try {
       final csv = await ref
           .read(adminRepositoryProvider)
           .dashboardCsv(days: _days);
+      final file = await saveDashboardCsv(
+        csv: csv,
+        days: _days,
+        now: DateTime.now(),
+        resolveDirectory: resolveDashboardExportDirectory,
+      );
       await Clipboard.setData(ClipboardData(text: csv));
       if (!mounted) return;
       showAdminSnack(
         context,
-        'Đã sao chép báo cáo $_days ngày vào clipboard (dán vào Excel để mở).',
+        'Đã lưu báo cáo $_days ngày vào:\n${file.path}\n(đồng thời sao chép vào clipboard)',
       );
     } catch (error) {
       if (!mounted) return;
@@ -105,7 +115,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           if (cockpit != null)
             AppIconButton(
               icon: Icons.download_outlined,
-              tooltip: 'Sao chép báo cáo CSV',
+              tooltip: 'Lưu báo cáo CSV ra tệp',
               busy: _exporting,
               onPressed: _exporting ? null : _exportCsv,
             ),
@@ -201,6 +211,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ),
       if (cockpit != null)
         (
+          label: 'Token agent-run',
+          value: dashNumber(cockpit.tokens.totalAgentRunTokens),
+          hint: '${dashNumber(cockpit.tokens.agentRuns)} lần chạy có gọi model',
+        ),
+      if (cockpit != null)
+        (
           label: 'Độ phổ cập',
           value: '${cockpit.users.adoptionPct}%',
           hint: 'MAU / tổng người dùng',
@@ -213,7 +229,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               : '${dashNumber(cockpit.performance.avgLatencyMs)} ms',
           hint: cockpit.performance.samples == 0
               ? 'Chưa có mẫu'
-              : 'p95 ${dashNumber(cockpit.performance.p95LatencyMs)} ms',
+              : cockpit.performance.agentRunSamples == 0
+              ? 'p95 ${dashNumber(cockpit.performance.p95LatencyMs)} ms'
+              : 'p95 ${dashNumber(cockpit.performance.p95LatencyMs)} ms · '
+                    'agent ${dashNumber(cockpit.performance.agentRunAvgLatencyMs)} ms',
         ),
     ];
 
@@ -585,6 +604,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             context,
           ).textTheme.bodySmall?.copyWith(color: AppTheme.textMuted),
         ),
+        if (cockpit.spend.totalAgentRunTokens > 0)
+          Text(
+            'Cộng thêm ${dashNumber(cockpit.spend.totalAgentRunTokens)} token của '
+            '${dashNumber(cockpit.tokens.agentRuns)} lần chạy agent',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppTheme.textMuted),
+          ),
         if (cockpit.spend.topTenantName.isNotEmpty)
           Text(
             'Nhiều nhất: ${cockpit.spend.topTenantName}',
@@ -615,6 +642,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     ),
                   ],
                 ),
+                if (tenant.agentRuns > 0)
+                  Text(
+                    'trong đó ${dashNumber(tenant.agentTokens)} token agent-run '
+                    '(${dashNumber(tenant.agentRuns)} lần chạy)',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: AppTheme.textMuted),
+                  ),
                 const SizedBox(height: 4),
                 _progressBar(cockpit.spend.sharePct(tenant) / 100),
               ],
