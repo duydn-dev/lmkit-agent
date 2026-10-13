@@ -147,7 +147,10 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
             // request token may already be canceled, same rationale as the chat handler).
             await FinalizeAsync(
                 run, steps, contentBuilder.ToString(), completed, awaitingApproval,
-                inferenceStopwatch.ElapsedMilliseconds);
+                inferenceStopwatch.ElapsedMilliseconds,
+                // Lịch tự hành đã có ScheduledTaskWorker tạo notification riêng (kèm deep-link
+                // lịch + run); chỉ tạo ở đây cho run TƯƠNG TÁC để tránh spam 2 bản.
+                notifyOnApproval: request.ScheduledTaskId is null);
         }
     }
 
@@ -157,7 +160,8 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
         string rawContent,
         bool completed,
         bool awaitingApproval,
-        long elapsedMs)
+        long elapsedMs,
+        bool notifyOnApproval = false)
     {
         for (var i = 0; i < steps.Count; i++)
         {
@@ -216,6 +220,23 @@ public sealed class StreamAgentRunCommandHandler : IStreamRequestHandler<StreamA
             run.CompletionTokens = usage.CompletionTokens;
             run.ModelName = _modelManager.DefaultChatModelId;
             run.LatencyMs = (int)Math.Min(elapsedMs, int.MaxValue);
+        }
+
+        // Run tương tác chạm HITL trong lúc user đã rời màn hình: để lại notification kèm
+        // deep-link AgentRunId để chuông web/mobile mở thẳng gate card Duyệt/Từ chối
+        // (AgentRunsView.openRun + mobile run_detail). Lưu cùng SaveChanges bên dưới nên
+        // không bao giờ có notify mồ côi khi persist run thất bại.
+        if (awaitingApproval && notifyOnApproval)
+        {
+            _dbContext.Notifications.Add(new Notification
+            {
+                TenantId = run.TenantId,
+                UserId = run.UserId,
+                Type = "agent_approval_required",
+                Title = "Agent cần phê duyệt",
+                Body = "Lần chạy agent đã đến bước cần phê duyệt. Mở chi tiết lần chạy để xem và Duyệt/Từ chối — phiên sẽ tự chạy tiếp sau khi bạn quyết định.",
+                AgentRunId = run.Id
+            });
         }
 
         await _dbContext.SaveChangesAsync(CancellationToken.None);
