@@ -4,7 +4,7 @@
     <div class="sticky top-0 z-10 bg-chatgpt-dark/80 backdrop-blur-xl border-b border-gray-200/60">
       <div class="max-w-4xl mx-auto px-6 py-4">
         <div class="flex items-center gap-4">
-          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-md shadow-indigo-500/20">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center flex-shrink-0 shadow-md shadow-indigo-500/20">
             <i class="pi pi-database text-white text-sm" aria-hidden="true"></i>
           </div>
           <div>

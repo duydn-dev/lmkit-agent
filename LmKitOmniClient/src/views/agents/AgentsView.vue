@@ -5,7 +5,7 @@
       <div class="max-w-7xl mx-auto px-6 py-4">
         <div class="flex items-center justify-between gap-4">
           <div class="flex items-center gap-4">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-md shadow-purple-500/20">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-md shadow-purple-500/20">
               <i class="pi pi-microchip-ai text-white text-sm"></i>
             </div>
             <div>

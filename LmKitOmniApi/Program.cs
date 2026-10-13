@@ -243,7 +243,15 @@ builder.Services.AddSingleton<IVectorStoreService, QdrantVectorService>();
 // 🛡️ AI Safety & Security Services (Phase 1)
 // ============================================================
 builder.Services.AddScoped<IPromptGuardService, PromptGuardService>();
+// Chính sách rủi ro tool theo đơn vị (tenant_tool_policies). Singleton vì nó giữ cache cấu hình
+// theo đơn vị và tự mở scope để đọc DB; cũng vì IToolPermissionService là singleton nên chỉ có thể
+// tiêm một singleton vào nó. TTL cache ở ToolRiskPolicy.CacheTtl.
+builder.Services.AddSingleton<IToolRiskPolicy, ToolRiskPolicy>();
 // The rate window must survive individual HTTP request scopes.
+//
+// AddSingleton<TService, TImplementation> chọn constructor có nhiều tham số phân giải được nhất,
+// nên nó tự lấy IConnectionMultiplexer (Redis, đăng ký ở dưới — DI không phụ thuộc thứ tự) và
+// IToolRiskPolicy, và để IToolPermissionService dùng chính sách đơn vị thay vì chỉ mức mặc định.
 builder.Services.AddSingleton<IToolPermissionService, ToolPermissionService>();
 builder.Services.AddScoped<ToolSandboxService>();
 builder.Services.AddScoped<UserResourceAccessService>();

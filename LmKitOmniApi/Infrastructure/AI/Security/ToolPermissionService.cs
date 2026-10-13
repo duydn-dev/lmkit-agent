@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using LmKitOmniApi.Application.Abstractions;
+using LmKitOmniApi.Application.ToolPolicy;
+using LmKitOmniApi.Domain.Constants;
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
 
@@ -20,6 +22,7 @@ public class ToolPermissionService : IToolPermissionService
 {
     private readonly ILogger<ToolPermissionService> _logger;
     private readonly IDatabase? _redis;
+    private readonly IToolRiskPolicy? _riskPolicy;
 
     // Tool invocation tracking for rate limiting (single-node / Redis-outage fallback)
     private readonly ConcurrentDictionary<string, List<DateTime>> _invocationTracker = new();
@@ -73,31 +76,20 @@ public class ToolPermissionService : IToolPermissionService
         "DbWrite", "CallApiWrite"
     };
 
-    // Tools that require human approval before execution
-    private static readonly HashSet<string> ApprovalRequiredTools = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "IngestDocument", "DeleteDocument",
-        // Database writes ALWAYS require human approval; on approval the write path
-        // backs up the target table before executing. Reads ("DbQuery") run directly.
-        "DbWrite",
-        // Headless-browser navigation ALWAYS requires human approval: it is
-        // side-effecting egress (a live outbound request to an operator-approved URL),
-        // so a human vets the target before the browser is launched.
-        "BrowseWeb",
-        // Generic REST WRITES (POST/PUT/PATCH/DELETE qua call_api_write) luôn cần người
-        // phê duyệt — cùng triết lý DbWrite: side-effect ra hệ thống ngoài phải có người
-        // vet payload trước. Bản GET/HEAD ("CallApi") thì như FetchWeb: chỉ đọc, không gate.
-        "CallApiWrite",
-        // Tạo LỊCH TỰ ĐỘNG qua hội thoại = dựng automation sống lâu dài chạy với danh
-        // tính người dùng → luôn cần người dùng duyệt (card hiện tên/prompt/chu kỳ).
-        // list/cancel ("ScheduleManage") thì không: đọc + TẮT là chiều an toàn.
-        "ScheduleTask"
-        // NOTE: "FetchWeb" is deliberately NOT here. Unlike BrowseWeb it launches no
-        // container and executes no page scripts — it is a read-only, egress-gated
-        // HTTP GET + content extraction (LM-Kit WebReadTool behind a public-web-only
-        // WebEgressPolicy and a pre-flight SSRF check), on par with the un-gated
-        // SearchWeb. It stays enable-gated (off by default) and rate-limited instead.
-    };
+    // Tools that require human approval before execution.
+    //
+    // Bộ này KHÔNG còn được viết tay ở đây: nó suy ra từ bảng phân loại rủi ro duy nhất
+    // (ToolRiskCatalog) — mọi tool ở mức Write hoặc Sensitive. Trước đây cùng một sự thật tồn tại
+    // ở hai nơi (HashSet này và ToolPolicyEnforcement.DefaultForTier), nên chỉ cần một chỗ quên
+    // cập nhật là một tool được duyệt ở đường này lại tự chạy ở đường khác.
+    //
+    // NOTE: "FetchWeb" is deliberately NOT in that set. Unlike BrowseWeb it launches no
+    // container and executes no page scripts — it is a read-only, egress-gated
+    // HTTP GET + content extraction (LM-Kit WebReadTool behind a public-web-only
+    // WebEgressPolicy and a pre-flight SSRF check), on par with the un-gated
+    // SearchWeb. It stays enable-gated (off by default) and rate-limited instead.
+    private static readonly HashSet<string> ApprovalRequiredTools =
+        new(ToolRiskCatalog.ApprovalRequiredTools, StringComparer.OrdinalIgnoreCase);
 
     // Rate limits: max invocations per minute per user
     private static readonly Dictionary<string, int> ToolRateLimits = new(StringComparer.OrdinalIgnoreCase)
@@ -144,12 +136,20 @@ public class ToolPermissionService : IToolPermissionService
     private const int RateLimitWindowMinutes = 1;
     private static readonly TimeSpan QuotaWindow = TimeSpan.FromMinutes(RateLimitWindowMinutes);
 
+    /// <param name="redis">Redis tuỳ chọn cho hạn mức tần suất dùng chung giữa các replica.</param>
+    /// <param name="riskPolicy">
+    /// Chính sách rủi ro tool theo đơn vị. Bỏ trống (null) là hợp lệ và có nghĩa "chỉ dùng mức mặc
+    /// định của hệ thống" — đúng hành vi trước khi có cấu hình đơn vị, nên host không đăng ký
+    /// <see cref="ToolRiskPolicy"/> vẫn chạy y hệt.
+    /// </param>
     public ToolPermissionService(
         ILogger<ToolPermissionService> logger,
-        IConnectionMultiplexer? redis = null)
+        IConnectionMultiplexer? redis = null,
+        IToolRiskPolicy? riskPolicy = null)
     {
         _logger = logger;
         _redis = redis?.GetDatabase();
+        _riskPolicy = riskPolicy;
     }
 
     public Task<ToolPermissionResult> CanInvokeToolAsync(
@@ -176,24 +176,29 @@ public class ToolPermissionService : IToolPermissionService
             return ToolPermissionResult.Deny($"Tool '{toolName}' is not available for role '{userRole}'");
         }
 
-        // Check 2: Approval required?
-        if (!bypassApproval && ApprovalRequiredTools.Contains(toolName))
+        // Check 2: chính sách rủi ro (mức nền của hệ thống + cấu hình của đơn vị).
+        //
+        // Chính sách quyết định ba thứ: tự chạy (Auto), cần phiếu duyệt (Approval), hoặc bị chặn hẳn
+        // (Blocked — đơn vị đã siết). Cùng chỗ này cũng chứa quy tắc cho tool MCP động: annotation
+        // read-only của server ngoài là GỢI Ý không đáng tin, nên mặc định là Sensitive (phải duyệt),
+        // và chỉ khi admin đơn vị đã đánh dấu tin cậy server đó thì mới thành Read (ToolRiskCatalog).
+        var decision = await ResolveRiskDecisionAsync(tenantId, toolName, ct);
+
+        if (decision.IsBlocked)
         {
-            _logger.LogInformation("⚠️ Tool '{Tool}' requires human approval (User: {User})", toolName, userId);
-            return ToolPermissionResult.NeedApproval();
+            _logger.LogWarning(
+                "⛔ Tool '{Tool}' bị chặn bởi chính sách của đơn vị {Tenant} (User: {User})",
+                toolName, tenantId, userId);
+            return ToolPermissionResult.Deny(
+                $"Tool '{toolName}' đã bị chặn bởi chính sách của đơn vị.");
         }
 
-        // Check 2b: Dynamic MCP Tool names
-        if (toolName.StartsWith("MCP:", StringComparison.OrdinalIgnoreCase))
+        if (!bypassApproval && decision.RequiresApproval)
         {
-            // MCP annotations are untrusted hints. TRUSTED_READ is emitted only when a tenant
-            // admin explicitly trusts that server's read-only annotations; every other tool
-            // fails safe to human approval regardless of a benign-looking name.
-            if (!toolName.StartsWith("MCP:TRUSTED_READ:", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogInformation("⚠️ MCP Tool '{Tool}' requires human approval (User: {User})", toolName, userId);
-                return ToolPermissionResult.NeedApproval();
-            }
+            _logger.LogInformation(
+                "⚠️ Tool '{Tool}' ({Tier} → {Enforcement}, {Source}) requires human approval (User: {User})",
+                toolName, decision.Tier, decision.Enforcement, decision.Source, userId);
+            return ToolPermissionResult.NeedApproval();
         }
 
         // Check 3: Rate limiting
@@ -205,6 +210,32 @@ public class ToolPermissionService : IToolPermissionService
         }
 
         return ToolPermissionResult.Allow();
+    }
+
+    /// <summary>
+    /// Chính sách đã áp cho (đơn vị, tool). Không có <see cref="IToolRiskPolicy"/> (host cũ, test
+    /// dựng tay) thì dùng mức mặc định của bảng phân loại — đúng hành vi trước khi có cấu hình.
+    /// </summary>
+    private async Task<ToolRiskDecision> ResolveRiskDecisionAsync(
+        Guid tenantId, string toolName, CancellationToken ct)
+    {
+        if (_riskPolicy is null)
+        {
+            return ToolRiskDecision.Default(toolName);
+        }
+
+        try
+        {
+            return await _riskPolicy.ResolveAsync(tenantId, toolName, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Chính sách đọc lỗi KHÔNG được biến thành "cho chạy": rơi về mức mặc định.
+            _logger.LogError(ex,
+                "Không đọc được chính sách tool cho '{Tool}' của đơn vị {Tenant}; áp mức mặc định.",
+                toolName, tenantId);
+            return ToolRiskDecision.Default(toolName);
+        }
     }
 
     public async Task RecordToolInvocationAsync(Guid tenantId, Guid? userId, string toolName, string? parameters = null, CancellationToken ct = default)

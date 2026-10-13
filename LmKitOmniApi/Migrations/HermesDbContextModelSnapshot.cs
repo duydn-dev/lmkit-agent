@@ -1220,6 +1220,43 @@ namespace LmKitOmniApi.Migrations
                     b.ToTable("TenantCredits");
                 });
 
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.TenantToolPolicy", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Enforcement")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ToolName")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "ToolName")
+                        .IsUnique();
+
+                    b.ToTable("tenant_tool_policies");
+                });
+
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.TenantWidgetSettings", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1787,6 +1824,17 @@ namespace LmKitOmniApi.Migrations
                 });
 
             modelBuilder.Entity("LmKitOmniApi.Domain.Entities.TenantCredit", b =>
+                {
+                    b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("LmKitOmniApi.Domain.Entities.TenantToolPolicy", b =>
                 {
                     b.HasOne("LmKitOmniApi.Domain.Entities.Tenant", "Tenant")
                         .WithMany()

@@ -15,6 +15,7 @@ const PAGE_TITLES: Record<string, string> = {
   CustomInstructions: 'Hướng dẫn tùy chỉnh',
   TextTools: 'Phân tích văn bản',
   VisionTools: 'Thị giác & OCR',
+  VideoTranslation: 'Dịch video',
   AgentMode: 'Agent tự động hóa',
   Approvals: 'Phê duyệt tác vụ',
   AdminHub: 'Quản trị',
@@ -104,6 +105,12 @@ const router = createRouter({
           path: '/tools/vision',
           name: 'VisionTools',
           component: () => import('../views/tools/VisionToolsView.vue'),
+          meta: { requiresAuth: true }
+        },
+        {
+          path: '/tools/video-translation',
+          name: 'VideoTranslation',
+          component: () => import('../views/tools/VideoTranslationView.vue'),
           meta: { requiresAuth: true }
         },
         {

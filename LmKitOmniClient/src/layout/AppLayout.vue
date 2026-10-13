@@ -297,7 +297,8 @@ const navGroups: NavGroup[] = [
       { to: '/schedules', icon: 'pi pi-calendar-clock', label: 'Lịch trình tự động' },
       { to: '/research', icon: 'pi pi-compass', label: 'Nghiên cứu chuyên sâu' },
       { to: '/tools/text', icon: 'pi pi-align-left', label: 'Phân tích văn bản' },
-      { to: '/tools/vision', icon: 'pi pi-image', label: 'Thị giác & OCR' }
+      { to: '/tools/vision', icon: 'pi pi-image', label: 'Thị giác & OCR' },
+      { to: '/tools/video-translation', icon: 'pi pi-video', label: 'Dịch video' }
     ]
   },
   {

@@ -5,7 +5,7 @@
       <div class="max-w-4xl mx-auto px-6 py-4">
         <div class="flex items-center justify-between gap-4">
           <div class="flex items-center gap-4">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center shadow-md shadow-emerald-500/20">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center flex-shrink-0 shadow-md shadow-emerald-500/20">
               <i class="pi pi-check-square text-white text-sm" aria-hidden="true"></i>
             </div>
             <div>

@@ -26,6 +26,7 @@ public class HermesDbContext : DbContext
     public DbSet<TaskApproval> TaskApprovals { get; set; } = null!;
     public DbSet<TenantApiKey> TenantApiKeys { get; set; } = null!;
     public DbSet<TenantWidgetSettings> TenantWidgetSettings { get; set; } = null!;
+    public DbSet<TenantToolPolicy> TenantToolPolicies { get; set; } = null!;
     public DbSet<UserSession> UserSessions { get; set; } = null!;
     public DbSet<AgentRun> AgentRuns { get; set; } = null!;
     public DbSet<AgentRunStep> AgentRunSteps { get; set; } = null!;
@@ -248,6 +249,17 @@ public class HermesDbContext : DbContext
         // WidgetApiKeyHash. NOT unique: un-rotated rows all carry an empty hash.
         modelBuilder.Entity<TenantWidgetSettings>()
             .HasIndex(t => t.WidgetApiKeyHash);
+
+        // Chính sách tool theo đơn vị: một dòng cho mỗi (đơn vị, tool) được siết khác mặc định.
+        //
+        // Unique index (TenantId, ToolName) làm cho thao tác "đọc rồi thêm nếu chưa có" của admin
+        // race-safe ở tầng DB (cùng lý do với TenantWidgetSettings/UserPreference): nếu không có nó
+        // thì hai request đồng thời tạo hai dòng cho cùng một tool, và lần đọc sau đó sẽ lấy dòng nào
+        // tuỳ thứ tự — tức chính sách trở nên không xác định.
+        modelBuilder.Entity<TenantToolPolicy>()
+            .HasOne(t => t.Tenant).WithMany().HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<TenantToolPolicy>()
+            .HasIndex(t => new { t.TenantId, t.ToolName }).IsUnique();
 
         modelBuilder.Entity<UserSession>()
             .HasOne(u => u.User).WithMany().HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.Cascade);

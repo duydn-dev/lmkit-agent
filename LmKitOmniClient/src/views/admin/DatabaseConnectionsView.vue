@@ -3,7 +3,7 @@
     <div class="max-w-6xl mx-auto">
       <!-- Page header -->
       <header class="mb-4 flex items-center gap-4">
-        <div class="w-10 h-10 rounded-lg bg-gov-blue-dark flex items-center justify-center shadow-md flex-shrink-0">
+        <div class="w-10 h-10 rounded-xl bg-gov-blue-dark flex items-center justify-center shadow-md flex-shrink-0">
           <i class="pi pi-database text-white text-sm" aria-hidden="true"></i>
         </div>
         <div>

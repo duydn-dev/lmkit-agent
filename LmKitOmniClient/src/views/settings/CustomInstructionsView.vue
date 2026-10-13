@@ -3,7 +3,7 @@
     <!-- Page Header -->
     <div class="sticky top-0 z-10 bg-chatgpt-dark/80 backdrop-blur-xl border-b border-gray-200/60">
       <div class="max-w-3xl mx-auto px-6 py-4 flex items-center gap-4">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 flex items-center justify-center shadow-md shadow-violet-500/20">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 flex items-center justify-center flex-shrink-0 shadow-md shadow-violet-500/20">
           <i class="pi pi-user-edit text-white text-sm" aria-hidden="true"></i>
         </div>
         <div>

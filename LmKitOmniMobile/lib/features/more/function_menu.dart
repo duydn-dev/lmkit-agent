@@ -12,6 +12,7 @@ import '../notifications/notifications_screen.dart';
 import '../share/shared_chat_screen.dart';
 import '../studio/studio_screen.dart';
 import '../studio/tools_screen.dart';
+import '../video_translation/video_translation_screen.dart';
 import '../workspace/custom_instructions_screen.dart';
 import '../workspace/documents_screen.dart';
 import '../workspace/memory_screen.dart';
@@ -215,6 +216,12 @@ class FunctionMenuSheet extends ConsumerWidget {
                   title: 'Vision & OCR',
                   subtitle: 'Phân tích ảnh, OCR, phân loại, tách nền',
                   onTap: () => push((_) => const ToolsScreen(initialTab: 1)),
+                ),
+                _Tile(
+                  icon: Icons.video_library_outlined,
+                  title: 'Dịch video',
+                  subtitle: 'Preview video local/URL, phụ đề minh họa',
+                  onTap: () => push((_) => const VideoTranslationScreen()),
                 ),
                 const _GroupTitle('Vận hành'),
                 _Tile(
